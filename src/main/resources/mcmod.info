@@ -1,0 +1,16 @@
+[
+{
+  "modid": "deuteriummusic",
+  "name": "Deuterium Music",
+  "description": "Standalone NetEase Cloud Music player ported from Deuterium for Minecraft 1.8.9 Forge.",
+  "version": "${version}",
+  "mcversion": "${mcversion}",
+  "url": "",
+  "updateUrl": "",
+  "authorList": ["IzumiiKonata"],
+  "credits": "Ported from Deuterium Tritium Music extension.",
+  "logoFile": "",
+  "screenshots": [],
+  "dependencies": []
+}
+]

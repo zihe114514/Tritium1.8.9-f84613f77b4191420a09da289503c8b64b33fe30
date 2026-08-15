@@ -1,0 +1,49 @@
+# eclipse
+bin
+*.launch
+.settings
+.metadata
+.classpath
+.project
+
+# idea
+out
+*.ipr
+*.iws
+*.iml
+.idea
+
+# gradle
+build
+.gradle
+
+# other
+eclipse
+run
+
+# local claude settings (user-specific, not for sharing)
+.claude/settings.local.json
+
+# original Deuterium reference source — not part of this mod's distribution
+Deuterium/
+
+# Codex/local agent state
+.codex/
+
+# JVM crash dumps and runtime diagnostics
+*.hprof
+hs_err_pid*
+replay_pid*
+*.log
+logs/
+crash-reports/
+
+# Local player state, account credentials and downloaded media
+NCMCookie.txt
+MusicCache/
+tritium_player_config.json
+tritium_player_theme.json
+deuteriummusic_hud.json
+
+# Other editor-local state
+.vscode/

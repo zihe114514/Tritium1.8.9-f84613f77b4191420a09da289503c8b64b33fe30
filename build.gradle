@@ -1,0 +1,196 @@
+
+// For those who want the bleeding edge
+buildscript {
+    repositories {
+        jcenter()
+        mavenCentral()
+        // Shadow 2.0.4 仅托管在 Gradle Plugin Portal（jcenter 已停止服务）。
+        // Gradle 4.5 自带 HTTP 客户端无法与 plugins.gradle.org 完成 TLS 握手（SSLHandshakeException），
+        // 故将 shadow-2.0.4.jar/.pom 手动落到本地 maven-repo/ 供离线解析（见下方）。
+        maven {
+            url = "maven-repo"
+        }
+        maven {
+            name = "forge"
+            url = "http://files.minecraftforge.net/maven"
+        }
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:2.1-SNAPSHOT'
+        // Shadow：fat-jar + relocation（把 zxing/jna 迁到 repackage/ 避免与其他 mod / MC 自带库冲突）。
+        classpath 'com.github.jengelman.gradle.plugins:shadow:2.0.4'
+    }
+}
+apply plugin: 'net.minecraftforge.gradle.forge'
+apply plugin: 'com.github.johnrengelman.shadow'
+
+/*
+// for people who want stable - not yet functional for MC 1.8.8 - we require the forgegradle 2.1 snapshot
+plugins {
+    id "net.minecraftforge.gradle.forge" version "2.0.2"
+}
+*/
+version = "1.0.2"
+group = "com.deuterium.music"
+archivesBaseName = "deuteriummusic"
+
+sourceCompatibility = targetCompatibility = '1.8'
+
+// 源码为 UTF-8（含中文注释/字符串字面量）。默认 GBK 会破坏 S2+ 移植的中文 UI/歌词文案。
+// 应用于所有 JavaCompile（含 test），否则 test 里的中文字符串字面量会乱码。
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+
+    // Gradle 4.5 / ForgeGradle 2.1 不会自动把 compileOnly 上的注解处理器（lombok）加入 -processorpath，
+    // 导致 @Data/@Builder/@UtilityClass/@SneakyThrows 等注解不展开（表现为"找不到符号 builder()"等）。
+    // 手动指定 processorpath，lombok 处理器即会在编译期运行。
+    doFirst {
+        options.compilerArgs.addAll(['-processorpath', configurations.compileOnly.asPath])
+    }
+}
+
+repositories {
+    mavenCentral()
+    jcenter()
+}
+
+minecraft {
+    version = "1.8.9-11.15.1.2318-1.8.9"
+    runDir = "run"
+    
+    // the mappings can be changed at any time, and must be in the following format.
+    // snapshot_YYYYMMDD   snapshot are built nightly.
+    // stable_#            stables are built at the discretion of the MCP team.
+    // Use non-default mappings at your own risk. they may not allways work.
+    // simply re-run your setup task after changing the mappings to update your workspace.
+    mappings = "stable_20"
+    // makeObfSourceJar = false // an Srg named sources jar is made by default. uncomment this to disable.
+
+    // InputFix CoreMod：让 runClient/runServer 开发环境下也能预加载 ASM 转换器。
+    // ForgeGradle 2.1 会据此生成 -Dfml.coreMods.load=lain.mods.inputfix.InputFix 启动参数；
+    // 生产环境（mods/ 里的 -all.jar）则由 MANIFEST 的 FMLCorePlugin 属性触发（见下方 coreModManifest）。
+    coreMod = "lain.mods.inputfix.InputFix"
+}
+
+// shade：需要打进最终 jar 的运行时依赖（编译期可见，运行期由 fat-jar 自带）。
+configurations {
+    shade
+    compile.extendsFrom shade
+}
+
+dependencies {
+    // you may put jars on which you depend on in ./libs
+    // or you may define them like so..
+    //compile "some.group:artifact:version:classifier"
+    //compile "some.group:artifact:version"
+      
+    // real examples
+    //compile 'com.mod-buildcraft:buildcraft:6.0.8:dev'  // adds buildcraft to the dev env
+    //compile 'com.googlecode.efficient-java-matrix-library:ejml:0.24' // adds ejml to the dev env
+
+    // the 'provided' configuration is for optional dependencies that exist at compile-time but might not at runtime.
+    //provided 'com.mod-buildcraft:buildcraft:6.0.8:dev'
+
+    // the deobf configurations:  'deobfCompile' and 'deobfProvided' are the same as the normal compile and provided,
+    // except that these dependencies get remapped to your current MCP mappings
+    //deobfCompile 'com.mod-buildcraft:buildcraft:6.0.8:dev'
+    //deobfProvided 'com.mod-buildcraft:buildcraft:6.0.8:dev'
+
+    // for more info...
+    // http://www.gradle.org/docs/current/userguide/artifact_dependencies_tutorial.html
+    // http://www.gradle.org/docs/current/userguide/dependency_management.html
+
+    // Lombok：原项目 ~100+ 处注解，编译期展开（Java 8 下 javac 自动发现 classpath 上的处理器）。
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+
+    // ZXing：登录二维码 QRCodeGenerator 依赖（原项目唯一需要新增的运行时库）。
+    shade 'com.google.zxing:core:3.5.3'
+
+    // JNA：DeviceIdGenerator 读取注册表 CPU 名 + CursorUtils 切换光标。
+    // 5.14.0 为 Java 8 兼容版本。必须 relocation 到 repackage/：
+    // 真实 1.8.9 客户端自带 jna 3.4.0（版本 json 声明），不迁移会与之冲突（3.4.0 缺少 Native.load / WinUser.IDC_*）。
+    shade 'net.java.dev.jna:jna:5.14.0'
+    shade 'net.java.dev.jna:jna-platform:5.14.0'
+
+    // InputFix（中文输入 CoreMod，lain.mods.inputfix）编译期依赖。
+    // compileOnly = 运行时由 MC/Forge 自带（1.8.9 版本 json 声明 asm-all:5.0.3 + launchwrapper:1.12），
+    // 不打进 fat-jar，避免与客户端自带库冲突。
+    compileOnly 'org.ow2.asm:asm-debug-all:5.0.3'
+    // launchwrapper 仅取 IClassTransformer 接口；关闭传递依赖，避免拖入 lwjgl:2.9.1/jinput 等未缓存产物。
+    compileOnly('net.minecraft:launchwrapper:1.12') {
+        transitive = false
+    }
+
+}
+
+processResources
+{
+    // this will ensure that this task is redone when the versions change.
+    inputs.property "version", project.version
+    inputs.property "mcversion", project.minecraft.version
+
+    // replace stuff in mcmod.info, nothing else
+    from(sourceSets.main.resources.srcDirs) {
+        include 'mcmod.info'
+                
+        // replace version and mcversion
+        expand 'version':project.version, 'mcversion':project.minecraft.version
+    }
+        
+    // copy everything else, thats not the mcmod.info
+    from(sourceSets.main.resources.srcDirs) {
+        exclude 'mcmod.info'
+    }
+}
+
+// S2 冒烟测试：直接驱动原网易云 API 链路（不启动 Minecraft）。
+task smokeTest(type: JavaExec) {
+    dependsOn 'testClasses'
+    classpath = sourceSets.test.runtimeClasspath
+    main = 'com.deuterium.music.NcmApiSmokeTest'
+    jvmArgs '-Dfile.encoding=UTF-8'
+}
+
+// S3 冒烟测试：真实 MP3 下载 → 解码 → AudioPlayer 播放/暂停/Seek/停止（不启动 Minecraft）。
+task audioSmokeTest(type: JavaExec) {
+    dependsOn 'testClasses'
+    classpath = sourceSets.test.runtimeClasspath
+    main = 'com.deuterium.music.AudioPlaybackSmokeTest'
+    jvmArgs '-Dfile.encoding=UTF-8'
+}
+
+// ==== InputFix CoreMod 清单：让本 jar 同时作为 FML CoreMod 加载（中文输入修复）====
+// FMLCorePlugin：FML 在 mods/ 中扫描到该属性即当作 CoreMod 预加载（ASM 转换 GuiScreen）。
+// FMLCorePluginContainsFMLMod：告知 FML 本 jar 同时含 @Mod 普通 Mod，需一并扫描加载。
+def coreModManifest = {
+    attributes 'FMLCorePlugin': 'lain.mods.inputfix.InputFix',
+               'FMLCorePluginContainsFMLMod': 'true'
+}
+jar {
+    manifest coreModManifest
+}
+shadowJar {
+    manifest coreModManifest
+}
+
+// ==== fat-jar：把 shade 依赖打进 jar，并 relocation 到 repackage/ ====
+// 产出：build/libs/deuteriummusic-1.0.2-all.jar（fat + SRG 重映射后），是真实客户端要复制的最终产物。
+// 为什么 relocation：真实 1.8.9 客户端自带 net.java.dev.jna:jna:3.4.0 + platform:3.4.0（版本 json 声明），
+// 而本 mod 代码基于 JNA 5.14.0 编写（Native.load(String,Class)、WinUser.IDC_* 等 3.4.0 缺失），
+// 若直接打包未迁移的 com.sun.jna 会与 MC 自带 3.4.0 冲突；迁到 repackage.com.sun.jna 则完全自洽。
+shadowJar {
+    classifier = 'all'
+    configurations = [project.configurations.shade]
+    relocate 'com.google.zxing', 'repackage.com.google.zxing'
+    relocate 'com.sun.jna', 'repackage.com.sun.jna'
+}
+
+// ForgeGradle 2.1 对 shadowJar 做 SRG 重映射（MCP → SRG），保证 mod 类能在 obf 客户端运行。
+reobf {
+    shadowJar {
+        mappingType = 'SEARGE'
+    }
+}
+
+// 让 build 产出 fat jar（-all.jar），而非仅普通 reobfJar。
+tasks.build.dependsOn tasks.reobfShadowJar

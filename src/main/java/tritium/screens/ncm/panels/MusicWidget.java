@@ -1,0 +1,311 @@
+package tritium.screens.ncm.panels;
+
+import today.opai.api.enums.EnumChatColor;
+import tritium.management.FontManager;
+import tritium.ncm.music.CloudMusic;
+import tritium.ncm.music.dto.Music;
+import tritium.ncm.music.dto.PlayList;
+import tritium.rendering.TextureManager;
+import tritium.rendering.animation.Interpolations;
+import tritium.rendering.texture.Textures;
+import tritium.rendering.ui.widgets.IconWidget;
+import tritium.rendering.ui.widgets.LabelWidget;
+import tritium.rendering.ui.widgets.RoundedImageWidget;
+import tritium.rendering.ui.widgets.RoundedRectWidget;
+import tritium.screens.ncm.NCMScreen;
+import tritium.utils.Location;
+import tritium.utils.other.multithreading.MultiThreadingUtil;
+
+import java.awt.*;
+
+/**
+ * @author IzumiiKonata
+ * Date: 2025/10/17 20:40
+ */
+public class MusicWidget extends RoundedRectWidget {
+
+    private static final long ENTRANCE_DURATION_MILLIS = 280L;
+
+    public PlayList playList;
+    public Music music;
+    boolean coverLoaded = false;
+    private long entranceStartedAt = -1L;
+    private long entranceDelayMillis;
+    private boolean entranceAnimationFinished = true;
+
+    public MusicWidget(Music music, PlayList playList, int index) {
+        super(0, 0, 0, 30);
+        this.music = music;
+        this.playList = playList;
+
+        RoundedRectWidget rrHoverIndicator = new RoundedRectWidget();
+        this.addChild(rrHoverIndicator);
+        rrHoverIndicator
+                .setAlpha(0f)
+                .setClickable(false);
+        rrHoverIndicator.setBeforeRenderCallback(() -> rrHoverIndicator
+                .setMargin(0)
+                .setRadius(this.getRadius())
+                .setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)));
+
+        RoundedRectWidget rrPlayingIndicator = new RoundedRectWidget();
+        this.addChild(rrPlayingIndicator);
+        rrPlayingIndicator
+                .setAlpha(0f)
+                .setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT))
+                .setClickable(false);
+        if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.getId() == music.getId()) {
+            rrPlayingIndicator.setAlpha(1f);
+        }
+        rrPlayingIndicator.setBeforeRenderCallback(() -> rrPlayingIndicator
+                .setMargin(0)
+                .setRadius(this.getRadius()));
+
+        this.setBeforeRenderCallback(() -> {
+
+            // 只在这个 music 被渲染的时候才加载封面
+            if (!coverLoaded) {
+                coverLoaded = true;
+                this.loadCover();
+            }
+
+            this.setBounds(this.getParentWidth(), 30);
+            this.setColor(NCMScreen.getColor(index % 2 == 0 ? NCMScreen.ColorType.ELEMENT_BACKGROUND : NCMScreen.ColorType.GENERIC_BACKGROUND));
+            this.updateEntranceAnimation();
+
+            if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.getId() == music.getId()) {
+//                this.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+                rrPlayingIndicator.setAlpha(Interpolations.interpolate(rrPlayingIndicator.getWidgetAlpha(), .9f, .4f));
+                rrPlayingIndicator.setHidden(false);
+            } else if (this.isHovering()) {
+//                this.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER));
+                rrHoverIndicator.setAlpha(Interpolations.interpolate(rrHoverIndicator.getWidgetAlpha(), 1, .3f));
+                rrHoverIndicator.setHidden(false);
+            } else {
+                rrPlayingIndicator.setAlpha(Interpolations.interpolate(rrPlayingIndicator.getWidgetAlpha(), 0, .4f));
+                rrHoverIndicator.setAlpha(Interpolations.interpolate(rrHoverIndicator.getWidgetAlpha(), 0, .3f));
+
+                if (rrPlayingIndicator.getWidgetAlpha() <= .05f)
+                    rrPlayingIndicator.setHidden(true);
+
+                if (rrHoverIndicator.getWidgetAlpha() <= .05f)
+                    rrHoverIndicator.setHidden(true);
+            }
+
+            this.setRadius(2);
+        });
+
+        this.setOnClickCallback((x, y, i) -> {
+
+            if (i == 0)
+                CloudMusic.play(playList.getMusics(), index);
+
+            return true;
+        });
+
+        RoundedImageWidget cover = new RoundedImageWidget(this.music.getSmallCoverLocation(), 0, 0, 0, 0);
+        this.addChild(cover);
+        cover.fadeIn();
+        cover.setLinearFilter(true);
+        cover.setBeforeRenderCallback(() -> {
+            cover.setRadius(2);
+            cover.setBounds(24, 24);
+            cover.centerVertically();
+            cover.setPosition(30, cover.getRelativeY());
+        });
+        cover.setClickable(false);
+
+        LabelWidget lblMusicIndex = new LabelWidget(String.valueOf(index + 1), FontManager.pf14bold);
+        this.addChild(lblMusicIndex);
+
+        lblMusicIndex.setBeforeRenderCallback(() -> {
+            if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.getId() == music.getId())
+                lblMusicIndex.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            else
+                lblMusicIndex.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            lblMusicIndex.centerVertically();
+            lblMusicIndex.setPosition(cover.getRelativeX() - 4 - lblMusicIndex.getWidth(), lblMusicIndex.getRelativeY());
+        });
+
+        lblMusicIndex.setClickable(false);
+
+        boolean musicDirty = music.isDirty();
+        double dirtyIndicatorSize = 8;
+
+        String translatedNames = music.getTranslatedNames();
+
+        LabelWidget lblMusicName = new LabelWidget(music.getName() + (translatedNames.isEmpty() ? "" : EnumChatColor.GRAY + " (" + translatedNames + ")"), FontManager.pf14bold);
+        this.addChild(lblMusicName);
+
+        lblMusicName
+                .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
+                .setBeforeRenderCallback(() -> {
+                    lblMusicName.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                    lblMusicName.centerVertically();
+                    lblMusicName.setPosition(cover.getRelativeX() + cover.getWidth() + 4, lblMusicName.getRelativeY() - lblMusicName.getHeight() * .5 - 2);
+                    // 右侧预留：时长 + 喜欢按钮(20) + 加入歌单按钮(20) + 间距，避免歌名压到收藏按钮
+                    lblMusicName.setMaxWidth(this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4 + 80 + (musicDirty ? (dirtyIndicatorSize + 4) : 0)));
+                });
+        lblMusicName.setClickable(false);
+
+        if (musicDirty) {
+            RoundedRectWidget dirtyIndicator = new RoundedRectWidget(0, 0, dirtyIndicatorSize, dirtyIndicatorSize);
+            this.addChild(dirtyIndicator);
+            dirtyIndicator
+                    .setRadius(1.5)
+                    .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+
+            dirtyIndicator.setBeforeRenderCallback(() -> {
+//                dirtyIndicator.centerVertically();
+                dirtyIndicator.setPosition(lblMusicName.getRelativeX() + lblMusicName.getWidth() + 2, lblMusicName.getRelativeY() + lblMusicName.getHeight() * .5 - dirtyIndicatorSize * .5);
+            });
+
+            dirtyIndicator.setClickable(false);
+
+            LabelWidget lblDirty = new LabelWidget("E", FontManager.pf12bold);
+            dirtyIndicator.addChild(lblDirty);
+            lblDirty.setBeforeRenderCallback(() -> {
+                lblDirty.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                lblDirty.center();
+            });
+        }
+
+        LabelWidget lblMusicArtist = new LabelWidget(music.getArtistsName() + " - " + music.getAlbum().getName(), FontManager.pf14);
+        this.addChild(lblMusicArtist);
+
+        lblMusicArtist
+                .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
+                .setBeforeRenderCallback(() -> {
+                    if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.getId() == music.getId())
+                        lblMusicArtist.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                    else
+                        lblMusicArtist.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+                    lblMusicArtist.centerVertically();
+                    lblMusicArtist.setPosition(cover.getRelativeX() + cover.getWidth() + 4, lblMusicArtist.getRelativeY() + lblMusicArtist.getHeight() * .5 + 2);
+                    lblMusicArtist.setMaxWidth(this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4 + 80));
+                });
+
+        lblMusicArtist.setClickable(false);
+
+        LabelWidget lblMusicDuration = new LabelWidget(formatDuration(music.getDuration()), FontManager.pf14bold);
+        this.addChild(lblMusicDuration);
+        lblMusicDuration.setBeforeRenderCallback(() -> {
+            if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.getId() == music.getId())
+                lblMusicDuration.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            else
+                lblMusicDuration.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            lblMusicDuration.centerVertically();
+            lblMusicDuration.setPosition(this.getWidth() - 8 - lblMusicDuration.getWidth(), lblMusicDuration.getRelativeY());
+        });
+        lblMusicDuration.setClickable(false);
+
+        // ===== 收藏：歌曲喜欢/取消喜欢（★/☆）+ 加入歌单（+）=====
+        // 复用原项目 Music.setLike(like) → CloudMusicApi.like(id, like)（/api/radio/like）。
+        // 喜欢状态以 CloudMusic.likeList（登录时载入）为准：本地先改再异步发 API，避免阻塞主线程。
+        IconWidget btnLike = new IconWidget("☆", FontManager.pf16bold, 0, 0, 20, 20);
+        this.addChild(btnLike);
+        btnLike.setShouldOverrideMouseCursor(true);
+        btnLike.setBeforeRenderCallback(() -> {
+            boolean liked = CloudMusic.likeList != null && CloudMusic.likeList.contains(music.getId());
+            btnLike.setIcon(liked ? "★" : "☆");
+            btnLike.setColor(liked ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT) : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            btnLike.centerVertically();
+            btnLike.setPosition(lblMusicDuration.getRelativeX() - 4 - btnLike.getWidth(), btnLike.getRelativeY());
+        });
+        btnLike.setOnClickCallback((x, y, button) -> {
+            if (button != 0)
+                return false;
+            boolean liked = CloudMusic.likeList != null && CloudMusic.likeList.contains(music.getId());
+            boolean newLiked = !liked;
+            // 乐观更新本地状态，异步调用原 API
+            if (CloudMusic.likeList != null) {
+                if (newLiked) {
+                    if (!CloudMusic.likeList.contains(music.getId()))
+                        CloudMusic.likeList.add(music.getId());
+                } else {
+                    CloudMusic.likeList.remove(music.getId());
+                }
+            }
+            MultiThreadingUtil.runAsync(() -> music.setLike(newLiked));
+            return true;
+        });
+
+        IconWidget btnAddToPlaylist = new IconWidget("+", FontManager.pf16bold, 0, 0, 20, 20);
+        this.addChild(btnAddToPlaylist);
+        btnAddToPlaylist.setShouldOverrideMouseCursor(true);
+        btnAddToPlaylist.setBeforeRenderCallback(() -> {
+            btnAddToPlaylist.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            btnAddToPlaylist.centerVertically();
+            btnAddToPlaylist.setPosition(btnLike.getRelativeX() - 4 - btnAddToPlaylist.getWidth(), btnAddToPlaylist.getRelativeY());
+        });
+        btnAddToPlaylist.setOnClickCallback((x, y, button) -> {
+            if (button != 0)
+                return false;
+            NCMScreen.getInstance().openAddToPlaylist(music);
+            return true;
+        });
+    }
+
+    /**
+     * Gives freshly fetched tracks a short, staggered opacity entrance without
+     * moving their real layout bounds (so scrolling and hit-testing stay stable).
+     */
+    public MusicWidget setEntranceAnimation(long startedAt, long delayMillis) {
+        this.entranceStartedAt = startedAt;
+        this.entranceDelayMillis = Math.max(0L, delayMillis);
+        this.entranceAnimationFinished = false;
+        this.setAlpha(0f);
+        return this;
+    }
+
+    private void updateEntranceAnimation() {
+        if (entranceAnimationFinished) {
+            return;
+        }
+
+        long elapsed = System.currentTimeMillis() - entranceStartedAt - entranceDelayMillis;
+        if (elapsed <= 0L) {
+            this.setAlpha(0f);
+            return;
+        }
+
+        float progress = Math.min(1f, elapsed / (float) ENTRANCE_DURATION_MILLIS);
+        // Cubic ease-out makes the fade settle gently instead of appearing linear.
+        float easedProgress = 1f - (float) Math.pow(1f - progress, 3f);
+        this.setAlpha(easedProgress);
+
+        if (progress >= 1f) {
+            this.setAlpha(1f);
+            this.entranceAnimationFinished = true;
+        }
+    }
+    private String formatDuration(long totalMillis) {
+        long totalSeconds = totalMillis / 1000;
+
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        long seconds = totalSeconds % 60;
+
+        StringBuilder sb = new StringBuilder();
+
+        if (hours > 0) {
+            sb.append(String.format("%02d:", hours));
+        }
+
+        sb.append(String.format("%02d:", minutes));
+        sb.append(String.format("%02d", seconds));
+
+        return sb.toString();
+    }
+
+    private void loadCover() {
+
+        TextureManager textureManager = TextureManager.getInstance();
+        Location coverLoc = this.music.getSmallCoverLocation();
+        if (textureManager.getTexture(coverLoc) != null)
+            return;
+
+        Textures.downloadTextureAndLoadAsync(music.getCoverUrl(64), coverLoc);
+    }
+
+}
