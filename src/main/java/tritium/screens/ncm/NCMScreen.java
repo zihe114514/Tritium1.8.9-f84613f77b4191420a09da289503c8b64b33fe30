@@ -35,6 +35,9 @@ import java.util.List;
  */
 public class NCMScreen extends ExtensionScreen implements SharedConstants, SharedRenderingConstants {
 
+    /** 统一的播放器外框线宽；内容裁剪使用同一尺寸，避免模糊污染外框。 */
+    public static final double PLAYER_BORDER_THICKNESS = .8;
+
     @Getter
     private static NCMScreen instance = new NCMScreen();
 
@@ -74,6 +77,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
      */
     public AddToPlaylistOverlay addToPlaylistOverlay = null;
 
+    /** 双平台账号管理（含二维码登录二级页面）的模态覆盖层。 */
+    public AccountManagerOverlay accountManagerOverlay = null;
+
     /**
      * 表示是否需要重新布局, 当用户信息和用户歌单加载完设置为 true,
      * 然后会自动进行重新布局并设为 false
@@ -107,9 +113,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             this.dirty = false;
             this.layout();
 
-            // only when logged in
-            if (CloudMusic.profile != null)
-                this.setCurrentPanel(new HomePanel());
+            // 游客与 QQ 音乐模式同样允许进入主页/搜索，不再强制网易云登录遮罩。
+            this.setCurrentPanel(new HomePanel());
         }
     }
 
@@ -161,6 +166,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     public double getSpacing() {
         return 16.0;
+    }
+
+    public double getPlayerBorderThickness() {
+        return PLAYER_BORDER_THICKNESS;
     }
 
     private double getPlayerCornerRadius() {
@@ -237,7 +246,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         int dWheel = Mouse.getDWheel();
         // 加入歌单弹窗为模态：滚轮只应作用于弹窗内歌单列表，不能穿透到下方 basePanel/controlsBar。
         // 否则在弹窗内滚动时会同时滚动下层的歌单/歌曲列表。
-        int baseDWheel = (this.addToPlaylistOverlay != null) ? 0 : dWheel;
+        int baseDWheel = (this.addToPlaylistOverlay != null || this.accountManagerOverlay != null) ? 0 : dWheel;
 
         RenderSystem.FIXED_SCALE = true;
 
@@ -279,6 +288,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         if (this.musicLyricsPanel == null || this.musicLyricsPanel.alpha <= .9f) {
             this.basePanel.setAlpha(alpha);
             this.basePanel.renderWidget(mouseX, mouseY, baseDWheel);
+            // Re-assert the root rounded clip after child/framebuffer rendering.
+            StencilClipManager.restoreActiveClip();
 
             float alphaInterpolateSpeed = 0.4f;
             if (this.prevAnimatingPanel != null) {
@@ -311,6 +322,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             this.controlsBar.setAlpha(alpha);
             this.controlsBar.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY() + this.currentPanelBg.getHeight(), this.currentPanelBg.getWidth(), this.getPanelHeight() - this.currentPanelBg.getHeight());
             this.controlsBar.renderWidget(mouseX, mouseY, baseDWheel);
+            StencilClipManager.restoreActiveClip();
         }
         StencilClipManager.endClip();
 
@@ -321,6 +333,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                     cornerRadius, getColor(ColorType.GENERIC_BACKGROUND)
                             | ((int) (this.musicLyricsPanel.alpha * 255)) << 24);
             this.musicLyricsPanel.onRender(mouseX, mouseY, basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(), dWheel);
+            StencilClipManager.restoreActiveClip();
             StencilClipManager.endClip();
 
             if (this.musicLyricsPanel.shouldClose())
@@ -348,35 +361,22 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             StencilClipManager.endClip();
         }
 
-        boolean loggedIn = !OptionsUtil.getCookie().isEmpty();
-
-        if (!loggedIn && this.loginRenderer == null) {
-            this.loginRenderer = new LoginRenderer();
-        }
-
-        if (this.loginRenderer != null) {
+        // 账号管理始终位于最上层，并独占鼠标/滚轮输入。
+        if (this.accountManagerOverlay != null) {
             StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
                     basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
-            this.loginRenderer.render(mouseX, mouseY, basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(), basePanel.getAlpha());
-
-            if (this.loginRenderer.canClose() && !OptionsUtil.getCookie().isEmpty()) {
-                this.loginRenderer = null;
-                MultiThreadingUtil.runAsync(() -> {
-                    CloudMusic.loadNCM(OptionsUtil.getCookie());
-
-                    MultiThreadingUtil.runOnMainThread(() -> {
-                        this.layout();
-
-                        if (CloudMusic.profile != null)
-                            this.setCurrentPanel(new HomePanel());
-                    });
-                });
+            this.accountManagerOverlay.setBounds(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight());
+            this.accountManagerOverlay.setAlpha(alpha);
+            this.accountManagerOverlay.renderWidget(mouseX, mouseY, dWheel);
+            if (this.accountManagerOverlay.shouldClose()) {
+                this.accountManagerOverlay.dispose();
+                this.accountManagerOverlay = null;
             }
             StencilClipManager.endClip();
         }
 
         roundedOutline(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(),
-                cornerRadius, .8, new Color(255, 255, 255,
+                cornerRadius, getPlayerBorderThickness(), new Color(255, 255, 255,
                         Math.max(0, Math.min(255, (int) (alpha * 25)))));
         float glassAmount = NCMTheme.getLiquidGlassAmount();
         if (glassAmount > 0.001f) {
@@ -391,7 +391,6 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                     Math.max(1.0, basePanel.getWidth() - cornerRadius * 2.5), .7, .35,
                     1.0f, 1.0f, 1.0f, alpha * glassAmount * .30f);
         }
-
         api.getGLStateManager().popMatrix();
         RenderSystem.FIXED_SCALE = false;
         CursorUtils.setOverride();
@@ -469,12 +468,28 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
      * 复用原项目 PlayList.addToList(musicId) → CloudMusicApi.playlistTracks("add", pid, musicId)。
      */
     public void openAddToPlaylist(Music music) {
+        if (music != null && music.isQQ()) {
+            return; // QQ 曲目不可提交到网易云歌单。
+        }
         this.addToPlaylistOverlay = new AddToPlaylistOverlay(music);
         this.addToPlaylistOverlay.onInit();
     }
 
+    public void openAccountManager() {
+        if (this.accountManagerOverlay != null) this.accountManagerOverlay.dispose();
+        this.accountManagerOverlay = new AccountManagerOverlay();
+        this.accountManagerOverlay.onInit();
+    }
+
     @Override
     public void keyTyped(char typedChar, int keyCode) {
+
+        if (this.accountManagerOverlay != null) {
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.accountManagerOverlay.handleEscape();
+            }
+            return;
+        }
 
         // 加入歌单弹窗为模态：仅处理 ESC，其余按键不穿透到下层面板。
         if (this.addToPlaylistOverlay != null) {
@@ -516,6 +531,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         double yScale = RenderSystem.getHeightNotScaled() / (RenderSystem.getFixedHeight() * .5);
         double mouseX = mX / xScale;
         double mouseY = mY / yScale;
+
+        if (this.accountManagerOverlay != null) {
+            this.accountManagerOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
 
         // 加入歌单弹窗优先捕获鼠标，阻止点击穿透到下层歌单/歌曲列表。
         if (this.addToPlaylistOverlay != null) {

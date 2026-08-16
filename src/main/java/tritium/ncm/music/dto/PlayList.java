@@ -5,6 +5,8 @@ import com.google.gson.annotations.SerializedName;
 import lombok.Data;
 import tritium.ncm.RequestUtil;
 import tritium.ncm.api.CloudMusicApi;
+import tritium.ncm.music.CadenceMusicService;
+import tritium.ncm.music.MusicPlatform;
 import tritium.utils.Location;
 import tritium.utils.json.JsonUtils;
 import tritium.utils.other.multithreading.MultiThreadingUtil;
@@ -50,10 +52,29 @@ public class PlayList {
     // unique fields
     public transient List<Music> musics;
     private transient boolean searchMode = false;
+    /**
+     * 歌单来源。旧网易云对象没有该字段时保持 NETEASE，QQ 歌单则由
+     * CadenceMusicService 在适配时显式写入。
+     */
+    private transient MusicPlatform platform = MusicPlatform.NETEASE;
+    /** QQ 的 dissid/tid 原始字符串，避免把跨平台标识强行压缩成网易云 long id。 */
+    private transient String platformPlaylistId;
     public transient volatile boolean musicsQueried = false, musicsLoaded = false;
 
     public final Location getCoverLocation() {
-        return Location.of("tritium/textures/playlist/" + this.id + "/cover.png");
+        String source = getPlatform().name().toLowerCase(java.util.Locale.ROOT);
+        return Location.of("tritium/textures/playlist/" + source + "/" + this.id + "/cover.png");
+    }
+
+    public MusicPlatform getPlatform() {
+        return platform == null ? MusicPlatform.NETEASE : platform;
+    }
+
+    public String getPlatformPlaylistId() {
+        if (platformPlaylistId != null && !platformPlaylistId.trim().isEmpty()) {
+            return platformPlaylistId;
+        }
+        return String.valueOf(id);
     }
 
     public List<Music> getMusics() {
@@ -156,16 +177,26 @@ public class PlayList {
 
     private void queryMusics() {
         try {
-            RequestUtil.RequestAnswer requestAnswer = CloudMusicApi.playlistTrackAll(id, 8);
-            JsonArray songs = requestAnswer.toJsonObject().getAsJsonArray("songs");
-            if (songs == null) {
-                throw new IllegalStateException("playlist song detail response does not contain songs");
-            }
+            List<Music> loadedMusics;
+            if (getPlatform() == MusicPlatform.QQ) {
+                // QQ 的歌单 id 是字符串 dissid/tid，并且曲目对象需要保留 QQ source/mid。
+                loadedMusics = CadenceMusicService.getQQPlaylistTracks(
+                        getPlatformPlaylistId(), Math.max(100, count > 0 ? count : 100));
+                if (loadedMusics == null) {
+                    throw new IllegalStateException("QQ playlist track response is null");
+                }
+            } else {
+                RequestUtil.RequestAnswer requestAnswer = CloudMusicApi.playlistTrackAll(id, 8);
+                JsonArray songs = requestAnswer.toJsonObject().getAsJsonArray("songs");
+                if (songs == null) {
+                    throw new IllegalStateException("playlist song detail response does not contain songs");
+                }
 
-            // CopyOnWriteArrayList copies its backing array on every single add.
-            // Parse first, then publish the complete result in one addAll call.
-            List<Music> loadedMusics = new ArrayList<>(songs.size());
-            songs.forEach(element -> loadedMusics.add(JsonUtils.parse(element.getAsJsonObject(), Music.class)));
+                // CopyOnWriteArrayList copies its backing array on every single add.
+                // Parse first, then publish the complete result in one addAll call.
+                loadedMusics = new ArrayList<>(songs.size());
+                songs.forEach(element -> loadedMusics.add(JsonUtils.parse(element.getAsJsonObject(), Music.class)));
+            }
 
             synchronized (this) {
                 ensureMusicsList();
@@ -186,7 +217,9 @@ public class PlayList {
     }
 
     public void updPlayCount() {
-        CloudMusicApi.playlistUpdatePlaycount(this.id);
+        if (getPlatform() == MusicPlatform.NETEASE) {
+            CloudMusicApi.playlistUpdatePlaycount(this.id);
+        }
     }
 
     /**
@@ -208,22 +241,26 @@ public class PlayList {
      * 此方法仅负责调用原 API 链路（CloudMusicApi.subscribe → /weapi/playlist/subscribe|unsubscribe）。
      */
     public void subscribe(boolean subscribed) {
-        CloudMusicApi.subscribe(this.id, subscribed);
+        if (getPlatform() == MusicPlatform.NETEASE) {
+            CloudMusicApi.subscribe(this.id, subscribed);
+        }
     }
 
     public void removeFromList(long musicId) {
-        CloudMusicApi.playlistTracks("del", this.id, String.valueOf(musicId));
+        if (getPlatform() == MusicPlatform.NETEASE) {
+            CloudMusicApi.playlistTracks("del", this.id, String.valueOf(musicId));
+        }
     }
 
     @Override
     public boolean equals(Object o) {
         if (o == null || getClass() != o.getClass()) return false;
         PlayList playList = (PlayList) o;
-        return id == playList.id;
+        return id == playList.id && getPlatform() == playList.getPlatform();
     }
 
     @Override
     public int hashCode() {
-        return Objects.hashCode(id);
+        return Objects.hash(id, getPlatform());
     }
 }

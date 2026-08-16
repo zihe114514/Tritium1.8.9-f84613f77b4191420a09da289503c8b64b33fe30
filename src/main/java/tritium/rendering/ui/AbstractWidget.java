@@ -138,6 +138,18 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
     }
 
     /**
+     * 在当前组件完成布局和自身绘制后、开始绘制子组件前调用。
+     */
+    protected void beforeRenderChildren(double mouseX, double mouseY) {
+    }
+
+    /**
+     * 在当前组件的所有子组件绘制完成后调用。
+     */
+    protected void afterRenderChildren(double mouseX, double mouseY) {
+    }
+
+    /**
      * 渲染这个组件以及它的子组件.
      * @param mouseX 鼠标 X 坐标
      * @param mouseY 鼠标 Y 坐标
@@ -163,24 +175,29 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
 
         boolean childHovering = false;
 
-        // 渲染所有子组件
-        for (AbstractWidget<?> child : this.getChildren()) {
+        this.beforeRenderChildren(mouseX, mouseY);
+        try {
+            // 渲染所有子组件
+            for (AbstractWidget<?> child : this.getChildren()) {
 
-            if (child.isHidden())
-                continue;
+                if (child.isHidden())
+                    continue;
 
-            if (!this.shouldRenderChildren(child, mouseX, mouseY))
-                continue;
+                if (!this.shouldRenderChildren(child, mouseX, mouseY))
+                    continue;
 
-            child.renderWidget(mouseX, mouseY, dWheel);
+                child.renderWidget(mouseX, mouseY, dWheel);
 
-            if (debug) {
-                child.renderDebugLayout();
+                if (debug) {
+                    child.renderDebugLayout();
+                }
+
+                if (!childHovering && child.isClickable() && child.testHovered(mouseX, mouseY)) {
+                    childHovering = true;
+                }
             }
-
-            if (!childHovering && child.isClickable() && child.testHovered(mouseX, mouseY)) {
-                childHovering = true;
-            }
+        } finally {
+            this.afterRenderChildren(mouseX, mouseY);
         }
 
         if (debug) {

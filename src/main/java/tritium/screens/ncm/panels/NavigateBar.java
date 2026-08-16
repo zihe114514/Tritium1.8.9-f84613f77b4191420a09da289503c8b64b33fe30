@@ -4,9 +4,12 @@ import lombok.Getter;
 import lombok.Setter;
 import org.lwjgl.input.Keyboard;
 import tritium.management.FontManager;
+import tritium.ncm.music.CadenceMusicService;
 import tritium.ncm.music.CloudMusic;
+import tritium.ncm.music.MusicPlatform;
 import tritium.ncm.music.dto.Music;
 import tritium.ncm.music.dto.PlayList;
+import tritium.rendering.DownloadDynamicIsland;
 import tritium.rendering.TextureManager;
 import tritium.rendering.animation.Interpolations;
 import tritium.rendering.rendersystem.RenderSystem;
@@ -161,12 +164,37 @@ public class NavigateBar extends NCMPanel {
 //            Rect.draw(searchField.getX(), searchField.getY(), searchField.getWidth(), searchField.getHeight(), 0x800090ff);
         });
 
+        Panel sourceSwitcher = new Panel();
+        this.addChild(sourceSwitcher);
+        sourceSwitcher.setBeforeRenderCallback(() -> {
+            sourceSwitcher.setBounds(Math.max(1, this.getWidth() - 16), 18);
+            sourceSwitcher.setPosition(8, searchBar.getRelativeY() + searchBar.getHeight() + 5);
+        });
+
+        RoundedRectWidget sourceTrack = new RoundedRectWidget();
+        sourceTrack.setClickable(false);
+        sourceSwitcher.addChild(sourceTrack);
+        sourceTrack.setBeforeRenderCallback(() -> {
+            sourceTrack.setBounds(0, 0, sourceSwitcher.getWidth(), sourceSwitcher.getHeight());
+            sourceTrack.setRadius(6);
+            sourceTrack.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            sourceTrack.setAlpha(.72f);
+        });
+
+SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
+        SourceButton qqSource = createSourceButton(MusicPlatform.QQ);
+        sourceSwitcher.addChild(neteaseSource);
+        sourceSwitcher.addChild(qqSource);
+        neteaseSource.setBeforeRenderCallback(() -> layoutSourceButton(neteaseSource, sourceSwitcher, MusicPlatform.NETEASE, false));
+        qqSource.setBeforeRenderCallback(() -> layoutSourceButton(qqSource, sourceSwitcher, MusicPlatform.QQ, true));
+
         this.addChild(playlistPanel);
         this.playlistPanel.setBeforeRenderCallback(() -> {
             this.playlistPanel.setMargin(0);
-            this.playlistPanel.setPosition(this.playlistPanel.getRelativeX(), searchBar.getRelativeY() + searchBar.getHeight() + 8);
-            // 为播放器大小调节、主题按钮和用户信息预留底部空间。
-            this.playlistPanel.setBounds(this.playlistPanel.getWidth(), this.playlistPanel.getHeight() - searchBar.getHeight() - 16 - 82);
+            double top = sourceSwitcher.getRelativeY() + sourceSwitcher.getHeight() + 7;
+            this.playlistPanel.setPosition(this.playlistPanel.getRelativeX(), top);
+            // 为紧凑快捷操作栏和账号入口预留底部空间。
+            this.playlistPanel.setBounds(this.playlistPanel.getWidth(), Math.max(0, this.getHeight() - top - 70));
         });
 
         this.playlistPanel.setSpacing(4);
@@ -181,6 +209,7 @@ public class NavigateBar extends NCMPanel {
 
         {
             PlaylistItem item = new PlaylistItem("A", () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT), () -> "主页", () -> NCMScreen.getInstance().setCurrentPanel(new HomePanel()));
+            item.setSelected(true);
 
             item.setShouldOverrideMouseCursor(true);
 
@@ -195,17 +224,56 @@ public class NavigateBar extends NCMPanel {
 
         this.playlistPanel.addChild(lblPlaylists);
 
-        List<PlayList> pl = CloudMusic.playLists;
+        boolean qqMode = CadenceMusicService.getCurrentPlatform() == MusicPlatform.QQ;
+        boolean neteaseMode = !qqMode;
+        // QQ 账号歌单由 Cadence 异步加载；网易云继续使用现有 CloudMusic 缓存。
+        List<PlayList> pl = qqMode
+                ? CadenceMusicService.getQQUserPlaylistsSnapshot()
+                : CloudMusic.playLists;
 
-        if (pl != null) {
-            List<PlayList> playLists = pl.stream().filter(playList -> !playList.isSubscribed()).collect(java.util.stream.Collectors.toList());
-            for (int i = 0; i < playLists.size(); i++) {
-                PlayList playList = playLists.get(i);
-                PlaylistItem item = new PlaylistItem(i == 0 ? "C" : "D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), playList::getName, () -> NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playList)));
-                item.setShouldOverrideMouseCursor(true);
+        if (qqMode && CadenceMusicService.isLoggedIn(MusicPlatform.QQ)
+                && !CadenceMusicService.areQQUserPlaylistsLoaded()) {
+            CadenceMusicService.ensureQQUserPlaylistsAsync(() ->
+                    MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().markDirty()));
+        }
 
-                this.playlistPanel.addChild(item);
+        // QQ 的创建/收藏歌单统一显示在“我的歌单”下，不再因为平台切换而隐藏整个入口。
+        lblPlaylists.setHidden(false);
+        if (pl != null && !pl.isEmpty()) {
+            if (qqMode) {
+                for (PlayList playList : pl) {
+                    PlaylistItem item = new PlaylistItem("D",
+                            () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                            playList::getName,
+                            () -> NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playList)));
+                    item.setShouldOverrideMouseCursor(true);
+                    this.playlistPanel.addChild(item);
+                }
+            } else {
+                List<PlayList> playLists = pl.stream()
+                        .filter(playList -> !playList.isSubscribed())
+                        .collect(java.util.stream.Collectors.toList());
+                for (int i = 0; i < playLists.size(); i++) {
+                    PlayList playList = playLists.get(i);
+                    PlaylistItem item = new PlaylistItem(i == 0 ? "C" : "D",
+                            () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                            playList::getName,
+                            () -> NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playList)));
+                    item.setShouldOverrideMouseCursor(true);
+                    this.playlistPanel.addChild(item);
+                }
             }
+        } else if (qqMode) {
+            String status = !CadenceMusicService.isLoggedIn(MusicPlatform.QQ)
+                    ? "登录 QQ 音乐后加载歌单"
+                    : (CadenceMusicService.areQQUserPlaylistsLoading()
+                    ? "正在加载 QQ 歌单…" : "暂无可用 QQ 歌单");
+            PlaylistItem statusItem = new PlaylistItem("·",
+                    () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                    () -> status,
+                    () -> NCMScreen.getInstance().openAccountManager());
+            statusItem.setShouldOverrideMouseCursor(true);
+            this.playlistPanel.addChild(statusItem);
         }
 
         LabelWidget lblSubscribed = new LabelWidget("收藏歌单", FontManager.pf14bold);
@@ -214,80 +282,161 @@ public class NavigateBar extends NCMPanel {
             lblSubscribed.setPosition(6, lblSubscribed.getRelativeY());
         });
 
+        lblSubscribed.setHidden(qqMode);
         this.playlistPanel.addChild(lblSubscribed);
 
-        if (pl != null) {
+        if (neteaseMode && pl != null) {
             pl.stream().filter(PlayList::isSubscribed).forEach(playList -> {
                 PlaylistItem item = new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), playList::getName, () -> NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playList)));
                 item.setShouldOverrideMouseCursor(true);
-
                 this.playlistPanel.addChild(item);
             });
         }
-
-        RoundedImageWidget creatorAvatar = new RoundedImageWidget(this.getUserAvatarLocation(), 0, 0, 0, 0);
-        this.addChild(creatorAvatar);
-        creatorAvatar.fadeIn();
-        creatorAvatar.setLinearFilter(true);
-
-        this.loadAvatar();
-
-        RoundedButtonWidget btnPlayerSize = new RoundedButtonWidget(
-                () -> (this.getWidth() < 88 ? "大小 · " : "播放器大小 · ") + NCMPlayerConfig.getPlayerScalePercent() + "%", FontManager.pf12bold
-        );
-        this.addChild(btnPlayerSize);
-        btnPlayerSize.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-            if (mouseButton == 0) {
-                NCMPlayerConfig.cycleScale();
-            } else if (mouseButton == 1) {
-                NCMPlayerConfig.resetScale();
-            }
+        RoundedRectWidget accountButton = new RoundedRectWidget();
+        this.addChild(accountButton);
+        accountButton.setRadius(6);
+        accountButton.setShouldOverrideMouseCursor(true);
+        accountButton.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            NCMScreen.getInstance().openAccountManager();
             return true;
         });
-        btnPlayerSize.setBeforeRenderCallback(() -> {
-            btnPlayerSize.setBounds(Math.max(1, this.getWidth() - 16), 18);
-            btnPlayerSize.setPosition(8, this.getHeight() - 72);
-            btnPlayerSize.setRadius(5);
-            btnPlayerSize.setColor(btnPlayerSize.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-            btnPlayerSize.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+        accountButton.setBeforeRenderCallback(() -> {
+            accountButton.setBounds(Math.max(1, this.getWidth() - 16), 22);
+            accountButton.setPosition(8, this.getHeight() - 27);
+            accountButton.setColor(accountButton.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            accountButton.setAlpha(accountButton.isHovering() ? .85f : .38f);
         });
 
-        RoundedButtonWidget btnTheme = new RoundedButtonWidget(
-                () -> "主题 · " + NCMTheme.getCurrentName(), FontManager.pf12bold
-        );
-        this.addChild(btnTheme);
+        RoundedImageWidget creatorAvatar = new RoundedImageWidget(this::getUserAvatarLocation, 0, 0, 0, 0);
+        this.addChild(creatorAvatar);
+        creatorAvatar.fadeIn();
+        creatorAvatar.setClickable(false);
+        creatorAvatar.setLinearFilter(true);
+        this.loadAvatar();
+
+        RoundedRectWidget quickActionsSurface = new RoundedRectWidget();
+        this.addChild(quickActionsSurface);
+        quickActionsSurface.setClickable(false);
+        quickActionsSurface.setBeforeRenderCallback(() -> {
+            // Keep the action rail compact but give the three icon buttons enough
+            // breathing room at narrow sidebar widths.
+            quickActionsSurface.setBounds(Math.max(1, this.getWidth() - 16), 32);
+            quickActionsSurface.setPosition(8, this.getHeight() - 63);
+            quickActionsSurface.setRadius(9);
+            quickActionsSurface.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+            quickActionsSurface.setAlpha(.82f);
+        });
+
+        SidebarActionButton btnTheme = new SidebarActionButton(SidebarActionIcon.THEME);
+        SidebarActionButton btnPlayerSize = new SidebarActionButton(SidebarActionIcon.SCALE);
+        SidebarActionButton btnRefresh = new SidebarActionButton(SidebarActionIcon.REFRESH);
+        quickActionsSurface.addChild(btnTheme, btnPlayerSize, btnRefresh);
+
         btnTheme.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+            if (mouseButton != 0 && mouseButton != 1) return false;
             if (mouseButton == 0) {
                 NCMScreen.getInstance().cycleThemeFrom(
                         btnTheme.getX() + btnTheme.getWidth() * .5,
                         btnTheme.getY() + btnTheme.getHeight() * .5);
             }
+            DownloadDynamicIsland.showTheme(NCMTheme.getCurrentName());
+            return true;
+        });
+
+        btnPlayerSize.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+            if (mouseButton == 0) {
+                NCMPlayerConfig.cycleScale();
+            } else if (mouseButton == 1) {
+                NCMPlayerConfig.resetScale();
+            } else {
+                return false;
+            }
+            DownloadDynamicIsland.showPlayerScale(NCMPlayerConfig.getPlayerScalePercent());
+            return true;
+        });
+
+        btnRefresh.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+            if (mouseButton != 0) return mouseButton == 1;
+            if (CadenceMusicService.getCurrentPlatform() != MusicPlatform.NETEASE) {
+                DownloadDynamicIsland.showPlaylistRefreshFailure("QQ 音乐暂不支持歌单刷新");
+                return true;
+            }
+            if (!CloudMusic.beginNeteaseRefresh()) {
+                btnRefresh.setSpinning(true);
+                DownloadDynamicIsland.showPlaylistRefreshInProgress();
+                return true;
+            }
+
+            btnRefresh.setSpinning(true);
+            DownloadDynamicIsland.showPlaylistRefreshInProgress();
+            MultiThreadingUtil.runAsync(() -> {
+                CloudMusic.NeteaseRefreshResult result = CloudMusic.refreshNeteaseAccountData();
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    try {
+                        btnRefresh.setSpinning(false);
+                        if (result.isSuccess()) {
+                            NCMScreen.getInstance().markDirty();
+                            DownloadDynamicIsland.showPlaylistRefreshSuccess(
+                                    result.getPlaylistCount(), result.getElapsedMillis());
+                        } else {
+                            DownloadDynamicIsland.showPlaylistRefreshFailure(result.getMessage());
+                        }
+                    } finally {
+                        CloudMusic.endNeteaseRefresh();
+                    }
+                });
+            });
             return true;
         });
         btnTheme.setBeforeRenderCallback(() -> {
-            btnTheme.setBounds(Math.max(1, this.getWidth() - 16), 18);
-            btnTheme.setPosition(8, this.getHeight() - 50);
-            btnTheme.setRadius(5);
+            double actionWidth = Math.max(1, (quickActionsSurface.getWidth() - 8) / 3.0);
+            btnTheme.setBounds(actionWidth, 28);
+            btnTheme.setPosition(2, 2);
+            btnTheme.setRadius(7);
             btnTheme.setColor(btnTheme.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT_HOVER)
-                    : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
-            btnTheme.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
 
+        btnPlayerSize.setBeforeRenderCallback(() -> {
+            double actionWidth = Math.max(1, (quickActionsSurface.getWidth() - 8) / 3.0);
+            btnPlayerSize.setBounds(actionWidth, 28);
+            btnPlayerSize.setPosition(4 + actionWidth, 2);
+            btnPlayerSize.setRadius(7);
+            btnPlayerSize.setColor(btnPlayerSize.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+        });
+
+        btnRefresh.setBeforeRenderCallback(() -> {
+            double actionWidth = Math.max(1, (quickActionsSurface.getWidth() - 8) / 3.0);
+            btnRefresh.setBounds(actionWidth, 28);
+            btnRefresh.setPosition(6 + actionWidth * 2, 2);
+            btnRefresh.setRadius(7);
+            boolean enabled = CadenceMusicService.getCurrentPlatform() == MusicPlatform.NETEASE;
+            btnRefresh.setAlpha(enabled ? 1f : .36f);
+            btnRefresh.setColor(btnRefresh.isHovering() && enabled
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+        });
         creatorAvatar.setBeforeRenderCallback(() -> {
             creatorAvatar.setBounds(16, 16);
-            creatorAvatar.setPosition(12, this.getHeight() - 8 - creatorAvatar.getHeight());
+            creatorAvatar.setPosition(12, this.getHeight() - 24);
             creatorAvatar.setRadius(7.25);
         });
 
-        LabelWidget lblCreator = new LabelWidget(() -> CloudMusic.profile == null ? "未登录" : CloudMusic.profile.getName(), FontManager.pf16bold);
+        LabelWidget lblCreator = new LabelWidget(() -> CadenceMusicService.getCurrentPlatform().getDisplayName() + " · "
+                + CadenceMusicService.getAccountName(CadenceMusicService.getCurrentPlatform()), FontManager.pf14bold);
         this.addChild(lblCreator);
-
+        lblCreator.setClickable(false);
         lblCreator.setBeforeRenderCallback(() -> {
-            lblCreator.setPosition(creatorAvatar.getRelativeX() + creatorAvatar.getWidth() + 4, creatorAvatar.getRelativeY() + creatorAvatar.getHeight() * .5 - lblCreator.getHeight() * .5);
+            lblCreator.setPosition(creatorAvatar.getRelativeX() + creatorAvatar.getWidth() + 4,
+                    creatorAvatar.getRelativeY() + creatorAvatar.getHeight() * .5 - lblCreator.getHeight() * .5);
             lblCreator.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            lblCreator.setMaxWidth(Math.max(1, this.getWidth() - lblCreator.getRelativeX() - 12));
         });
     }
 
@@ -297,25 +446,232 @@ public class NavigateBar extends NCMPanel {
     }
 
     private void loadAvatar() {
-
-        if (CloudMusic.profile == null) {
-            return;
+        MusicPlatform platform = CadenceMusicService.getCurrentPlatform();
+        String url;
+        Location avatarLoc = getUserAvatarLocation();
+        if (platform == MusicPlatform.QQ) {
+            url = CadenceMusicService.getQQAvatarUrl();
+        } else {
+            url = CloudMusic.profile == null ? "" : CloudMusic.profile.getAvatarUrl() + "?param=32y32";
         }
-
-        TextureManager textureManager = TextureManager.getInstance();
-        Location avatarLoc = this.getUserAvatarLocation();
-        if (textureManager.getTexture(avatarLoc) != null)
-            return;
-
-        Textures.downloadTextureAndLoadAsync(CloudMusic.profile.getAvatarUrl() + "?param=32y32", avatarLoc);
+        if (avatarLoc == null || url == null || url.trim().isEmpty()) return;
+        if (TextureManager.getInstance().getTexture(avatarLoc) == null) {
+            Textures.downloadTextureAndLoadAsync(url, avatarLoc);
+        }
     }
 
     private Location getUserAvatarLocation() {
-        if (CloudMusic.profile == null) {
-            return null;
+        if (CadenceMusicService.getCurrentPlatform() == MusicPlatform.QQ) {
+            return CadenceMusicService.getQQAvatarUrl().isEmpty()
+                    ? null : Location.of("tritium/textures/account/qq_avatar.png");
+        }
+        return CloudMusic.profile == null ? null : CloudMusic.profile.getAvatarLocation();
+    }
+
+    private SourceButton createSourceButton(MusicPlatform platform) {
+        SourceButton button = new SourceButton(platform);
+        button.setOnClickCallback((x, y, mouseButton) -> {
+            if (mouseButton != 0) return false;
+            if (CadenceMusicService.getCurrentPlatform() != platform) {
+                CadenceMusicService.setCurrentPlatform(platform);
+                NCMScreen.getInstance().markDirty();
+            }
+            return true;
+        });
+        return button;
+    }
+
+    private void layoutSourceButton(SourceButton button, Panel parent, MusicPlatform platform, boolean right) {
+        double gap = 3;
+        double width = Math.max(1, (parent.getWidth() - gap) * .5);
+        button.setBounds(width, parent.getHeight());
+        button.setPosition(right ? width + gap : 0, 0);
+    }
+
+    private final class SourceButton extends Panel {
+        private final MusicPlatform platform;
+        private final RoundedRectWidget background = new RoundedRectWidget();
+        private final LabelWidget label;
+
+        private SourceButton(MusicPlatform platform) {
+            this.platform = platform;
+            this.setShouldOverrideMouseCursor(true);
+
+            this.background.setClickable(false);
+            this.addChild(this.background);
+            this.background.setBeforeRenderCallback(() -> {
+                boolean selected = CadenceMusicService.getCurrentPlatform() == this.platform;
+                this.background.setBounds(1, 1, Math.max(1, this.getWidth() - 2), Math.max(1, this.getHeight() - 2));
+                this.background.setRadius(4.5);
+                this.background.setColor(selected
+                        ? this.platform.getBrandColor()
+                        : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER));
+                this.background.setAlpha(selected ? .96f : (this.isHovering() ? .45f : 0f));
+            });
+
+            this.label = new LabelWidget(
+                    () -> NavigateBar.this.getWidth() < 112
+                            ? (this.platform == MusicPlatform.QQ ? "Q" : "N")
+                            : (this.platform == MusicPlatform.QQ ? "Q  QQ音乐" : "N  网易云"),
+                    FontManager.pf12bold);
+            this.label.setClickable(false);
+            this.addChild(this.label);
+            this.label.setBeforeRenderCallback(() -> {
+                this.label.center();
+                this.label.setColor(CadenceMusicService.getCurrentPlatform() == this.platform
+                        ? 0xFFFFFF
+                        : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            });
+        }
+    }
+    private enum SidebarActionIcon {
+        THEME,
+        SCALE,
+        REFRESH
+    }
+
+    /** Compact vector icon button that stays legible at every player scale. */
+    private static final class SidebarActionButton extends RoundedRectWidget {
+        private final SidebarActionIcon icon;
+        private float hoverAnimation;
+        private float pressAnimation;
+        private volatile boolean spinning;
+        private long lastClickAt;
+
+        private SidebarActionButton(SidebarActionIcon icon) {
+            this.icon = icon;
+            this.setShouldOverrideMouseCursor(true);
         }
 
-        return CloudMusic.profile.getAvatarLocation();
+        private void setSpinning(boolean spinning) {
+            this.spinning = spinning;
+        }
+
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            hoverAnimation = Interpolations.interpolate(hoverAnimation, isHovering() ? 1f : 0f, .22f);
+            boolean recentlyPressed = System.currentTimeMillis() - lastClickAt < 170L;
+            pressAnimation = Interpolations.interpolate(pressAnimation, recentlyPressed ? 1f : 0f, .30f);
+
+            int base = NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND);
+            int hover = NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER);
+            setColor(mixColor(base, hover, .18f + hoverAnimation * .58f));
+            super.onRender(mouseX, mouseY);
+
+            double centerX = getX() + getWidth() * .5;
+            double centerY = getY() + getHeight() * .5;
+            double iconScale = 1.00 + hoverAnimation * .07 - pressAnimation * .045;
+            float alpha = getAlpha() * (.84f + hoverAnimation * .16f);
+            int accent = RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), alpha);
+            int foreground = RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), alpha);
+
+            // A restrained accent halo makes the glyph readable without introducing
+            // a second opaque button layer or leaking the GUI render state.
+            if (hoverAnimation > .01f) {
+                roundedRect(centerX - 8.0, centerY - 8.0, 16.0, 16.0, 8.0,
+                        RenderSystem.reAlpha(accent, hoverAnimation * .13f));
+                roundedRect(getX() + 5.0, getY() + getHeight() - 2.0,
+                        Math.max(1.0, getWidth() - 10.0), 1.15, .55,
+                        RenderSystem.reAlpha(accent, hoverAnimation * .90f));
+            }
+
+            api.getGLStateManager().pushMatrix();
+            scaleAtPos(centerX, centerY, iconScale);
+            if (icon == SidebarActionIcon.THEME) {
+                renderThemeIcon(centerX, centerY, alpha, accent, foreground);
+            } else if (icon == SidebarActionIcon.SCALE) {
+                renderScaleIcon(centerX, centerY, alpha, accent, foreground);
+            } else {
+                renderRefreshIcon(centerX, centerY, alpha, accent, foreground);
+            }
+            api.getGLStateManager().popMatrix();
+        }
+
+        @Override
+        public boolean onMouseClicked(double relativeX, double relativeY, int mouseButton) {
+            lastClickAt = System.currentTimeMillis();
+            return super.onMouseClicked(relativeX, relativeY, mouseButton);
+        }
+
+        private void renderThemeIcon(double x, double y, float alpha, int accent, int foreground) {
+            // Four softly colored palette dots are more recognizable than the old
+            // cross-shaped glyph and remain crisp at the narrow sidebar scale.
+            roundedRect(x - 1.7, y - 5.4, 3.4, 3.4, 1.7,
+                    RenderSystem.reAlpha(accent, alpha));
+            roundedRect(x - 5.4, y - 1.7, 3.4, 3.4, 1.7,
+                    RenderSystem.reAlpha(0xFF73B9FF, alpha * .92f));
+            roundedRect(x + 2.0, y - 1.7, 3.4, 3.4, 1.7,
+                    RenderSystem.reAlpha(0xFFFF86B8, alpha * .92f));
+            roundedRect(x - 1.7, y + 2.0, 3.4, 3.4, 1.7,
+                    RenderSystem.reAlpha(0xFF75E0B1, alpha * .92f));
+            roundedRect(x - .85, y - .85, 1.7, 1.7, .85,
+                    RenderSystem.reAlpha(foreground, alpha * .76f));
+        }
+
+        private void renderRefreshIcon(double x, double y, float alpha, int accent, int foreground) {
+            long now = System.currentTimeMillis();
+            double rotation = spinning ? (now / 6.0) % 360.0 : -28.0;
+            final int segments = 8;
+            for (int segment = 0; segment < segments; segment++) {
+                // Leave two gaps in the ring to make the refresh silhouette readable.
+                if (segment == 2 || segment == 6) continue;
+                float segmentAlpha = alpha * (spinning
+                        ? (.32f + .68f * (1f - segment / 8f))
+                        : .86f);
+                api.getGLStateManager().pushMatrix();
+                api.getGLStateManager().translate(x, y, 0);
+                api.getGLStateManager().rotate((float) (rotation + segment * 45.0), 0, 0, 1);
+                roundedRect(-.65, -6.0, 1.3, 2.55, .65,
+                        RenderSystem.reAlpha(spinning ? accent : foreground, segmentAlpha));
+                api.getGLStateManager().popMatrix();
+            }
+            // Small arrow tips close the two gaps and turn the ring into a clear
+            // refresh symbol rather than a generic loading spinner.
+            drawRotatedPill(x - 3.65, y - 3.55, 3.4, 1.15, -42f,
+                    RenderSystem.reAlpha(spinning ? accent : foreground, alpha));
+            drawRotatedPill(x + 3.65, y + 3.55, 3.4, 1.15, 138f,
+                    RenderSystem.reAlpha(spinning ? accent : foreground, alpha));
+        }
+
+        private void renderScaleIcon(double x, double y, float alpha, int accent, int foreground) {
+            double left = x - 5.2;
+            double top = y - 5.2;
+            double right = x + 5.2;
+            double bottom = y + 5.2;
+            double thickness = 1.15;
+            double arm = 3.65;
+            int corner = RenderSystem.reAlpha(foreground, alpha);
+            int highlight = RenderSystem.reAlpha(accent, alpha * .94f);
+
+            roundedRect(left, top, arm, thickness, thickness * .5, highlight);
+            roundedRect(left, top, thickness, arm, thickness * .5, highlight);
+            roundedRect(right - arm, top, arm, thickness, thickness * .5, corner);
+            roundedRect(right - thickness, top, thickness, arm, thickness * .5, corner);
+            roundedRect(left, bottom - thickness, arm, thickness, thickness * .5, corner);
+            roundedRect(left, bottom - arm, thickness, arm, thickness * .5, corner);
+            roundedRect(right - arm, bottom - thickness, arm, thickness, thickness * .5, highlight);
+            roundedRect(right - thickness, bottom - arm, thickness, arm, thickness * .5, highlight);
+            roundedRect(x - .8, y - .8, 1.6, 1.6, .8,
+                    RenderSystem.reAlpha(foreground, alpha * .72f));
+        }
+
+        private void drawRotatedPill(double centerX, double centerY, double width, double height,
+                                     float rotation, int color) {
+            api.getGLStateManager().pushMatrix();
+            api.getGLStateManager().translate(centerX, centerY, 0);
+            api.getGLStateManager().rotate(rotation, 0, 0, 1);
+            roundedRect(-width * .5, -height * .5, width, height, height * .5, color);
+            api.getGLStateManager().popMatrix();
+        }
+
+        private int mixColor(int first, int second, float amount) {
+            float t = Math.max(0f, Math.min(1f, amount));
+            int a = (int) (((first >>> 24) & 255) * (1f - t) + ((second >>> 24) & 255) * t);
+            int r = (int) (((first >>> 16) & 255) * (1f - t) + ((second >>> 16) & 255) * t);
+            int g = (int) (((first >>> 8) & 255) * (1f - t) + ((second >>> 8) & 255) * t);
+            int b = (int) ((first & 255) * (1f - t) + (second & 255) * t);
+            return (a << 24) | (r << 16) | (g << 8) | b;
+        }
     }
 
     @Override
@@ -342,7 +698,10 @@ public class NavigateBar extends NCMPanel {
             this.onClick = onClick;
 
             this.setBeforeRenderCallback(() -> {
-                this.setBounds(this.getParentWidth(), 16);
+                // The item is inset by four pixels on both sides. Subtract the insets from
+                // its live width as the player scales so neither background nor text can
+                // extend past the navigation viewport.
+                this.setBounds(Math.max(1, this.getParentWidth() - 8), 16);
                 this.setPosition(4, this.getRelativeY());
             });
 

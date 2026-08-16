@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class PlaybackSession {
 
     public final long sessionId;
+    public final String trackKey;
     public final long songId;
     public final AtomicBoolean active = new AtomicBoolean(true);
 
@@ -30,8 +31,9 @@ public class PlaybackSession {
     /** 本 Session 绑定的 AudioPlayer（单例复用）。 */
     public volatile AudioPlayer player = null;
 
-    public PlaybackSession(long sessionId, long songId) {
+    public PlaybackSession(long sessionId, String trackKey, long songId) {
         this.sessionId = sessionId;
+        this.trackKey = trackKey == null ? "" : trackKey;
         this.songId = songId;
     }
 

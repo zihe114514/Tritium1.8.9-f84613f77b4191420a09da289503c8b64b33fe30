@@ -88,15 +88,20 @@ public class CloudMusic implements SharedConstants {
     public static volatile PlaybackSession currentSession = null;
 
     public static volatile AudioPlayer player;
+    private static final Object PLAYER_STATE_LOCK = new Object();
+    private static final long PLAY_THREAD_JOIN_TIMEOUT_MS = 1000L;
     // 当前播放列表
     public static List<Music> playList = new ArrayList<>();
     public static int curIdx = 0;
     public static volatile Music currentlyPlaying;
     public static Thread playThread;
 
-    public static User profile;
-    public static List<PlayList> playLists;
-    public static List<Long> likeList;
+    public static volatile User profile;
+    public static volatile List<PlayList> playLists;
+    public static volatile List<Long> likeList;
+
+    /** Prevents duplicate account refresh requests while the previous one is still running. */
+    private static final AtomicBoolean NETEASE_REFRESHING = new AtomicBoolean(false);
 
     public static volatile PlayMode playMode = PlayMode.Sequential;
 
@@ -113,6 +118,12 @@ public class CloudMusic implements SharedConstants {
     @SneakyThrows
     public static void initNCM() {
         String cookie = getCookieFromFileOrOptions();
+        CadenceMusicService.initialize(cookie);
+        // Cadence 的凭证存储可能持有从新版账号管理中保存的网易云 Cookie。
+        // 初始化后重新读取 Options，保证旧资料/歌单加载链路仍可复用。
+        if (cookie.isEmpty()) {
+            cookie = OptionsUtil.getCookie();
+        }
 
         if (cookie.isEmpty()) {
             System.out.println("[NCM] Not logged in.");
@@ -132,8 +143,8 @@ public class CloudMusic implements SharedConstants {
     }
 
     private static String getCookieFromFileOrOptions() {
-        String cookie = loadCookie();
-        return cookie.isEmpty() ? OptionsUtil.getCookie() : cookie;
+        String optionCookie = OptionsUtil.getCookie();
+        return optionCookie == null || optionCookie.isEmpty() ? loadCookie() : optionCookie;
     }
 
     public static void loadNCM(String cookie) {
@@ -181,6 +192,97 @@ public class CloudMusic implements SharedConstants {
             return profile.playLists(page, 30);
         } catch (Exception e) {
             return new ArrayList<>();
+        }
+    }
+
+    /** Attempts to claim the single网易云刷新 slot. */
+    public static boolean beginNeteaseRefresh() {
+        return NETEASE_REFRESHING.compareAndSet(false, true);
+    }
+
+    public static void endNeteaseRefresh() {
+        NETEASE_REFRESHING.set(false);
+    }
+
+    /**
+     * Reloads the logged-in网易云 account data without invoking initial-login side effects.
+     * Network work is performed on the caller's thread. Published snapshots are replaced only
+     * after all requests have completed successfully, so transient failures preserve old data.
+     */
+    public static NeteaseRefreshResult refreshNeteaseAccountData() {
+        long startedAt = System.currentTimeMillis();
+        String cookie = getCookieFromFileOrOptions();
+        if (cookie == null || cookie.trim().isEmpty()) {
+            return NeteaseRefreshResult.failure(System.currentTimeMillis() - startedAt, "未登录网易云账号");
+        }
+
+        try {
+            OptionsUtil.setCookie(cookie);
+            User refreshedProfile = getUserProfile();
+            if (refreshedProfile == null) {
+                return NeteaseRefreshResult.failure(System.currentTimeMillis() - startedAt, "登录状态已失效");
+            }
+
+            List<PlayList> refreshedPlaylists = loadUserPlaylistsStrict(refreshedProfile);
+            List<Long> refreshedLikeList = loadLikeList(refreshedProfile);
+
+            profile = refreshedProfile;
+            playLists = refreshedPlaylists;
+            likeList = refreshedLikeList;
+            return NeteaseRefreshResult.success(System.currentTimeMillis() - startedAt,
+                    refreshedPlaylists.size(), refreshedLikeList.size());
+        } catch (Throwable throwable) {
+            String detail = throwable.getMessage();
+            if (detail == null || detail.trim().isEmpty()) {
+                detail = "网络请求失败";
+            }
+            System.err.println("[NCM] Playlist refresh failed: " + detail);
+            return NeteaseRefreshResult.failure(System.currentTimeMillis() - startedAt, detail);
+        }
+    }
+
+    private static List<PlayList> loadUserPlaylistsStrict(User user) {
+        List<PlayList> userPlaylists = new ArrayList<>();
+        int page = 0;
+        // A sane upper bound prevents a malformed API response from creating an endless loop.
+        while (page < 1000) {
+            List<PlayList> pagePlaylists = user.playLists(page, 30);
+            if (pagePlaylists == null || pagePlaylists.isEmpty()) {
+                break;
+            }
+            userPlaylists.addAll(pagePlaylists);
+            page++;
+        }
+        if (page >= 1000) {
+            throw new IllegalStateException("歌单数量异常");
+        }
+        return userPlaylists;
+    }
+
+    @lombok.Getter
+    public static final class NeteaseRefreshResult {
+        private final boolean success;
+        private final int playlistCount;
+        private final int likeCount;
+        private final long elapsedMillis;
+        private final String message;
+
+        private NeteaseRefreshResult(boolean success, long elapsedMillis, int playlistCount,
+                                     int likeCount, String message) {
+            this.success = success;
+            this.elapsedMillis = elapsedMillis;
+            this.playlistCount = playlistCount;
+            this.likeCount = likeCount;
+            this.message = message;
+        }
+
+        private static NeteaseRefreshResult success(long elapsedMillis, int playlistCount, int likeCount) {
+            return new NeteaseRefreshResult(true, elapsedMillis, playlistCount, likeCount, "刷新成功");
+        }
+
+        private static NeteaseRefreshResult failure(long elapsedMillis, String message) {
+            return new NeteaseRefreshResult(false, elapsedMillis, 0, 0,
+                    message == null || message.trim().isEmpty() ? "刷新失败" : message.trim());
         }
     }
 
@@ -403,18 +505,31 @@ public class CloudMusic implements SharedConstants {
             old.invalidate();
         }
         long id = generation.incrementAndGet();
-        PlaybackSession session = new PlaybackSession(id, song.getId());
+        PlaybackSession session = new PlaybackSession(id, song.getStableKey(), song.getId());
         currentSession = session;
         return session;
     }
 
     private static void stopExistingPlayThread() throws InterruptedException {
         invalidateCurrentSession();
-        if (playThread != null) {
-            doBreak = true;
-            playing.set(false);
-            playThread.interrupt();
-            playThread.join();
+        Thread previousThread = playThread;
+        if (previousThread == null) return;
+
+        doBreak = true;
+        playing.set(false);
+        if (previousThread instanceof PlayThread) {
+            ((PlayThread) previousThread).cancelPlayback();
+        } else {
+            previousThread.interrupt();
+        }
+
+        // 网络实现可能忽略 interrupt。禁止无限 join 卡住 GUI/重新点歌入口。
+        previousThread.join(PLAY_THREAD_JOIN_TIMEOUT_MS);
+        if (previousThread.isAlive()) {
+            System.err.println("[NCM] Previous play thread did not stop in time; continuing with a new session.");
+        }
+        if (playThread == previousThread) {
+            playThread = null;
         }
     }
 
@@ -447,7 +562,9 @@ public class CloudMusic implements SharedConstants {
     private static class PlayThread extends Thread {
         private final List<Music> songs;
         private final int startIdx;
+        private final AtomicBoolean cancelled = new AtomicBoolean(false);
         private PlaybackSession session;
+        private volatile AudioPlayer ownedPlayer;
 
         public PlayThread(List<Music> songs, int startIdx) {
             this.songs = songs;
@@ -482,13 +599,16 @@ public class CloudMusic implements SharedConstants {
                 consecutiveLoadFailures = 0;
                 preloadNextCover();
                 waitForPlaybackCompletion();
+                if (isPlaybackCancelled() || playListChanged() || session == null || !session.isActive()) {
+                    break;
+                }
                 handlePlaybackCompletion();
                 updateCurrentIndex();
             }
         }
 
         private boolean shouldStopAfterLoadFailure(int consecutiveLoadFailures) {
-            if (doBreak || this.isInterrupted() || playListChanged()) {
+            if (doBreak || isPlaybackCancelled() || playListChanged()) {
                 return true;
             }
 
@@ -502,7 +622,35 @@ public class CloudMusic implements SharedConstants {
         }
 
         private boolean shouldContinuePlayback() {
-            return curIdx < playList.size() && !doBreak && !this.isInterrupted();
+            return curIdx >= 0 && curIdx < playList.size() && !doBreak && !isPlaybackCancelled();
+        }
+
+        private boolean isPlaybackCancelled() {
+            return cancelled.get() || this.isInterrupted();
+        }
+
+        private boolean isSessionUsable(PlaybackSession targetSession) {
+            return !isPlaybackCancelled() && targetSession != null && targetSession.isActive()
+                    && !playListChanged();
+        }
+
+        private void cancelPlayback() {
+            cancelled.set(true);
+            PlaybackSession activeSession = session;
+            if (activeSession != null) activeSession.invalidate();
+            interrupt();
+
+            synchronized (PLAYER_STATE_LOCK) {
+                AudioPlayer activePlayer = ownedPlayer;
+                if (activePlayer != null && CloudMusic.player == activePlayer) {
+                    try {
+                        activePlayer.close();
+                    } catch (Throwable ignored) {
+                        // 播放器可能尚未完全初始化；取消流程不能再阻塞新的点歌请求。
+                    }
+                }
+                playing.set(false);
+            }
         }
 
         private boolean playListChanged() {
@@ -515,11 +663,19 @@ public class CloudMusic implements SharedConstants {
         }
 
         private boolean playSong(Music song) {
-            // 先使旧 session 失效并生成新 session/generation，绑定本次歌曲
+            if (isPlaybackCancelled()) return false;
+
+            // 先使旧 session 失效并生成新 session/generation，绑定本次歌曲。
             session = CloudMusic.beginNewSession(song);
+            if (!isSessionUsable(session)) {
+                session.invalidate();
+                return false;
+            }
             currentlyPlaying = song;
 
+            // 每次点击/切歌都会重新创建解析任务；失败结果不会被缓存。
             Tuple<String, String> playUrl = song.getPlayUrl();
+            if (!isSessionUsable(session)) return false;
 
             if (playUrl == null) {
                 handleUnplayableSong(song);
@@ -529,68 +685,82 @@ public class CloudMusic implements SharedConstants {
             return initializeAndPlaySong(song, playUrl, session);
         }
 
-        private boolean initializeAndPlaySong(Music song, Tuple<String, String> playUrl, PlaybackSession session) {
+        private boolean initializeAndPlaySong(Music song, Tuple<String, String> playUrl, PlaybackSession targetSession) {
             TritiumMusicExtension.getInstance().musicInfo.downloading = false;
             DownloadDynamicIsland.cancelDownload();
 
             File musicFile;
             try {
                 musicFile = getMusicFile(playUrl, song);
-                player = initializePlayer(musicFile);
             } catch (Exception e) {
-                handlePlayerInitializationError(e);
+                if (!isPlaybackCancelled()) handlePlayerInitializationError(e);
                 return false;
             }
 
-            // 下载/解码期间可能已切歌：Session 失效则丢弃，不再启动播放
-            if (!session.isActive()) {
-                return false;
+            // URL 获取、下载或解码期间可能已经切歌。旧线程绝不能覆盖新会话的播放器。
+            if (!isSessionUsable(targetSession)) return false;
+
+            synchronized (PLAYER_STATE_LOCK) {
+                if (!isSessionUsable(targetSession)) return false;
+                try {
+                    player = initializePlayer(musicFile);
+                    ownedPlayer = player;
+                    targetSession.player = ownedPlayer;
+                } catch (Exception e) {
+                    if (!isPlaybackCancelled()) handlePlayerInitializationError(e);
+                    return false;
+                }
             }
 
-            session.player = player;
+            if (!isSessionUsable(targetSession)) return false;
 
-            // 歌词异步加载绑定本 Session（两阶段提交），歌词可先到或后到
-            loadLyric(song, session);
-            startPlayback(song, playUrl, musicFile);
-            session.audioActive = true;  // 真正开始播放后标记
-
+            // 歌词异步加载绑定本 Session（两阶段提交），歌词可先到或后到。
+            loadLyric(song, targetSession);
+            if (!startPlayback(song, playUrl, musicFile, targetSession)) return false;
+            targetSession.audioActive = true;
             return true;
         }
 
         private void waitForPlaybackCompletion() {
             while (playing.get()) {
-                if (this.isInterrupted() || doBreak) {
-                    break;
-                }
+                if (doBreak || !isSessionUsable(session)) break;
 
-                // Session 失效（切歌/切列表）则停止同步歌词，避免旧会话污染
-                if (session == null || !session.isActive()) {
-                    break;
-                }
-
-                CloudMusic.updateCurrentLyric(player.getCurrentTimeMillis());
+                AudioPlayer activePlayer = ownedPlayer;
+                if (activePlayer == null) break;
+                CloudMusic.updateCurrentLyric(activePlayer.getCurrentTimeMillis());
 
                 try {
                     Thread.sleep(10L);
-                } catch (Exception e) {
-                    // Ignore interruption exceptions during playback
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
                 }
             }
         }
 
         private void handlePlaybackCompletion() {
-            if (!dontAdd && playedFrom != null) {
-                playList.get(curIdx).updPlayCount(playedFrom, player.getCurrentTimeSeconds());
+            AudioPlayer completedPlayer = ownedPlayer;
+            if (completedPlayer == null || isPlaybackCancelled()) return;
+
+            if (!dontAdd && playedFrom != null && curIdx >= 0 && curIdx < playList.size()) {
+                playList.get(curIdx).updPlayCount(playedFrom, completedPlayer.getCurrentTimeSeconds());
             }
 
-            player.close();
+            synchronized (PLAYER_STATE_LOCK) {
+                if (!isPlaybackCancelled() && ownedPlayer == completedPlayer) {
+                    completedPlayer.close();
+                }
+            }
         }
 
         private void stopPreviousPlayer() {
-            if (player != null && !player.isFinished()) {
-                player.close();
-                sleep(250);
+            synchronized (PLAYER_STATE_LOCK) {
+                AudioPlayer previousPlayer = CloudMusic.player;
+                if (previousPlayer != null && !previousPlayer.isFinished()) {
+                    previousPlayer.close();
+                }
             }
+            if (!isPlaybackCancelled()) sleep(250);
         }
 
         private void handleUnplayableSong(Music song) {
@@ -604,20 +774,47 @@ public class CloudMusic implements SharedConstants {
             System.err.printf(EnumChatColor.RED + "[NCM] Failed to initiate audio player! Error: %s\n", e.getMessage());
         }
 
-        private void startPlayback(Music song, Tuple<String, String> playUrl, File musicFile) {
-            try {
-                player.play();
-            } catch (ChannelMismatchException e) {
-                player.player.cleanUp();
-                musicFile.delete();
-                player = initializePlayer(getMusicFile(playUrl, song));
-            }
-            playing.set(true);
+        private boolean startPlayback(Music song, Tuple<String, String> playUrl, File musicFile,
+                                      PlaybackSession targetSession) {
+            AudioPlayer activePlayer = ownedPlayer;
+            if (activePlayer == null || !isSessionUsable(targetSession)) return false;
 
-            player.setAfterPlayed(() -> {
-                this.notifyWaitLock();
-                playing.set(false);
+            try {
+                synchronized (PLAYER_STATE_LOCK) {
+                    if (!isSessionUsable(targetSession) || ownedPlayer != activePlayer) return false;
+                    activePlayer.play();
+                }
+            } catch (ChannelMismatchException mismatch) {
+                try {
+                    activePlayer.player.cleanUp();
+                    musicFile.delete();
+                    if (!isSessionUsable(targetSession)) return false;
+
+                    File retryFile = getMusicFile(playUrl, song);
+                    synchronized (PLAYER_STATE_LOCK) {
+                        if (!isSessionUsable(targetSession)) return false;
+                        player = initializePlayer(retryFile);
+                        ownedPlayer = player;
+                        targetSession.player = ownedPlayer;
+                        activePlayer = ownedPlayer;
+                        activePlayer.play();
+                    }
+                } catch (Exception retryFailure) {
+                    if (!isPlaybackCancelled()) handlePlayerInitializationError(retryFailure);
+                    return false;
+                }
+            }
+
+            if (!isSessionUsable(targetSession)) return false;
+            playing.set(true);
+            final AudioPlayer callbackPlayer = activePlayer;
+            callbackPlayer.setAfterPlayed(() -> {
+                // 已被下一首复用/替换的播放器回调不能结束新会话。
+                if (ownedPlayer == callbackPlayer && isSessionUsable(targetSession)) {
+                    this.notifyWaitLock();
+                }
             });
+            return true;
         }
 
         private void preloadNextCover() {
@@ -650,7 +847,7 @@ public class CloudMusic implements SharedConstants {
 
             String extension = "_" + quality.getQuality() + "." + type;
 
-            File music = new File(musicCacheDir, song.getId() + extension);
+            File music = new File(musicCacheDir, song.getStableKey() + extension);
 
             if (!music.exists()) {
                 downloadMusic(playUrl, music);
@@ -665,7 +862,7 @@ public class CloudMusic implements SharedConstants {
 
                     for (File file : musicCacheDir.listFiles()) {
 
-                        if (file.getName().startsWith(String.valueOf(song.getId())) && !file.getName().startsWith(song.getId() + "_" + quality.getQuality())) {
+                        if (file.getName().startsWith(song.getStableKey() + "_") && !file.getName().startsWith(song.getStableKey() + "_" + quality.getQuality())) {
                             file.delete();
                         }
 
@@ -972,10 +1169,19 @@ public class CloudMusic implements SharedConstants {
 
     public static void initLyrics(JsonObject rawLyricData, Music music, List<LyricLine> parsedLyrics) {
         resetLyricFlags();
-        detectTranslations(rawLyricData);
+        if (rawLyricData != null) {
+            detectTranslations(rawLyricData);
+        }
+        if (parsedLyrics != null) {
+            for (LyricLine line : parsedLyrics) {
+                if (line == null) continue;
+                if (line.translationText != null && !line.translationText.trim().isEmpty()) hasTransLyrics = true;
+                if (line.romanizationText != null && !line.romanizationText.trim().isEmpty()) hasRomanization = true;
+            }
+        }
 
         synchronized (lyrics) {
-            updateLyricsList(parsedLyrics);
+            updateLyricsList(parsedLyrics == null ? Collections.emptyList() : parsedLyrics);
             currentLyric = lyrics.get(0);
             haveNoWords = lyricsHaveNoWords();
             addLongBreaks();
@@ -991,7 +1197,7 @@ public class CloudMusic implements SharedConstants {
      */
     public static void applyLyricTimeline(PlaybackSession session, JsonObject rawLyricData, List<LyricLine> parsedLyrics) {
         Music current = currentlyPlaying;
-        if (!session.isActive() || current == null || current.getId() != session.songId) {
+        if (!session.isActive() || current == null || !current.getStableKey().equals(session.trackKey)) {
             return;  // 提交瞬间已切歌：丢弃旧歌词，不污染新状态
         }
 
@@ -1282,53 +1488,67 @@ public class CloudMusic implements SharedConstants {
 
     public static void loadLyric(Music music, PlaybackSession session) {
         final long songId = music.getId();
+        final String trackKey = music.getStableKey();
 
         MultiThreadingUtil.runAsync(() -> {
+            JsonObject rawJson = new JsonObject();
+            List<LyricLine> parsed = Collections.emptyList();
 
-            String string = CloudMusicApi.lyricNew(songId).toString();
+            // 首选 Cadence 统一模型，但普通 LRC 不再按字数伪造逐字时间轴。
+            try {
+                top.fpsmaster.music.Lyric cadenceLyric = CadenceMusicService.getLyric(music);
+                if (cadenceLyric != null) {
+                    parsed = LyricParser.fromCadence(cadenceLyric, music.getDuration(), false);
+                }
+            } catch (Throwable throwable) {
+                System.err.println("[Music/Cadence] Unified lyric conversion failed for " + trackKey + ": " + throwable.getMessage());
+            }
 
-            string = string.replaceAll("[ - ]", " ");
-
-            JsonObject json = JsonUtils.toJsonObject(string);
-
-            List<LyricLine> parsed = LyricParser.parse(json);
-
-            InputStream stream = CloudMusic.class.getResourceAsStream("/tritium/yrc/" + songId + ".yrc");
-            if (stream != null) {
+            // Cadence 只拿到普通 LRC 时也继续询问网易云 lyricNew，优先采用其中真实的 YRC 逐字时间轴。
+            if (music.isNetease() && !LyricParser.hasRealWordTiming(parsed)) {
                 try {
-                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    writeTo(stream, baos);
-                    String s = new String(baos.toByteArray(), StandardCharsets.UTF_8);
-                    List<LyricLine> newLines = new ArrayList<>();
-                    LyricParser.parseYrc(s, newLines);
-
-                    for (int i = 0; i < newLines.size(); i++) {
-                        LyricLine newLine = newLines.get(i);
-                        LyricLine oldLine = parsed.get(i);
-                        oldLine.words.clear();
-                        oldLine.words.addAll(newLine.words);
-                        oldLine.timestamp = newLine.timestamp;
-                        oldLine.lyric = newLine.lyric;
-                        oldLine.duration = newLine.duration;
-                    }
-
-                    stream.close();
-                } catch (IOException ignored) {
+                    String string = CloudMusicApi.lyricNew(songId).toString();
+                    string = string.replaceAll("[ - ]", " ");
+                    rawJson = JsonUtils.toJsonObject(string);
+                    List<LyricLine> fallback = LyricParser.parse(rawJson);
+                    if (LyricParser.hasRealWordTiming(fallback) || parsed.isEmpty()) parsed = fallback;
+                } catch (Throwable throwable) {
+                    System.err.println("[NCM] Legacy lyric fallback failed for " + trackKey + ": " + throwable.getMessage());
                 }
             }
 
-            // 两阶段提交第一阶段：后台只 fetch + parse，提交前双重校验 session + songId。
-            // 过期结果（已切歌）直接丢弃，不写全局、不碰 UI。
+            // 内置修正 YRC 是最后的真实逐字兜底；读取失败时保留前面已经得到的普通歌词。
+            if (music.isNetease() && !LyricParser.hasRealWordTiming(parsed)) {
+                InputStream stream = CloudMusic.class.getResourceAsStream("/tritium/yrc/" + songId + ".yrc");
+                if (stream != null) {
+                    try {
+                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                        writeTo(stream, baos);
+                        String yrc = new String(baos.toByteArray(), StandardCharsets.UTF_8);
+                        List<LyricLine> embedded = new ArrayList<>();
+                        LyricParser.parseYrc(yrc, embedded);
+                        if (LyricParser.hasRealWordTiming(embedded)) parsed = embedded;
+                    } catch (Throwable throwable) {
+                        System.err.println("[NCM] Embedded YRC fallback failed for " + trackKey + ": " + throwable.getMessage());
+                    } finally {
+                        try {
+                            stream.close();
+                        } catch (IOException ignored) {
+                        }
+                    }
+                }
+            }
+
             Music current = currentlyPlaying;
-            if (!session.isActive() || current == null || current.getId() != songId) {
+            if (!session.isActive() || current == null || !trackKey.equals(current.getStableKey())
+                    || !trackKey.equals(session.trackKey)) {
                 return;
             }
 
-            session.pendingLyrics = parsed;
-
-            // 第二阶段回到 Minecraft 主线程提交（后台线程不得执行 OpenGL/UI 更新）
-            MultiThreadingUtil.runOnMainThread(() -> applyLyricTimeline(session, json, parsed));
-
+            final JsonObject committedJson = rawJson;
+            final List<LyricLine> committedLyrics = parsed == null ? Collections.emptyList() : parsed;
+            session.pendingLyrics = committedLyrics;
+            MultiThreadingUtil.runOnMainThread(() -> applyLyricTimeline(session, committedJson, committedLyrics));
         });
     }
 
@@ -1414,17 +1634,20 @@ public class CloudMusic implements SharedConstants {
     }
 
     public static List<Music> search(String keyWord) {
+        List<Music> cadenceResults = CadenceMusicService.search(keyWord, 50);
+        if (!cadenceResults.isEmpty() || CadenceMusicService.getCurrentPlatform() == MusicPlatform.QQ) {
+            return cadenceResults;
+        }
+
+        // Cadence 网络失败时仅对网易云保留原 API 兜底，QQ 不可误发到网易云搜索。
         List<Music> searchResults = new ArrayList<>();
         JsonObject searchResponse = CloudMusicApi.cloudSearch(keyWord, CloudMusicApi.SearchType.Single).toJsonObject();
-
         JsonArray songs = extractSongsFromResponse(searchResponse);
-
         if (songs != null) {
             for (JsonElement song : songs) {
                 searchResults.add(JsonUtils.parse(song.getAsJsonObject(), Music.class));
             }
         }
-
         return searchResults;
     }
 
@@ -1438,11 +1661,20 @@ public class CloudMusic implements SharedConstants {
     }
 
     public static List<Long> likeList() {
+        return loadLikeList(profile);
+    }
+
+    private static List<Long> loadLikeList(User user) {
+        if (user == null) {
+            return new ArrayList<>();
+        }
         List<Long> list = new ArrayList<>();
 
-        JsonObject json = CloudMusicApi.likeList(profile.getId()).toJsonObject();
-
+        JsonObject json = CloudMusicApi.likeList(user.getId()).toJsonObject();
         JsonArray ids = json.getAsJsonArray("ids");
+        if (ids == null) {
+            return list;
+        }
         for (JsonElement id : ids) {
             list.add(id.getAsLong());
         }

@@ -155,12 +155,15 @@ public class ControlsBar extends NCMPanel {
                     double percent = xDelta / this.getWidth();
 
                     if (CloudMusic.player != null) {
-                        float progress = (float) (percent * CloudMusic.player.getTotalTimeMillis());
-                        CloudMusic.player.setPlaybackTime(progress);
-                        // Seek 后立即读取真实 positionMs，用实际音频时钟同步歌词/进度
-                        float actual = CloudMusic.player.getCurrentTimeMillis();
-                        MusicLyricsWidget.resetProgress(actual);
-                        MusicLyricsPanel.resetProgress(actual);
+                        float total = CloudMusic.player.getTotalTimeMillis();
+                        if (total > 0.0f) {
+                            float progress = (float) (percent * total);
+                            CloudMusic.player.setPlaybackTime(progress);
+                            // Seek 后立即读取真实 positionMs，用实际音频时钟同步歌词/进度
+                            float actual = CloudMusic.player.getCurrentTimeMillis();
+                            MusicLyricsWidget.resetProgress(actual);
+                            MusicLyricsPanel.resetProgress(actual);
+                        }
                     }
                 }
             }
@@ -191,7 +194,14 @@ public class ControlsBar extends NCMPanel {
                     if (player == null)
                         return;
 
-                    float perc = player.getCurrentTimeMillis() / player.getTotalTimeMillis();
+                    float total = player.getTotalTimeMillis();
+                    if (total <= 0.0f) {
+                        progressBar.setWidth(0).setRadius(0);
+                        return;
+                    }
+
+                    float perc = Math.max(0.0f,
+                            Math.min(1.0f, player.getCurrentTimeMillis() / total));
                     progressBar
                             .setWidth(perc * progressBarBg.getWidth())
                             .setRadius(perc);
@@ -220,7 +230,11 @@ public class ControlsBar extends NCMPanel {
                 () -> {
                     if (CloudMusic.player == null)
                         return "00:00";
-                    return "-" + formatDuration(CloudMusic.player.getTotalTimeMillis() - CloudMusic.player.getCurrentTimeMillis());
+                    float total = CloudMusic.player.getTotalTimeMillis();
+                    if (total <= 0.0f)
+                        return "00:00";
+                    return "-" + formatDuration(Math.max(0.0f,
+                            total - CloudMusic.player.getCurrentTimeMillis()));
                 },
                 FontManager.pf12
         );

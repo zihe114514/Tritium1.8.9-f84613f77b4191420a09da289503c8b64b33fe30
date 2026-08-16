@@ -255,7 +255,13 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
             this.roundedRect(imgX + imgSize + imgSpacing, progressBarOffsetY, progressBarWidth, 5, 1, 1f, 1f, 1f, alpha * 0.3f);
 
             if (CloudMusic.player != null) {
-                double playbackFillWidth = progressBarWidth * ((double) CloudMusic.player.getCurrentTimeMillis() / CloudMusic.player.getTotalTimeMillis());
+                double totalTimeMillis = CloudMusic.player.getTotalTimeMillis();
+                double playbackFillWidth = 0.0;
+                if (totalTimeMillis > 0.0) {
+                    double progress = Math.max(0.0,
+                            Math.min(1.0, CloudMusic.player.getCurrentTimeMillis() / totalTimeMillis));
+                    playbackFillWidth = progressBarWidth * progress;
+                }
                 if (playbackFillWidth > 0)
                     this.roundedRect(imgX + imgSize + imgSpacing, progressBarOffsetY, playbackFillWidth, 5, Math.min(1, playbackFillWidth * .5), 233, 233, 233, (int) (alpha * 255));
 

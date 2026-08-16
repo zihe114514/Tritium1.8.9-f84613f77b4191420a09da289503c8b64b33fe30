@@ -21,6 +21,7 @@ import tritium.rendering.shader.Shaders;
 import tritium.rendering.texture.ITextureObject;
 import tritium.rendering.ui.widgets.IconWidget;
 import tritium.settings.ClientSettings;
+import tritium.settings.HudConfig;
 import tritium.utils.Location;
 import tritium.utils.cursor.CursorUtils;
 import tritium.utils.math.Mth;
@@ -71,10 +72,36 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     private double lastViewportLyricWidth = -1;
     private double lastViewportAnchorY = Double.NaN;
 
+    /**
+     * The single authoritative viewport for all lyric layers. It is derived from the
+     * player''s live bounds each frame, so text, KTV composition and blur all follow resize.
+     */
+    private static final class LyricViewport {
+        final double left;
+        final double top;
+        final double width;
+        final double height;
+
+        LyricViewport(double left, double top, double width, double height) {
+            this.left = left;
+            this.top = top;
+            this.width = Math.max(0.0, width);
+            this.height = Math.max(0.0, height);
+        }
+
+        double right() {
+            return left + width;
+        }
+
+        double bottom() {
+            return top + height;
+        }
+    }
+
     private final Music music;
     public MusicLyricsPanel(Music music) {
         this.music = music;
-        updateLyricPositionsImmediate(NCMScreen.getInstance().getPanelWidth() * getLyricWidthFactor());
+        updateLyricPositionsImmediate(getCurrentLyricViewportWidth());
     }
 
     private static void fetchTTMLLyrics(Music music, List<LyricLine> parsed) {
@@ -110,11 +137,24 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     public static void resetProgress(float progress) {
         CloudMusic.updateCurrentLyric(progress);
         CloudMusic.resetLyricPositionUpdate();
-        updateLyricPositionsImmediate(NCMScreen.getInstance().getPanelWidth() * getLyricWidthFactor());
+        updateLyricPositionsImmediate(getCurrentLyricViewportWidth());
     }
 
     public static double getLyricWidthFactor() {
         return .48;
+    }
+
+    /**
+     * Keeps the animated lyric layer inside the player while it fades out.
+     *
+     * The old close animation used a maximum scale of 1.10, which made the
+     * background, blur and glyph quads exceed the dynamically sized player.
+     * At full opacity the content still uses the exact player size; during the
+     * transition it only contracts, so resizing the player cannot expose a
+     * second, larger lyric viewport.
+     */
+    private static double getContentScale(float alpha) {
+        return .96 + (Math.max(0.0f, Math.min(1.0f, alpha)) * .04);
     }
 
     /** Smooths the KTV sweep without decoupling it from the actual audio position. */
@@ -136,12 +176,34 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         return .25;
     }
 
+    /**
+     * The lyric column deliberately uses the current player bounds rather than a global
+     * screen fraction.  The right and vertical padding keep animated glyphs, their glow and
+     * the blur kernel inside the live player window at every configured player scale.
+     */
+    private static LyricViewport createLyricViewport(double posX, double posY, double width, double height) {
+        double border = NCMScreen.getInstance().getPlayerBorderThickness();
+        double horizontalInset = Math.max(8.0, width * .04);
+        double verticalInset = Math.max(border, Math.min(10.0, height * .018));
+        double left = posX + width * .48;
+        double right = Math.max(left, posX + width - horizontalInset);
+        double top = posY + verticalInset;
+        double bottom = Math.max(top, posY + height - verticalInset);
+        return new LyricViewport(left, top, right - left, bottom - top);
+    }
+
     public static void updateLyricPositionsImmediate(double width) {
         layoutLyricPositionsImmediately(width, getCurrentViewportAnchorY(), CloudMusic.currentLyric);
     }
 
     public static void updateLyricPositionsImmediate(double width, double playbackProgress) {
         layoutLyricPositionsImmediately(width, getCurrentViewportAnchorY(), CloudMusic.findCurrentLyric(playbackProgress));
+    }
+
+    private static double getCurrentLyricViewportWidth() {
+        NCMScreen screen = NCMScreen.getInstance();
+        return createLyricViewport(screen.getPanelX(), screen.getPanelY(),
+                screen.getPanelWidth(), screen.getPanelHeight()).width;
     }
 
     private static double getCurrentViewportAnchorY() {
@@ -226,7 +288,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         alpha = Interpolations.interpolate(alpha, closing ? 0.0f : 1f, 0.3f);
 
         // 面板尺寸动画过程中按真实视口重排。阈值可避免亚像素变化导致每帧重建全部歌词。
-        double viewportLyricWidth = width * getLyricWidthFactor();
+        LyricViewport lyricViewport = createLyricViewport(posX, posY, width, height);
+        double viewportLyricWidth = lyricViewport.width;
         double viewportAnchorY = posY + height * lyricFraction();
         if (Math.abs(viewportLyricWidth - this.lastViewportLyricWidth) >= 2.0
                 || Double.isNaN(this.lastViewportAnchorY)
@@ -240,7 +303,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         CloudMusic.PlaybackSnapshot snapshot = CloudMusic.getSnapshot();
 
         api.getGLStateManager().pushMatrix();
-        scaleAtPos(posX + width * .5, posY + height * .5, 1.1 - (alpha * 0.1));
+        double contentScale = getContentScale(alpha);
+        scaleAtPos(posX + width * .5, posY + height * .5, contentScale);
 
         this.renderBackground(posX, posY, width, height, alpha, snapshot);
         this.renderControlsPart(mouseX, mouseY, posX, posY, width, height, alpha, snapshot);
@@ -257,13 +321,17 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         double overridePlaybackProgress = progressBarProgressOverride * totalTimeMillis;
         double songProgress = playerNotReady ? 0 : (progressBarDragging ? overridePlaybackProgress : snapshot.positionMs);
 
-        double lyricsWidth = width * getLyricWidthFactor();
+        LyricViewport lyricViewport = createLyricViewport(posX, posY, width, height);
+        if (lyricViewport.width <= .5 || lyricViewport.height <= .5) return;
+
+        double lyricsWidth = lyricViewport.width;
         LyricLine displayedCurrentLyric = progressBarDragging ? CloudMusic.findCurrentLyric(overridePlaybackProgress) : CloudMusic.currentLyric;
         this.updateLyricPositions(posY, height, lyricsWidth, displayedCurrentLyric);
 
         List<Runnable> blurRects = new ArrayList<>();
 
-        boolean hoveringLyrics = isHovered(mouseX, mouseY, posX + width * .5, posY, width * .5, height);
+        boolean hoveringLyrics = isHovered(mouseX, mouseY, lyricViewport.left, lyricViewport.top,
+                lyricViewport.width, lyricViewport.height);
 
         if (hoveringLyrics && dWheel != 0) {
 
@@ -285,15 +353,26 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
         scrollOffset = Interpolations.interpolate(scrollOffset, scrollTarget, 0.25f);
 
-        double lyricRenderOffsetX = posX + width * .48;
-        for (int k = 0; k < CloudMusic.lyrics.size(); k++) {
+        double lyricRenderOffsetX = lyricViewport.left;
+        double lyricsViewportTop = lyricViewport.top;
+        double lyricsViewportBottom = lyricViewport.bottom();
+        double lyricsViewportHeight = lyricViewport.height;
+        double lyricsViewportLeft = lyricViewport.left;
+        double lyricsViewportRight = lyricViewport.right();
+
+        // The parent player clip is rounded; this nested clip is the hard text viewport.
+        // It remains on the Minecraft framebuffer stack and is restored after every KTV FBO pass.
+        StencilClipManager.beginClip(() -> Rect.draw(lyricsViewportLeft, lyricsViewportTop,
+                lyricsWidth, lyricsViewportHeight, -1));
+        try {
+            for (int k = 0; k < CloudMusic.lyrics.size(); k++) {
             LyricLine lyric = CloudMusic.lyrics.get(k);
 
-            if (lyric.posY + lyric.height + getLyricLineSpacing() + scrollOffset < posY) {
+            if (lyric.posY + lyric.height + getLyricLineSpacing() + scrollOffset < lyricsViewportTop) {
                 continue;
             }
 
-            if (lyric.posY + scrollOffset > posY + height) {
+            if (lyric.posY + scrollOffset > lyricsViewportBottom) {
                 break;
             }
 
@@ -367,8 +446,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                     }
 
                     if (CloudMusic.lyrics.indexOf(currentLyric) - k <= 1) {
-                        double progress = word.duration <= 0L ? (songProgress >= word.timestamp ? 1.0 : 0.0)
-                                : Mth.limit((songProgress - word.timestamp) / (double) word.duration, 0, 1);
+                        double progress = word.getProgress(songProgress);
                         double easedProgress = smoothKaraokeProgress(progress);
                         double stringWidthD = FontManager.pf65bold.getStringWidthD(word.word);
 
@@ -418,10 +496,12 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
                                 StencilClipManager.disableStencilTest();
 
-                                double w = easedProgress * (stringWidthD + gradientWidth);
-                                double solidWidth = Math.max(0.0, w - gradientWidth);
+                                // 严格以真实播放前沿裁剪，渐变只位于已播放区域内部。
+                                double front = progress * stringWidthD;
+                                double activeGradientWidth = Math.min(gradientWidth, front);
+                                double solidWidth = Math.max(0.0, front - activeGradientWidth);
                                 Rect.draw(0, 0, solidWidth, FontManager.pf65bold.getHeight() + 6, -1);
-                                RenderSystem.drawGradientRectLeftToRight(solidWidth, 0, w,
+                                RenderSystem.drawGradientRectLeftToRight(solidWidth, 0, front,
                                         FontManager.pf65bold.getHeight() + 6, -1, 0);
                             }
 
@@ -454,6 +534,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                             }
 
                             Framebuffer.getMcFramebuffer().bindFramebuffer(true);
+                            // FBO rendering disables stencil testing. Restore the
+                            // rounded player clip before compositing the word texture.
+                            StencilClipManager.restoreActiveClip();
 
                             api.getGLStateManager().popMatrix();
                             api.getGLStateManager().matrixMode(GL11.GL_PROJECTION);
@@ -463,7 +546,17 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 //                            if (StencilClipManager.stencilClipping())
 //                                GL11.glEnable(GL11.GL_STENCIL_TEST);
 
+                            // 当前字词在演唱期间以中心为锚点平滑放大，布局宽度保持不变，避免换行抖动。
+                            double pulse = Math.sin(Math.PI * easedProgress);
+                            double karaokeScale = 1.0 + Math.min(.14, Math.max(0.0, HudConfig.currentWordScale)) * pulse;
+                            double wordCenterX = renderX + stringWidthD * .5;
+                            double wordCenterY = renderY + FontManager.pf65bold.getHeight() * .5;
+                            api.getGLStateManager().pushMatrix();
+                            api.getGLStateManager().translate(wordCenterX, wordCenterY, 0);
+                            api.getGLStateManager().scale(karaokeScale, karaokeScale, 1);
+                            api.getGLStateManager().translate(-wordCenterX, -wordCenterY, 0);
                             Shaders.STENCIL.draw(baseFb.framebufferTexture, stencilFb.framebufferTexture, renderX, renderY - 2, fbWidth * .5, fbHeight * .5);
+                            api.getGLStateManager().popMatrix();
 
                             if (ClientSettings.SHOW_WIDGET_BOUNDARY) {
 //                                FontManager.pf18bold.drawString("Stencil: " + stencilFb.framebufferTextureWidth + "x" + stencilFb.framebufferTextureHeight, 50, 32, -1);
@@ -528,14 +621,40 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 //                FontManager.pf34bold.drawString(lyric.translationText, translationX, translationY, hexColor(1, 1, 1, alpha * .75f * ((lyric.alpha * .6f) + .4f)));
             }
 
-            blurRects.add(() -> Rect.draw(lyricRenderOffsetX - 4, lyric.posY + scrollOffset, lyricsWidth, lyric.height + 8, hexColor(1, 1, 1, alpha * lyric.blurAlpha)));
+            // 先把源矩形与歌词视口求交，减少模糊输入在视口外的扩散。
+            double blurLeft = Math.max(lyricsViewportLeft, lyricRenderOffsetX - 4);
+            double blurTop = Math.max(lyricsViewportTop, lyric.posY + scrollOffset);
+            double blurRight = Math.min(lyricsViewportRight, lyricRenderOffsetX + lyricsWidth);
+            double blurBottom = Math.min(lyricsViewportBottom, lyric.posY + scrollOffset + lyric.height + 8);
+            if (blurRight > blurLeft && blurBottom > blurTop) {
+                double clippedBlurWidth = blurRight - blurLeft;
+                double clippedBlurHeight = blurBottom - blurTop;
+                blurRects.add(() -> Rect.draw(blurLeft, blurTop, clippedBlurWidth, clippedBlurHeight,
+                        hexColor(1, 1, 1, alpha * lyric.blurAlpha)));
+            }
         }
 
         api.getGLStateManager().pushMatrix();
-        this.scaleAtPos(lyricRenderOffsetX, posY + height * .5, 1 / (1.1 - (alpha * 0.1)));
-        Shaders.BLUR_SHADER.run(blurRects);
-//        Shaders.UI_BLOOM_SHADER.runNoCaching(bloomRunnables);
-        api.getGLStateManager().popMatrix();
+        this.scaleAtPos(lyricRenderOffsetX, posY + height * .5, 1.0 / getContentScale(alpha));
+        // Scissor 在 shader 的输入 FBO、两次 blur pass 及最终合成期间保持有效，
+        // 因而高斯核的边缘扩散也无法越过歌词内容区域。
+        ScissorClipManager.begin(lyricsViewportLeft, lyricsViewportTop, lyricsWidth, lyricsViewportHeight);
+        try {
+            Shaders.BLUR_SHADER.run(blurRects);
+            // The blur pass returns from a full-screen auxiliary framebuffer.
+            // Re-enable the parent rounded-player clip before any later panel
+            // content is rendered.
+            StencilClipManager.restoreActiveClip();
+            } finally {
+                ScissorClipManager.end();
+                api.getGLStateManager().popMatrix();
+            }
+        } finally {
+            // Blur/FBO rendering can toggle raw stencil state. Restore the lyric viewport
+            // before leaving it, then pop only the clip introduced by this method.
+            StencilClipManager.restoreActiveClip();
+            StencilClipManager.endClip();
+        }
     }
 
     private void updateLyricPositions(double posY, double height, double width, LyricLine currentLyric) {
@@ -695,7 +814,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
             double xDelta = Math.max(0, Math.min(progressBarWidth, (mouseX - elementsXOffset)));
             this.progressBarProgressOverride = xDelta / progressBarWidth;
-            updateLyricPositionsImmediate(width * getLyricWidthFactor(), progressBarProgressOverride * totalTimeMillis);
+            updateLyricPositionsImmediate(createLyricViewport(posX, posY, width, height).width, progressBarProgressOverride * totalTimeMillis);
         }
 
         if (progressBarDragging) {
@@ -716,7 +835,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             } else {
                 double xDelta = Math.max(0, Math.min(progressBarWidth, (mouseX - elementsXOffset)));
                 this.progressBarProgressOverride = xDelta / progressBarWidth;
-                updateLyricPositions(width * getLyricWidthFactor(), progressBarProgressOverride * totalTimeMillis);
+                updateLyricPositions(createLyricViewport(posX, posY, width, height).width, progressBarProgressOverride * totalTimeMillis);
             }
         }
 

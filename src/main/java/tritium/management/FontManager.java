@@ -18,6 +18,16 @@ import java.util.stream.Collectors;
  */
 public class FontManager extends AbstractManager {
 
+    /**
+     * Java 8u51 的 Java2D CFF/OpenType 光栅化会让 SF Pro 的半角字形使用
+     * 与实际绘制不一致的尺寸。中文由 PingFang TrueType 回退字体绘制，
+     * 因而只有英文、数字和半角标点出现比例异常。
+     *
+     * 仅在受影响的早期 Java 8 运行时切换半角主字体到已内置的 Arial
+     * TrueType；中文回退字体、UI 逻辑及其它字体系统均保持不变。
+     */
+    private static final boolean USE_LEGACY_JAVA8_TTF_FONTS = isLegacyJava8CffRuntime();
+
     public FontManager() {
         super("FontManager");
     }
@@ -50,6 +60,10 @@ public class FontManager extends AbstractManager {
     }
 
     public static void loadFonts() {
+        if (USE_LEGACY_JAVA8_TTF_FONTS) {
+            System.out.println("[Tritium] Detected Java 8u51-compatible runtime; using TrueType UI fonts for stable half-width glyph sizing.");
+        }
+
         String normalName = "pf_normal";
         String boldName = "pf_middleblack";
 
@@ -167,16 +181,69 @@ public class FontManager extends AbstractManager {
             FontKerning fallbackKerning = readFontKerning("/tritium/fonts/pf_middleblack.ttf");
             return new CFontRenderer(font, size * 0.5f, kerning, fallback);
         } else if ("pf_normal".equals(name)) {
-            Font main = readFont("/tritium/fonts/sfregular.otf");
-            FontKerning mainKerning = readFontKerning("/tritium/fonts/sfregular.otf");
+            String mainPath = USE_LEGACY_JAVA8_TTF_FONTS
+                    ? "/tritium/fonts/arial.ttf"
+                    : "/tritium/fonts/sfregular.otf";
+            Font main = readFont(mainPath);
+            FontKerning mainKerning = readFontKerning(mainPath);
             return new CFontRenderer(main, size * 0.5f, mainKerning, font);
         } else if ("pf_middleblack".equals(name)) {
-            Font main = readFont("/tritium/fonts/sfbold.otf");
-            FontKerning mainKerning = readFontKerning("/tritium/fonts/sfbold.otf");
+            String mainPath = USE_LEGACY_JAVA8_TTF_FONTS
+                    ? "/tritium/fonts/arialBold.ttf"
+                    : "/tritium/fonts/sfbold.otf";
+            Font main = readFont(mainPath);
+            FontKerning mainKerning = readFontKerning(mainPath);
             return new CFontRenderer(main, size * 0.5f, mainKerning, font);
         }
         return new CFontRenderer(font, size * 0.5f, kerning, font);
 
+    }
+
+    private static boolean isLegacyJava8CffRuntime() {
+        int update = parseJava8Update(System.getProperty("java.version", ""));
+        if (update < 0) {
+            update = parseJava8Update(System.getProperty("java.runtime.version", ""));
+        }
+
+        // Java 8u51 is the affected target environment.  Keep newer Java 8
+        // runtimes on the original SF Pro appearance.
+        return update >= 0 && update <= 60;
+    }
+
+    static int parseJava8Update(String version) {
+        if (version == null) {
+            return -1;
+        }
+
+        String normalized = version.trim().toLowerCase(java.util.Locale.ROOT);
+        if (normalized.isEmpty()) {
+            return -1;
+        }
+
+        int updateStart;
+        if (normalized.startsWith("1.8.0_")) {
+            updateStart = "1.8.0_".length();
+        } else if (normalized.startsWith("8u")) {
+            updateStart = 2;
+        } else if (normalized.startsWith("8.0.")) {
+            updateStart = "8.0.".length();
+        } else {
+            return -1;
+        }
+
+        int updateEnd = updateStart;
+        while (updateEnd < normalized.length() && Character.isDigit(normalized.charAt(updateEnd))) {
+            updateEnd++;
+        }
+        if (updateEnd == updateStart) {
+            return -1;
+        }
+
+        try {
+            return Integer.parseInt(normalized.substring(updateStart, updateEnd));
+        } catch (NumberFormatException ignored) {
+            return -1;
+        }
     }
 
     @Override

@@ -59,6 +59,13 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
 
     public ExtensionWidget widget;
     WidgetWrapper.WidgetPosSizeInterface wpsInterface;
+
+    // The HUD editor reuses the production renderer at an editor-provided position.
+    // Keeping this state local avoids changing the persisted HUD configuration while previewing.
+    private boolean editorPreviewActive;
+    private float editorPreviewX;
+    private float editorPreviewY;
+    private float editorPreviewScale;
     
     public MusicLyricsWidget() {
         super("Music Lyrics", "Show lyrics.", EnumModuleCategory.VISUAL);
@@ -79,6 +86,27 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     public void loadHudEditorSettings() {
         lyricColor.setValue(new Color(HudConfig.lyricColorRgb, true));
         currentLyricColor.setValue(new Color(HudConfig.currentLyricColorRgb, true));
+    }
+
+    /**
+     * Renders the same animated desktop-lyric path used in game, but at the
+     * position selected in the HUD editor. The persisted HudConfig position is
+     * intentionally not touched by this preview.
+     */
+    public void renderEditorPreview(float x, float y, float scale) {
+        if (this.widget == null) {
+            return;
+        }
+
+        editorPreviewActive = true;
+        editorPreviewX = x;
+        editorPreviewY = y;
+        editorPreviewScale = scale;
+        try {
+            this.widget.render();
+        } finally {
+            editorPreviewActive = false;
+        }
     }
 
     private static final double CONTENT_HORIZONTAL_PADDING = 12.0;
@@ -127,11 +155,15 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
 
         // HUD 位置 + 缩放（HudConfig，由 GuiHudEditor 拖拽/滚轮调整）。
         // 位置公式与参考实现一致：pixel = pos * (screen - baseSize * scale)；缩放围绕左上锚点等比进行。
-        float hudScale = HudConfig.lyricScale;
+        float hudScale = editorPreviewActive ? editorPreviewScale : HudConfig.lyricScale;
         float baseW = this.width.getValue().floatValue();
         float baseH = this.height.getValue().floatValue();
-        float hudX = (float) (HudConfig.lyricX * (getWidth() - baseW * hudScale));
-        float hudY = (float) (HudConfig.lyricY * (getHeight() - baseH * hudScale));
+        float hudX = editorPreviewActive
+                ? editorPreviewX
+                : (float) (HudConfig.lyricX * (getWidth() - baseW * hudScale));
+        float hudY = editorPreviewActive
+                ? editorPreviewY
+                : (float) (HudConfig.lyricY * (getHeight() - baseH * hudScale));
         wpsInterface.setX(hudX);
         wpsInterface.setY(hudY);
 
@@ -544,7 +576,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                                        float songProgress, int effectAlpha) {
         for (KaraokeSegment segment : layout.segments) {
             double rawProgress = getRawKaraokeProgress(segment.word, songProgress);
-            double progress = smoothStep(Math.max(0.0, Math.min(1.0, rawProgress)));
+            double progress = Math.max(0.0, Math.min(1.0, rawProgress));
 
             String physicalLine = layout.primaryLines[segment.lineIndex];
             double lineX = calculateAlignmentX(physicalLine, this.alignMode.getValue());
@@ -558,28 +590,24 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                     renderKaraokeLayer(segment.text, x, segmentY, 0, segment.width,
                             highlightColor, .24);
                 } else {
+                    // 颜色前沿严格跟随真实字词时间：羽化只发生在前沿后方，绝不提前染到未播放区域。
                     double front = segment.width * progress;
-                    double featherWidth = Math.min(Math.max(4.0, HudConfig.currentTransitionWidth),
-                            Math.max(4.0, segment.width * .72));
-                    double solidRight = Math.max(0.0, front - featherWidth * .72);
+                    double featherWidth = Math.min(Math.max(3.0, HudConfig.currentTransitionWidth),
+                            Math.max(3.0, Math.min(segment.width, front)));
+                    double featherLeft = Math.max(0.0, front - featherWidth);
 
-                    renderKaraokeLayer(segment.text, x, segmentY, 0, solidRight,
+                    renderKaraokeLayer(segment.text, x, segmentY, 0, featherLeft,
                             highlightColor, .20);
 
-                    // More and narrower strips make the colour bloom across partial glyphs
-                    // instead of changing one character at a time.
                     for (int step = 0; step < KARAOKE_FEATHER_STEPS; step++) {
-                        double left = solidRight + featherWidth * step / KARAOKE_FEATHER_STEPS;
-                        double right = Math.min(segment.width,
-                                solidRight + featherWidth * (step + 1) / KARAOKE_FEATHER_STEPS);
-                        if (right <= left) {
-                            continue;
-                        }
+                        double left = featherLeft + (front - featherLeft) * step / KARAOKE_FEATHER_STEPS;
+                        double right = featherLeft + (front - featherLeft) * (step + 1) / KARAOKE_FEATHER_STEPS;
+                        if (right <= left) continue;
 
-                        double t = 1.0 - step / (double) KARAOKE_FEATHER_STEPS;
-                        double opacity = .14 + .82 * smoothStep(t);
+                        double behindFront = 1.0 - step / (double) KARAOKE_FEATHER_STEPS;
+                        double opacity = .18 + .80 * smoothStep(behindFront);
                         renderKaraokeLayer(segment.text, x, segmentY, left, right,
-                                multiplyAlpha(highlightColor, opacity), .07 + .25 * t);
+                                multiplyAlpha(highlightColor, opacity), .08 + .24 * behindFront);
                     }
                 }
             }
@@ -615,7 +643,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             return;
         }
         double progress = Math.max(0.0, Math.min(1.0, rawProgress));
-        double pulse = Math.sin(Math.PI * progress);
+        double pulse = Math.sin(Math.PI * smoothStep(progress));
         double scale = 1.0 + HudConfig.currentWordScale * pulse;
         double centerX = x + segment.width * .5;
         double centerY = y + getFontRenderer().getHeight() * .5;
@@ -625,7 +653,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         api.getGLStateManager().scale(scale, scale, 1);
         api.getGLStateManager().translate(-centerX, -centerY, 0);
         try {
-            double paintedWidth = segment.width * smoothStep(progress);
+            double paintedWidth = segment.width * progress;
             renderKaraokeLayer(segment.text, x, y, 0.0, paintedWidth,
                     multiplyAlpha(highlightColor, .38 + .36 * pulse),
                     .18 + .28 * pulse);
@@ -655,7 +683,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             return;
         }
 
-        double progress = smoothStep(Math.max(0.0, Math.min(1.0, rawProgress)));
+        double progress = Math.max(0.0, Math.min(1.0, rawProgress));
         double center = segment.offsetX + segment.width * progress;
         double halfBand = Math.max(4.0, HudConfig.currentTransitionWidth);
         double lineWidth = getFontRenderer().getStringWidthD(physicalLine);
@@ -725,10 +753,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     private double getRawKaraokeProgress(LyricLine.Word word, float songProgress) {
-        if (word.duration <= 0L) {
-            return songProgress >= word.timestamp ? 1.0 : 0.0;
-        }
-        return (songProgress - word.timestamp) / (double) word.duration;
+        return word.getProgress(songProgress);
     }
 
     private double getKaraokeProgress(LyricLine.Word word, float songProgress) {
@@ -1176,6 +1201,3 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
 }
-
-
-

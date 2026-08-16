@@ -160,18 +160,45 @@ public class CloudMusicApi {
         return request;
     }
 
+    /**
+     * Resolves a NetEase Cloud Music playback URL using the currently selected
+     * quality. Existing callers keep their FLAC preference through this
+     * compatibility overload.
+     */
     public RequestUtil.RequestAnswer songUrlV1(long id, String level) {
+        return songUrlV1(id, level, "flac");
+    }
+
+    /**
+     * Resolves a NetEase Cloud Music playback URL for a requested quality and
+     * container. Some album tracks do not expose the requested lossless stream
+     * even though their standard MP3 stream is playable, so callers can make a
+     * controlled MP3 fallback request without changing the selected quality.
+     */
+    public RequestUtil.RequestAnswer songUrlV1(long id, String level, String encodeType) {
+        String requestedLevel = level == null || level.trim().isEmpty() ? "standard" : level.trim();
+        String requestedEncodeType = encodeType == null || encodeType.trim().isEmpty()
+                ? "mp3" : encodeType.trim();
 
         Map<String, Object> data = new HashMap<>();
         data.put("ids", "[" + id + "]");
-        data.put("level", level);
-        data.put("encodeType", "flac");
+        data.put("level", requestedLevel);
+        data.put("encodeType", requestedEncodeType);
 
-        if (level.equals("sky")) {
+        if ("sky".equalsIgnoreCase(requestedLevel)) {
             data.put("immerseType", "c51");
         }
 
-        return RequestUtil.createRequest("/api/song/enhance/player/url/v1", data, OptionsUtil.createOptions());
+        return RequestUtil.createRequest("/api/song/enhance/player/url/v1", data, OptionsUtil.createOptions("eapi"));
+    }
+
+    /**
+     * Stable playback fallback used when the selected quality has no playable
+     * URL. This mirrors the reference API's standard-MP3 request and is kept
+     * separate from the user's normal quality preference.
+     */
+    public RequestUtil.RequestAnswer songUrlStandardMp3(long id) {
+        return songUrlV1(id, "standard", "mp3");
     }
 
     public RequestUtil.RequestAnswer like(long id, boolean like) {
@@ -297,10 +324,33 @@ public class CloudMusicApi {
         );
     }
 
+    private static final int PLAYLIST_TRACK_VERIFICATION_ATTEMPTS = 3;
+    private static final long PLAYLIST_TRACK_VERIFICATION_RETRY_DELAY_MILLIS = 250L;
+
     /**
-     * 将单曲加入指定歌单，并把 HTTP 层与网易云业务层的结果归一化给界面使用。
+     * 将单曲加入指定歌单，并在请求完成后重新读取歌单 trackIds。
+     *
+     * <p>网易云的 manipulate/tracks 接口只代表服务端已接收请求；它不能作为
+     * 收藏成功的唯一依据。尤其是用户歌单、权限异常或服务端异步落库时，HTTP 200
+     * 并不表示歌曲已经出现在目标歌单中。因此只有在二次读取确认 trackIds 包含
+     * 对应歌曲后，才向界面报告成功。</p>
      */
     public PlaylistTrackOperationResult addTrackToPlaylist(long playlistId, long musicId) {
+        if (playlistId <= 0L) {
+            return new PlaylistTrackOperationResult(false, false, false, 400, -1, "目标歌单 ID 无效");
+        }
+        if (musicId <= 0L) {
+            return new PlaylistTrackOperationResult(false, false, false, 400, -1, "歌曲 ID 无效，无法加入歌单");
+        }
+
+        // 先确认歌曲是否已经存在：对“我的歌单”中再次收藏同一首歌的场景给出
+        // 明确反馈，同时避免不必要的 manipulate 请求。
+        PlaylistTrackVerificationResult before = verifyPlaylistContainsTrack(playlistId, musicId);
+        if (before.isVerified() && before.isPresent()) {
+            return new PlaylistTrackOperationResult(true, true, true, before.getHttpStatus(), 200,
+                    "已确认歌曲已在目标歌单中");
+        }
+
         RequestUtil.RequestAnswer request = playlistTracks("add", playlistId, String.valueOf(musicId));
         JsonObject body = null;
         int apiCode = -1;
@@ -317,25 +367,127 @@ public class CloudMusicApi {
         boolean httpSuccess = request.getStatus() >= 200 && request.getStatus() < 300;
         boolean apiSuccess = apiCode == 200;
         boolean alreadyExists = isAlreadyInPlaylist(message);
-        boolean success = httpSuccess && apiSuccess;
+        boolean requestAccepted = httpSuccess && apiSuccess;
 
-        if (message.isEmpty()) {
-            if (success) {
-                message = "已加入歌单";
-            } else if (request.getStatus() == 401) {
-                message = "登录状态已失效，请重新登录";
-            } else if (request.getStatus() == 403) {
-                message = "没有操作此歌单的权限";
-            } else if (!httpSuccess) {
-                message = "网络请求失败（HTTP " + request.getStatus() + "）";
-            } else if (apiCode != -1) {
-                message = "网易云音乐返回错误（代码 " + apiCode + "）";
-            } else {
-                message = "服务端返回异常，请稍后重试";
-            }
+        // 除了“已存在”外，服务端已明确拒绝请求时无需把它伪装成成功。
+        if (!requestAccepted && !alreadyExists) {
+            return new PlaylistTrackOperationResult(false, false, false, request.getStatus(), apiCode,
+                    resolvePlaylistOperationFailureMessage(request.getStatus(), apiCode, message));
         }
 
-        return new PlaylistTrackOperationResult(success, alreadyExists, request.getStatus(), apiCode, message);
+        // 新增后服务端可能有短暂的落库延迟；在后台线程中有限重试，仍然只以
+        // trackIds 的实际内容作为结果判断依据。
+        PlaylistTrackVerificationResult after = verifyPlaylistContainsTrackWithRetry(playlistId, musicId);
+        if (after.isVerified() && after.isPresent()) {
+            String confirmedMessage = alreadyExists
+                    ? "已确认歌曲已在目标歌单中"
+                    : "网易云已确认歌曲已加入目标歌单";
+            return new PlaylistTrackOperationResult(true, alreadyExists, true, after.getHttpStatus(), apiCode,
+                    confirmedMessage);
+        }
+
+        if (after.isVerified()) {
+            return new PlaylistTrackOperationResult(false, false, true, after.getHttpStatus(), apiCode,
+                    "服务端未确认歌曲已加入目标歌单，请重试");
+        }
+
+        String verificationMessage = after.getMessage();
+        if (verificationMessage == null || verificationMessage.trim().isEmpty()) {
+            verificationMessage = "无法读取目标歌单内容";
+        }
+        return new PlaylistTrackOperationResult(false, false, false, after.getHttpStatus(), apiCode,
+                "请求已发送，但" + verificationMessage + "，未确认收藏成功");
+    }
+
+    /**
+     * 轻量读取目标歌单的 trackIds。与 playlistTrackAll 不同，此方法不再批量请求
+     * 每首歌曲详情，避免大歌单在结果校验阶段额外产生大量网络请求。
+     */
+    private PlaylistTrackVerificationResult verifyPlaylistContainsTrack(long playlistId, long musicId) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("id", playlistId);
+        data.put("n", 100000);
+        data.put("s", 8);
+
+        RequestUtil.RequestAnswer answer = RequestUtil.createRequest(
+                "/api/v6/playlist/detail", data, OptionsUtil.createOptions());
+        int httpStatus = answer.getStatus();
+        boolean httpSuccess = httpStatus >= 200 && httpStatus < 300;
+        if (!httpSuccess) {
+            return new PlaylistTrackVerificationResult(false, false, httpStatus,
+                    "读取目标歌单失败（HTTP " + httpStatus + "）");
+        }
+
+        try {
+            JsonObject body = answer.toJsonObject();
+            int apiCode = getInt(body, "code", 200);
+            if (apiCode != 200) {
+                return new PlaylistTrackVerificationResult(false, false, httpStatus,
+                        "网易云返回错误（代码 " + apiCode + "）");
+            }
+
+            JsonObject playlist = body == null ? null : body.getAsJsonObject("playlist");
+            JsonArray trackIds = playlist == null ? null : playlist.getAsJsonArray("trackIds");
+            if (trackIds == null) {
+                return new PlaylistTrackVerificationResult(false, false, httpStatus,
+                        "目标歌单响应缺少歌曲列表");
+            }
+
+            for (JsonElement element : trackIds) {
+                if (element == null || !element.isJsonObject()) {
+                    continue;
+                }
+                JsonObject track = element.getAsJsonObject();
+                if (track.has("id") && !track.get("id").isJsonNull()
+                        && track.get("id").getAsLong() == musicId) {
+                    return new PlaylistTrackVerificationResult(true, true, httpStatus, "");
+                }
+            }
+            return new PlaylistTrackVerificationResult(true, false, httpStatus, "");
+        } catch (Exception ignored) {
+            return new PlaylistTrackVerificationResult(false, false, httpStatus,
+                    "无法解析目标歌单响应");
+        }
+    }
+
+    private PlaylistTrackVerificationResult verifyPlaylistContainsTrackWithRetry(long playlistId, long musicId) {
+        PlaylistTrackVerificationResult result = null;
+        for (int attempt = 0; attempt < PLAYLIST_TRACK_VERIFICATION_ATTEMPTS; attempt++) {
+            result = verifyPlaylistContainsTrack(playlistId, musicId);
+            if (result.isVerified() && result.isPresent()) {
+                return result;
+            }
+            if (attempt + 1 < PLAYLIST_TRACK_VERIFICATION_ATTEMPTS) {
+                try {
+                    Thread.sleep(PLAYLIST_TRACK_VERIFICATION_RETRY_DELAY_MILLIS);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        return result == null
+                ? new PlaylistTrackVerificationResult(false, false, 502, "无法读取目标歌单内容")
+                : result;
+    }
+
+    private String resolvePlaylistOperationFailureMessage(int httpStatus, int apiCode, String serverMessage) {
+        if (serverMessage != null && !serverMessage.trim().isEmpty()) {
+            return serverMessage.trim();
+        }
+        if (httpStatus == 401) {
+            return "登录状态已失效，请重新登录";
+        }
+        if (httpStatus == 403) {
+            return "没有操作此歌单的权限";
+        }
+        if (httpStatus < 200 || httpStatus >= 300) {
+            return "网络请求失败（HTTP " + httpStatus + "）";
+        }
+        if (apiCode != -1) {
+            return "网易云音乐返回错误（代码 " + apiCode + "）";
+        }
+        return "服务端返回异常，请稍后重试";
     }
 
     private int getInt(JsonObject object, String key, int defaultValue) {
@@ -381,16 +533,39 @@ public class CloudMusicApi {
     }
 
     @Getter
+    public static class PlaylistTrackVerificationResult {
+        private final boolean verified;
+        private final boolean present;
+        private final int httpStatus;
+        private final String message;
+
+        public PlaylistTrackVerificationResult(boolean verified, boolean present, int httpStatus, String message) {
+            this.verified = verified;
+            this.present = present;
+            this.httpStatus = httpStatus;
+            this.message = message;
+        }
+    }
+
+    @Getter
     public static class PlaylistTrackOperationResult {
         private final boolean success;
         private final boolean alreadyExists;
+        /** True only when /api/v6/playlist/detail confirmed the final trackIds state. */
+        private final boolean verified;
         private final int httpStatus;
         private final int apiCode;
         private final String message;
 
         public PlaylistTrackOperationResult(boolean success, boolean alreadyExists, int httpStatus, int apiCode, String message) {
+            this(success, alreadyExists, false, httpStatus, apiCode, message);
+        }
+
+        public PlaylistTrackOperationResult(boolean success, boolean alreadyExists, boolean verified,
+                                            int httpStatus, int apiCode, String message) {
             this.success = success;
             this.alreadyExists = alreadyExists;
+            this.verified = verified;
             this.httpStatus = httpStatus;
             this.apiCode = apiCode;
             this.message = message;
@@ -486,6 +661,34 @@ public class CloudMusicApi {
      */
     public RequestUtil.RequestAnswer recommendResource() {
         return RequestUtil.createRequest("/api/v1/discovery/recommend/resource", null, OptionsUtil.createOptions("weapi"));
+    }
+
+    /**
+     * 发现页推荐歌单。每日推荐接口只会返回少量与账号相关的歌单，不能单独
+     * 作为播放器主页的完整数据源，因此用此接口补足主页内容。
+     */
+    public RequestUtil.RequestAnswer personalizedPlaylists(int limit) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("limit", Math.max(1, Math.min(limit, 100)));
+        data.put("total", true);
+        data.put("n", 1000);
+
+        return RequestUtil.createRequest("/api/personalized/playlist", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    /**
+     * 热门歌单分页接口。用于在个性化推荐数量不足时继续补页，避免主页永远
+     * 只显示每日推荐接口返回的少量内容。
+     */
+    public RequestUtil.RequestAnswer topPlaylists(int limit, int offset) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("cat", "全部");
+        data.put("order", "hot");
+        data.put("limit", Math.max(1, Math.min(limit, 100)));
+        data.put("offset", Math.max(0, offset));
+        data.put("total", true);
+
+        return RequestUtil.createRequest("/api/playlist/list", data, OptionsUtil.createOptions("weapi"));
     }
 
     /**

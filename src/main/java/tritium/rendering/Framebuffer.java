@@ -237,6 +237,9 @@ public class Framebuffer implements SharedConstants {
         }
 
         this.restoreStencilState();
+        // Returning to a framebuffer may restore only its cached raw state. Re-apply
+        // the active nested clip so full-screen shader quads cannot leak outside it.
+        StencilClipManager.restoreActiveClip();
     }
 
     public void unbindFramebuffer() {

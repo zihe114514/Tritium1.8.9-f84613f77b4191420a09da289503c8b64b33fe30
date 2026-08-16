@@ -30,7 +30,7 @@ plugins {
     id "net.minecraftforge.gradle.forge" version "2.0.2"
 }
 */
-version = "1.0.2"
+version = "1.0.4"
 group = "com.deuterium.music"
 archivesBaseName = "deuteriummusic"
 
@@ -106,6 +106,13 @@ dependencies {
     // ZXing：登录二维码 QRCodeGenerator 依赖（原项目唯一需要新增的运行时库）。
     shade 'com.google.zxing:core:3.5.3'
 
+    // Cadence：统一网易云/QQ 音乐 API。使用本地构建产物以保证 Java 8/Forge 1.8.9 环境可复现。
+    shade files('libs/music-api-0.1.1.jar')
+    // Cadence 由 Kotlin 编写，运行时必须携带 stdlib；与其他 MOD 隔离后打入最终 JAR。
+    shade files('libs/kotlin-stdlib-2.4.0.jar')
+    // Cadence 使用 Gson 2.11 API；统一迁移避免与 Minecraft 1.8.9 自带旧版 Gson 冲突。
+    shade 'com.google.code.gson:gson:2.11.0'
+
     // JNA：DeviceIdGenerator 读取注册表 CPU 名 + CursorUtils 切换光标。
     // 5.14.0 为 Java 8 兼容版本。必须 relocation 到 repackage/：
     // 真实 1.8.9 客户端自带 jna 3.4.0（版本 json 声明），不迁移会与之冲突（3.4.0 缺少 Native.load / WinUser.IDC_*）。
@@ -166,7 +173,9 @@ def coreModManifest = {
     attributes 'FMLCorePlugin': 'lain.mods.inputfix.InputFix',
                'FMLCorePluginContainsFMLMod': 'true'
 }
+// 普通 jar 保留为仅供开发/排查使用的反混淆薄包，避免用户误装。
 jar {
+    classifier = 'dev'
     manifest coreModManifest
 }
 shadowJar {
@@ -174,14 +183,23 @@ shadowJar {
 }
 
 // ==== fat-jar：把 shade 依赖打进 jar，并 relocation 到 repackage/ ====
-// 产出：build/libs/deuteriummusic-1.0.2-all.jar（fat + SRG 重映射后），是真实客户端要复制的最终产物。
+// 产出：build/libs/deuteriummusic-1.0.4.jar（fat + SRG 重映射后），是真实客户端要复制的最终产物。
 // 为什么 relocation：真实 1.8.9 客户端自带 net.java.dev.jna:jna:3.4.0 + platform:3.4.0（版本 json 声明），
 // 而本 mod 代码基于 JNA 5.14.0 编写（Native.load(String,Class)、WinUser.IDC_* 等 3.4.0 缺失），
 // 若直接打包未迁移的 com.sun.jna 会与 MC 自带 3.4.0 冲突；迁到 repackage.com.sun.jna 则完全自洽。
 shadowJar {
-    classifier = 'all'
+    // 不带分类器的主 JAR 才是可直接放入 mods/ 的 fat + reobf 正式包。
+    // 普通反混淆薄包使用 -dev 后缀，防止安装错误。
+    classifier = ''
     configurations = [project.configurations.shade]
+    // ForgeGradle 2.1 bundles ASM 5, which cannot parse Java 9 module-info.class.
+    // Kotlin stdlib is Java 8-compatible, but its multi-release metadata contains that one Java 9 class.
+    exclude 'META-INF/versions/**/module-info.class'
+    exclude 'module-info.class'
     relocate 'com.google.zxing', 'repackage.com.google.zxing'
+    relocate 'com.google.gson', 'repackage.com.google.gson'
+    relocate 'top.fpsmaster.music', 'repackage.top.fpsmaster.music'
+    relocate 'kotlin', 'repackage.kotlin'
     relocate 'com.sun.jna', 'repackage.com.sun.jna'
 }
 
@@ -192,5 +210,5 @@ reobf {
     }
 }
 
-// 让 build 产出 fat jar（-all.jar），而非仅普通 reobfJar。
+// 让 build 产出无后缀的正式 fat jar；-dev.jar 仅用于开发排查。
 tasks.build.dependsOn tasks.reobfShadowJar

@@ -54,7 +54,7 @@ public class MusicWidget extends RoundedRectWidget {
                 .setAlpha(0f)
                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT))
                 .setClickable(false);
-        if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.getId() == music.getId()) {
+        if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.equals(music)) {
             rrPlayingIndicator.setAlpha(1f);
         }
         rrPlayingIndicator.setBeforeRenderCallback(() -> rrPlayingIndicator
@@ -73,7 +73,7 @@ public class MusicWidget extends RoundedRectWidget {
             this.setColor(NCMScreen.getColor(index % 2 == 0 ? NCMScreen.ColorType.ELEMENT_BACKGROUND : NCMScreen.ColorType.GENERIC_BACKGROUND));
             this.updateEntranceAnimation();
 
-            if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.getId() == music.getId()) {
+            if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.equals(music)) {
 //                this.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
                 rrPlayingIndicator.setAlpha(Interpolations.interpolate(rrPlayingIndicator.getWidgetAlpha(), .9f, .4f));
                 rrPlayingIndicator.setHidden(false);
@@ -119,7 +119,7 @@ public class MusicWidget extends RoundedRectWidget {
         this.addChild(lblMusicIndex);
 
         lblMusicIndex.setBeforeRenderCallback(() -> {
-            if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.getId() == music.getId())
+            if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.equals(music))
                 lblMusicIndex.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             else
                 lblMusicIndex.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
@@ -144,7 +144,7 @@ public class MusicWidget extends RoundedRectWidget {
                     lblMusicName.centerVertically();
                     lblMusicName.setPosition(cover.getRelativeX() + cover.getWidth() + 4, lblMusicName.getRelativeY() - lblMusicName.getHeight() * .5 - 2);
                     // 右侧预留：时长 + 喜欢按钮(20) + 加入歌单按钮(20) + 间距，避免歌名压到收藏按钮
-                    lblMusicName.setMaxWidth(this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4 + 80 + (musicDirty ? (dirtyIndicatorSize + 4) : 0)));
+                    lblMusicName.setMaxWidth(this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4 + (music.isNetease() ? 80 : 40) + (musicDirty ? (dirtyIndicatorSize + 4) : 0)));
                 });
         lblMusicName.setClickable(false);
 
@@ -176,13 +176,13 @@ public class MusicWidget extends RoundedRectWidget {
         lblMusicArtist
                 .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
                 .setBeforeRenderCallback(() -> {
-                    if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.getId() == music.getId())
+                    if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.equals(music))
                         lblMusicArtist.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
                     else
                         lblMusicArtist.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
                     lblMusicArtist.centerVertically();
                     lblMusicArtist.setPosition(cover.getRelativeX() + cover.getWidth() + 4, lblMusicArtist.getRelativeY() + lblMusicArtist.getHeight() * .5 + 2);
-                    lblMusicArtist.setMaxWidth(this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4 + 80));
+                    lblMusicArtist.setMaxWidth(this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4 + (music.isNetease() ? 80 : 40)));
                 });
 
         lblMusicArtist.setClickable(false);
@@ -190,7 +190,7 @@ public class MusicWidget extends RoundedRectWidget {
         LabelWidget lblMusicDuration = new LabelWidget(formatDuration(music.getDuration()), FontManager.pf14bold);
         this.addChild(lblMusicDuration);
         lblMusicDuration.setBeforeRenderCallback(() -> {
-            if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.getId() == music.getId())
+            if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.equals(music))
                 lblMusicDuration.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             else
                 lblMusicDuration.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
@@ -205,6 +205,8 @@ public class MusicWidget extends RoundedRectWidget {
         IconWidget btnLike = new IconWidget("☆", FontManager.pf16bold, 0, 0, 20, 20);
         this.addChild(btnLike);
         btnLike.setShouldOverrideMouseCursor(true);
+        btnLike.setHidden(!music.isNetease());
+        btnLike.setClickable(music.isNetease());
         btnLike.setBeforeRenderCallback(() -> {
             boolean liked = CloudMusic.likeList != null && CloudMusic.likeList.contains(music.getId());
             btnLike.setIcon(liked ? "★" : "☆");
@@ -213,7 +215,7 @@ public class MusicWidget extends RoundedRectWidget {
             btnLike.setPosition(lblMusicDuration.getRelativeX() - 4 - btnLike.getWidth(), btnLike.getRelativeY());
         });
         btnLike.setOnClickCallback((x, y, button) -> {
-            if (button != 0)
+            if (button != 0 || !music.isNetease())
                 return false;
             boolean liked = CloudMusic.likeList != null && CloudMusic.likeList.contains(music.getId());
             boolean newLiked = !liked;
@@ -233,13 +235,15 @@ public class MusicWidget extends RoundedRectWidget {
         IconWidget btnAddToPlaylist = new IconWidget("+", FontManager.pf16bold, 0, 0, 20, 20);
         this.addChild(btnAddToPlaylist);
         btnAddToPlaylist.setShouldOverrideMouseCursor(true);
+        btnAddToPlaylist.setHidden(!music.isNetease());
+        btnAddToPlaylist.setClickable(music.isNetease());
         btnAddToPlaylist.setBeforeRenderCallback(() -> {
             btnAddToPlaylist.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             btnAddToPlaylist.centerVertically();
             btnAddToPlaylist.setPosition(btnLike.getRelativeX() - 4 - btnAddToPlaylist.getWidth(), btnAddToPlaylist.getRelativeY());
         });
         btnAddToPlaylist.setOnClickCallback((x, y, button) -> {
-            if (button != 0)
+            if (button != 0 || !music.isNetease())
                 return false;
             NCMScreen.getInstance().openAddToPlaylist(music);
             return true;

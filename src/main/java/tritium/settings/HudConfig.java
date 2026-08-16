@@ -51,6 +51,13 @@ public final class HudConfig {
     public static float currentTransitionWidth = 14.0f;
     public static float currentBreathStrength = 0.015f;
 
+    // OSD KTV animation. These values are independent from the full-screen lyric renderer.
+    public static float osdKaraokeTransitionWidth = 14.0f;
+    public static float osdKaraokeGlowStrength = 0.68f;
+    public static float osdKaraokeBloomStrength = 0.46f;
+    public static float osdKaraokePulseStrength = 0.06f;
+    public static float osdKaraokeSmoothing = 0.85f;
+
     // Ordinary (non-current) lyric rows.
     public static float normalOpacity = 0.48f;
     public static float normalScale = 0.94f;
@@ -64,6 +71,14 @@ public final class HudConfig {
     /** Global download Dynamic Island. */
     public static boolean dynamicIslandEnabled = true;
     public static float dynamicIslandScale = 0.88f;
+    /** Dynamic Island typography scale, applied consistently to every style. */
+    public static float dynamicIslandTextScale = 1.0f;
+    /** Progress bar thickness in logical pixels. */
+    public static float dynamicIslandProgressHeight = 1.35f;
+    /** Seconds to keep the completed state visible before hiding. */
+    public static float dynamicIslandCompletionHoldSeconds = 1.80f;
+    /** Visual preset for the global island: 0 pill, 1 glass, 2 compact, 3 card. */
+    public static int dynamicIslandStyle = 0;
 
     private HudConfig() {
     }
@@ -79,6 +94,11 @@ public final class HudConfig {
         currentBloomStrength = 0.42f;
         currentTransitionWidth = 14.0f;
         currentBreathStrength = 0.015f;
+        osdKaraokeTransitionWidth = 14.0f;
+        osdKaraokeGlowStrength = 0.68f;
+        osdKaraokeBloomStrength = 0.46f;
+        osdKaraokePulseStrength = 0.06f;
+        osdKaraokeSmoothing = 0.85f;
         normalOpacity = 0.48f;
         normalScale = 0.94f;
         normalGlowStrength = 0.14f;
@@ -93,6 +113,10 @@ public final class HudConfig {
     public static void resetDynamicIslandAppearance() {
         dynamicIslandEnabled = true;
         dynamicIslandScale = 0.88f;
+        dynamicIslandTextScale = 1.0f;
+        dynamicIslandProgressHeight = 1.35f;
+        dynamicIslandCompletionHoldSeconds = 1.80f;
+        dynamicIslandStyle = 0;
     }
 
     /** Loads saved settings; malformed or out-of-range values fall back safely. */
@@ -122,6 +146,12 @@ public final class HudConfig {
             currentTransitionWidth = clamp(getFloat(o, "currentTransitionWidth", currentTransitionWidth), 4.0f, 32.0f);
             currentBreathStrength = clamp(getFloat(o, "currentBreathStrength", currentBreathStrength), 0.0f, 0.08f);
 
+            osdKaraokeTransitionWidth = clamp(getFloat(o, "osdKaraokeTransitionWidth", osdKaraokeTransitionWidth), 4.0f, 32.0f);
+            osdKaraokeGlowStrength = clamp01(getFloat(o, "osdKaraokeGlowStrength", osdKaraokeGlowStrength));
+            osdKaraokeBloomStrength = clamp01(getFloat(o, "osdKaraokeBloomStrength", osdKaraokeBloomStrength));
+            osdKaraokePulseStrength = clamp(getFloat(o, "osdKaraokePulseStrength", osdKaraokePulseStrength), 0.0f, 0.15f);
+            osdKaraokeSmoothing = clamp01(getFloat(o, "osdKaraokeSmoothing", osdKaraokeSmoothing));
+
             normalOpacity = clamp(getFloat(o, "normalOpacity", normalOpacity), 0.15f, 1.0f);
             normalScale = clamp(getFloat(o, "normalScale", normalScale), 0.85f, 1.05f);
             normalGlowStrength = clamp(getFloat(o, "normalGlowStrength", normalGlowStrength), 0.0f, 0.65f);
@@ -133,6 +163,10 @@ public final class HudConfig {
 
             dynamicIslandEnabled = getBoolean(o, "dynamicIslandEnabled", dynamicIslandEnabled);
             dynamicIslandScale = clamp(getFloat(o, "dynamicIslandScale", dynamicIslandScale), 0.60f, 1.35f);
+            dynamicIslandTextScale = clamp(getFloat(o, "dynamicIslandTextScale", dynamicIslandTextScale), 0.75f, 1.35f);
+            dynamicIslandProgressHeight = clamp(getFloat(o, "dynamicIslandProgressHeight", dynamicIslandProgressHeight), 0.75f, 4.0f);
+            dynamicIslandCompletionHoldSeconds = clamp(getFloat(o, "dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds), 0.5f, 6.0f);
+            dynamicIslandStyle = clampInt(getInt(o, "dynamicIslandStyle", dynamicIslandStyle), 0, 3);
         } catch (Throwable ignored) {
         }
     }
@@ -157,6 +191,11 @@ public final class HudConfig {
             o.addProperty("currentBloomStrength", currentBloomStrength);
             o.addProperty("currentTransitionWidth", currentTransitionWidth);
             o.addProperty("currentBreathStrength", currentBreathStrength);
+            o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
+            o.addProperty("osdKaraokeGlowStrength", osdKaraokeGlowStrength);
+            o.addProperty("osdKaraokeBloomStrength", osdKaraokeBloomStrength);
+            o.addProperty("osdKaraokePulseStrength", osdKaraokePulseStrength);
+            o.addProperty("osdKaraokeSmoothing", osdKaraokeSmoothing);
 
             o.addProperty("normalOpacity", normalOpacity);
             o.addProperty("normalScale", normalScale);
@@ -169,12 +208,20 @@ public final class HudConfig {
 
             o.addProperty("dynamicIslandEnabled", dynamicIslandEnabled);
             o.addProperty("dynamicIslandScale", dynamicIslandScale);
+            o.addProperty("dynamicIslandTextScale", dynamicIslandTextScale);
+            o.addProperty("dynamicIslandProgressHeight", dynamicIslandProgressHeight);
+            o.addProperty("dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds);
+            o.addProperty("dynamicIslandStyle", dynamicIslandStyle);
 
             try (Writer w = new OutputStreamWriter(new FileOutputStream(FILE), StandardCharsets.UTF_8)) {
                 w.write(GSON.toJson(o));
             }
         } catch (Throwable ignored) {
         }
+    }
+
+    public static int clampInt(int v, int min, int max) {
+        return Math.max(min, Math.min(max, v));
     }
 
     public static float clampScale(float v) {
@@ -217,4 +264,3 @@ public final class HudConfig {
         }
     }
 }
-

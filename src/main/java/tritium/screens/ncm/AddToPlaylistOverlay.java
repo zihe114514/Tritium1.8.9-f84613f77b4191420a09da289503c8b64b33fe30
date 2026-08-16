@@ -3,6 +3,7 @@ package tritium.screens.ncm;
 import tritium.management.FontManager;
 import tritium.ncm.api.CloudMusicApi;
 import tritium.ncm.music.CloudMusic;
+import tritium.ncm.music.MusicPlatform;
 import tritium.ncm.music.dto.Music;
 import tritium.ncm.music.dto.PlayList;
 import tritium.rendering.animation.Interpolations;
@@ -21,7 +22,6 @@ import java.util.List;
  */
 public class AddToPlaylistOverlay extends NCMPanel {
 
-    private static final long SUCCESS_CLOSE_DELAY_MILLIS = 1050L;
     private static final int STATUS_PROCESSING_COLOR = 0xC4C9D4;
     private static final int STATUS_SUCCESS_COLOR = 0x53C68C;
     private static final int STATUS_ERROR_COLOR = 0xF1767D;
@@ -165,13 +165,29 @@ public class AddToPlaylistOverlay extends NCMPanel {
         if (submitting || closing || music == null || playlist == null) {
             return;
         }
+        // 本弹窗只处理网易云歌曲与网易云目标歌单，避免把跨平台稳定哈希误提交给网易云接口。
+        if (!music.isNetease() || playlist.getPlatform() != MusicPlatform.NETEASE) {
+            selectedPlaylist = playlist;
+            submitting = false;
+            closeAfterMillis = -1L;
+            showStatus("仅支持把网易云歌曲加入网易云歌单", FeedbackState.ERROR);
+            return;
+        }
+
+        final long musicId = music.getId();
+        if (musicId <= 0L) {
+            selectedPlaylist = playlist;
+            submitting = false;
+            closeAfterMillis = -1L;
+            showStatus("歌曲 ID 无效，无法加入歌单", FeedbackState.ERROR);
+            return;
+        }
 
         submitting = true;
         closeAfterMillis = -1L;
         selectedPlaylist = playlist;
         showStatus("正在加入「" + getPlaylistName(playlist) + "」…", FeedbackState.PROCESSING);
 
-        final long musicId = music.getId();
         MultiThreadingUtil.runAsync(() -> {
             CloudMusicApi.PlaylistTrackOperationResult result;
             try {
@@ -193,16 +209,15 @@ public class AddToPlaylistOverlay extends NCMPanel {
         }
 
         submitting = false;
+        closeAfterMillis = -1L;
         if (result.isAlreadyExists()) {
-            showStatus("该歌曲已在「" + getPlaylistName(playlist) + "」中", FeedbackState.ALREADY_EXISTS);
-            closeAfterMillis = System.currentTimeMillis() + SUCCESS_CLOSE_DELAY_MILLIS;
-        } else if (result.isSuccess()) {
-            showStatus("已加入「" + getPlaylistName(playlist) + "」", FeedbackState.SUCCESS);
-            closeAfterMillis = System.currentTimeMillis() + SUCCESS_CLOSE_DELAY_MILLIS;
+            showStatus("已确认该歌曲已在「" + getPlaylistName(playlist) + "」中", FeedbackState.ALREADY_EXISTS);
+        } else if (result.isSuccess() && result.isVerified()) {
+            showStatus("网易云已确认加入「" + getPlaylistName(playlist) + "」", FeedbackState.SUCCESS);
         } else {
             String message = result.getMessage();
             if (message == null || message.trim().isEmpty()) {
-                message = "服务端未确认加入成功，请重试";
+                message = "服务端未确认加入成功，请点击歌单重试";
             }
             showStatus("加入失败：" + message, FeedbackState.ERROR);
         }
@@ -292,10 +307,10 @@ public class AddToPlaylistOverlay extends NCMPanel {
                 return "";
             }
             if (submitting) {
-                return "处理中…";
+                return "校验中…";
             }
             if (feedbackState == FeedbackState.SUCCESS) {
-                return "已加入";
+                return "已确认";
             }
             if (feedbackState == FeedbackState.ALREADY_EXISTS) {
                 return "已存在";

@@ -59,6 +59,13 @@ public class LyricLine {
 
     public final List<Word> words = new CopyOnWriteArrayList<>();
 
+    public boolean hasTimedWords() {
+        for (Word word : words) {
+            if (word != null && word.duration > 0L) return true;
+        }
+        return false;
+    }
+
     public static class Word {
         public final String word;
         public final long timestamp, duration;
@@ -73,6 +80,13 @@ public class LyricLine {
             this.timestamp = timestamp;
             this.duration = duration;
             this.emphasizes = new double[word.length()];
+        }
+
+        /** 与播放器毫秒时钟对齐的线性逐字进度。 */
+        public double getProgress(double positionMs) {
+            if (duration <= 0L) return positionMs >= timestamp ? 1.0 : 0.0;
+            double value = (positionMs - timestamp) / (double) duration;
+            return Math.max(0.0, Math.min(1.0, value));
         }
     }
 
