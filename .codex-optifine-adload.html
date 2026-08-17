@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>OptiFine Download</title>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    <link rel="shortcut icon" href='images/of16r.png' />
+    <meta name="description" content="OptiFine - Minecraft performance tuning and advanced graphics" />
+    <meta name="keywords" content="optifine, minecraft, fps, lag, antialiasing, hd textures" />
+<style type="text/css">
+      @font-face {
+        font-family: 'Roboto';
+        font-weight: normal;
+        font-style: normal;
+        src: local('Roboto'), local('Roboto-Regular'), url('template/fonts/Roboto-Regular.woff') format('woff');
+      }
+      @font-face {
+        font-family: 'Roboto';
+        font-weight: bold;
+        font-style: normal;
+        src: url('template/fonts/Roboto-Bold.woff') format('woff');
+        src: local('Roboto Bold'), local('Roboto-Bold'), url('template/fonts/Roboto-Bold.woff') format('woff');        
+      }
+      @font-face {
+        font-family: 'Oswald';
+        font-weight: normal;
+        font-style: normal;
+        src: url('template/fonts/Oswald-Regular.woff') format('woff');
+      }
+      @font-face {
+        font-family: 'Oswald';
+        font-weight: bold;
+        font-style: normal;
+        src: url('template/fonts/Oswald-Medium.woff') format('woff');
+      }
+      body {
+        font-family:'Roboto', arial, helvetica, sans-serif;
+        font-weight: normal;
+        font-style: normal;
+        font-size: medium;
+        background-image:url('images/snow64b.gif');
+      }
+      A {
+        color: #5168CF; 
+        text-decoration: none; 
+      }    
+      h2 {
+        margin-bottom: 0.3em
+      }
+      .tableRoot {
+        margin: 0 auto; 
+        min-width: 850px; 
+        background-color: white; 
+        box-shadow: 0px 0px 20px #CCCCCC;
+        border: 0px solid #808080;
+        /* Use border-spacing instead of border-collapse, otherwise IE doesn't show the shadow */
+        border-spacing:0;
+      }
+      .header {
+        background-color: #313E7C;
+        padding-bottom: 0.32em;
+      }
+      .headerTitle {
+        font-family:'Oswald', arial, helvetica, sans-serif;
+        font-size:300%; 
+        font-weight:bold; 
+        padding-left: 20px;
+        padding-right: 40px;
+        line-height: 1.3em;
+      }
+      .headerTitle A {
+        color: #F0F3FF; 
+        text-decoration: none;
+      }
+      .headerNav {
+        text-align: left; 
+        background-color: #313E7C;
+        border-width: 0px;
+        margin-left: 0px
+      }
+      .headerNav A {
+        color: #F0F3FF; 
+        text-decoration: none;
+        padding-left: 1em;
+        padding-right: 1em;
+        padding-top: 0.3em;
+        padding-bottom: 0.3em;
+      }
+      .headerNav A:hover {
+        background-color: #6974A3;
+        transition: .25s;
+        text-decoration: none;
+      }
+      .content {
+        padding: 18px;
+        padding-top: 10px; 
+        text-align: left; 
+        text-indent: 0px; 
+        margin: 10px;
+      }
+      .content A:hover {
+      }
+      .footer {
+        font-size:small; 
+        text-align: right;  
+        background-color: #313E7C; 
+        padding-left: 0.3em;
+        padding-right: 0.3em;
+        padding-top: 0.5em;
+        padding-bottom: 0.5em;
+      }
+      .footerIcon {
+      }
+      .footerIcon IMG {
+        margin-bottom: -0.3em;
+        margin-right: 0.7em;
+        width: 1.2em;
+        height: 1.2em;
+      }
+      .footerText A {
+        text-decoration: none;
+        padding-left: 0.7em; 
+        padding-right: 0.7em;
+        padding-top: 0.2em;
+        padding-bottom: 0.2em;
+        color: #F0F3FF;
+      }
+      .footerText A:hover {
+        text-decoration: none;
+        background-color: #6974A3;
+        transition: .25s;
+        color: #F0F3FF;
+      }
+      .downloads {
+        width: 100%
+      }
+      .spoilerLink {
+        line-height: 200%;
+      }
+      .showAll {
+        text-align: center;
+        margin-top: 2em;
+      }
+      .downloadTable {
+        border-collapse: collapse;
+        width: auto;
+        line-height: 200%;
+      }
+      .downloadLine {
+      }
+      /* Columns */
+      .downloadLine .colFile {
+        width: 270px;
+        padding-left: 10px;
+      }
+      .downloadLine .colDownload A,
+      .downloadButton A {
+        width: 80px;
+        text-align: center;
+        padding-left: 1em;
+        padding-right: 1em;
+        padding-top: 0.2em;
+        padding-bottom: 0.2em;
+        border: 1px solid #5168CF;
+      }
+      .downloadLine .colMirror {
+        width: 100px; 
+        text-align: center;
+      }
+      .downloadLine .colChangelog {
+        width: 110px;
+      }
+      .downloadLine .colForge {
+        width: 115px;
+      }
+      .downloadLine .colDate {
+        width: 80px;
+        text-align: right;
+        padding-right: 10px;
+      }
+      /* Preview */
+      .downloadLinePreview {
+        background-color: #FFF6E3
+      }
+      /* Main */
+      .downloadLineMain:first-child {
+        background-color: #F0F3FF
+      }
+      .downloadLineMain:first-child .colDownload  A, 
+      .downloadButton A{
+        font-weight: normal;
+        color: white;
+        background-color: #313E7C;
+        border: 1px solid #313E7C;
+      }
+      .downloadLineMain:first-child .colDownload A:hover,
+      .downloadButton A:hover{
+        background-color: #6974A3;
+        transition: .25s;
+      }
+      LI STRONG {
+        line-height: 200%;
+      }
+      .tableDownload {
+        margin: 0 auto; 
+      }
+      .tableDonate TR {
+        height: 35px;
+      }
+      .scaleNearest {  
+        image-rendering:optimizeSpeed;             /* Legal fallback                 */
+        image-rendering:-moz-crisp-edges;          /* Firefox                        */
+        image-rendering:-o-crisp-edges;            /* Opera                          */
+        image-rendering:-webkit-optimize-contrast; /* Chrome (and eventually Safari) */
+        image-rendering:optimize-contrast;         /* CSS3 Proposed                  */
+        -ms-interpolation-mode:nearest-neighbor;   /* IE8+                           */
+        image-rendering:pixelated;                 /* Chrome 41+, Firefox            */
+      }
+      .tableData {
+        border-collapse: collapse;
+      }
+      .tableData th {
+        color: #F0F3FF;
+        background-color: #313E7C;
+        font-weight: normal;
+      }
+      .tableData, .tableData th, .tableData td {
+        border: 0px solid black;
+      }
+      .tableData th, .tableData td {
+        padding-left:10px;
+        padding-right:10px;
+        padding-top:5px;
+        padding-bottom:5px;
+      }
+      .tableDataDis {
+        background-color: #DCDCDC
+      }
+      .tableDataIcon {
+        width: 1.5em;
+        height: 1.5em;
+      }
+      .tableDataCape {
+        max-height: 44px;
+      }
+      .tableDataCentered {
+        text-align: center;
+      }
+      .tableBanner {
+        width: 100%;
+        padding: 8px;
+      }
+      .tableBanner TR {
+        text-align: center;
+        margin: 0.3em;
+      }
+      .tableBanner TD {
+        padding-top: 1em;
+      }
+      .tableBanner IMG {
+        border: 1px solid #f0f0f0;
+      }
+      .tableBanner TD * {
+        margin: 0.3em;
+      }
+      .tableBanners TR TD {
+        padding: 9px;
+        padding-right: 8px;
+      }
+      .tableBanners IMG {
+        border: 1px solid #f0f0f0;
+      }
+      .bannerSelTable {
+        width: 100%;
+      }
+      .bannerSelUser {
+        text-align: right;
+      }
+      .bannerNav {
+        text-align: center;
+      }
+      .bannerNav * {
+        margin: 0.3em;
+      }
+      TD .tableDataEditable {
+        background-color: #FFF6E3;
+        border: 2px solid transparent;
+      }
+      input,
+      select {
+        font-family:'Roboto', arial, helvetica, sans-serif;
+        font-weight: normal;
+        font-style: normal;
+        font-size: medium;
+        padding: 2px;
+      }
+      input[type=submit] {
+        padding-left: 1em;
+        padding-right: 1em;
+        padding-top: 0.2em;
+        padding-bottom: 0.2em;
+      }
+      input[type=checkbox] {
+        transform : scale(1.3);
+      }
+    </style>
+<script type="text/javascript">
+      function getCookie(cname)
+      {
+        var name = cname + "=";
+        var decodedCookie = decodeURIComponent(document.cookie);
+        var ca = decodedCookie.split(';');
+        for(var i = 0; i <ca.length; i++) 
+        {
+          var c = ca[i];
+          while (c.charAt(0) == ' ') 
+          {
+              c = c.substring(1);
+          }
+          if (c.indexOf(name) == 0) 
+          {
+              return c.substring(name.length, c.length);
+          }
+        }
+        return "";
+      }
+      function setCookie (key, value, seconds) 
+      {
+        var date = new Date();
+        // Get unix milliseconds at current time plus number of hours
+        date.setTime(date.getTime() + (seconds * 1000)); 
+        window.document.cookie = key + "=" + value + "; expires=" + date.toGMTString() + "; path=/";
+        return value;
+      }
+      function onDownload() 
+      {
+        // Check cookie
+        var ofAdPage = getCookie("ofAdPage");
+        if(ofAdPage.length > 0)
+          return;
+        // Set cookie
+        setCookie("ofAdPage", "Test", 24 * 60 * 60);
+        // Timed redirect
+        setTimeout(function()
+        {
+          var poolid = 32047;
+          var subpoolid = 0;
+          var rnd = Math.round(Math.random() * 999999);
+          var url = "https://server.cpmstar.com/view.aspx?poolid=" + poolid + "&subpoolid=" + subpoolid + "&rnd=" + rnd;
+          // console.log(url);
+          document.location = url;
+        }, 1000);
+      }
+    </script>
+    
+    <!-- Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-30620569-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-30620569-1');
+</script>
+<!-- Venatus Ad Manager - Install in <HEAD> of page -->
+    <script src="https://hb.vntsm.com/v3/live/ad-manager.min.js" type="text/javascript" data-site-id="610139896ba87f455d73fa3e" data-mode="scan" async></script>
+    <!-- / Venatus Ad Manager -->
+    
+  </head>
+  
+  <body>
+
+  <table class="tableRoot">
+      <tr>
+        <td class="header">
+          <!-- Title -->
+          <span class="headerTitle">
+            <a href="home">OptiFine</a>
+          </span>
+          <!-- Navigation -->
+          <span class="headerNav">
+            <a href="home">Home</a>
+            <a href="downloads">Downloads</a>
+            <a href="donate">Donate</a>
+            <a href="cape">Cape</a>
+            <a href="banners">Banners</a>
+            <a href="login">Login</a>
+            <a href="faq">FAQ</a>
+          </span>
+        </td>
+      </tr>
+      <tr>
+        <td class="content">
+          <!-- Content -->
+<table class="tableDownload">
+      <tbody>
+        <tr>
+          <td>
+          <!--Cell 1-->
+
+
+          &nbsp;&nbsp;&nbsp;
+          </td>
+          <td style="vertical-align:top;" >
+            <table border="0" cellpadding="8" cellspacing="1" >
+              <tbody>
+                <tr>
+                  <td>
+                  <!--Cell 2A-->
+
+                  </td>
+                </tr>
+                <tr>
+                  <td  style="text-align: center; font-weight: bold;">
+                  <!--Cell 2B-->
+                    <br>
+                    <span id="Download">
+                    <img src="images/download.png" style="vertical-align: middle">
+                    <a href='downloadx?f=OptiFine_1.8.9_HD_U_M5.jar&x=7679edba5f08c27139154b4585f2088e' onclick='onDownload()'>OptiFine 1.8.9 HD U M5</a>
+<br>
+                    <br>
+                    <div class="downloadButton">
+                    <a href='downloadx?f=OptiFine_1.8.9_HD_U_M5.jar&x=7679edba5f08c27139154b4585f2088e' onclick='onDownload()'>Download</a>
+</div>
+                    </span>
+                    <br>
+                    <br>
+                    <br>
+                    
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                  <!--Cell 2C-->
+
+                    <!-- Optifine - 728x90 Dynamic (610159a627b9ac245369f0e7) - 728x90, 970x250, 970x90 - Place in <BODY> of page where ad should appear -->
+<div class="vm-placement" data-id="610159a627b9ac245369f0e7"></div>
+<!-- / Optifine - 728x90 Dynamic (610159a627b9ac245369f0e7) -->
+
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                    <!-- Optifine - 728x90 Dynamic (610159a627b9ac245369f0e7) - 728x90, 970x250, 970x90 - Place in <BODY> of page where ad should appear -->
+<div class="vm-placement" data-id="610159a627b9ac245369f0e7"></div>
+<!-- / Optifine - 728x90 Dynamic (610159a627b9ac245369f0e7) -->
+</td>
+                </tr>
+              </tbody>
+            </table>
+          </td>
+          <td>
+          <!--Cell 3-->
+          
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- Optifine - Rich Media (6101597e8b95466018aad5c2) - 1x1 - Place in <BODY> of page where ad should appear -->
+<div class="vm-placement" data-id="6101597e8b95466018aad5c2" style="display:none"></div>
+<!-- / Optifine - Rich Media (6101597e8b95466018aad5c2) -->
+<!-- End of content -->
+        </td>
+      </tr>
+      <tr>
+        <td class="footer">
+          <!-- Footer -->
+          <span class="footerIcon">
+            <a href="https://discord.gg/3mMpcwW" target="_blank"><img alt="Discord" src="images/discord.png"></a>
+            <a href="https://twitter.com/OptiFineNews" target="_blank"><img alt="Twitter" src="images/twitter.png"></a>
+            <a href="https://reddit.com/r/optifine" target="_blank"><img alt="Reddit" src="images/reddit.png"></a>
+          </span>
+          <span class="footerText">
+            <a href="privacy">Privacy</a>
+            <a href="refund">Refund</a>
+            <a href="copyright">Copyright</a>
+            <a href="contact">Contact</a>
+          </span>
+        </td>
+      </tr>
+      </table>
+</body>
+</html>
+
