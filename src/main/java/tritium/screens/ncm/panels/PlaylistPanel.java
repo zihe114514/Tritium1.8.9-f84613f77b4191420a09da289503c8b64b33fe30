@@ -48,6 +48,24 @@ public class PlaylistPanel extends NCMPanel {
     @Override
     public void onInit() {
 
+        RoundedButtonWidget btnBack = new RoundedButtonWidget("返回", FontManager.pf12bold);
+        this.addChild(btnBack);
+        btnBack.setShouldOverrideMouseCursor(true);
+        btnBack.setBeforeRenderCallback(() -> {
+            btnBack.setBounds(42, 16);
+            btnBack.setPosition(12, 8);
+            btnBack.setRadius(4);
+            btnBack.setColor(btnBack.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            btnBack.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+        });
+        btnBack.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+            if (mouseButton != 0) return false;
+            NCMScreen.getInstance().navigateBack();
+            return true;
+        });
+
         double musicsContainerOffsetY;
 
         if (!playList.isSearchMode()) {
@@ -109,6 +127,8 @@ public class PlaylistPanel extends NCMPanel {
                     () -> playList.isSubscribed() ? "取消收藏" : "收藏歌单", FontManager.pf16bold);
             this.addChild(btnSubscribe);
             btnSubscribe.setBeforeRenderCallback(() -> {
+                boolean canToggleSubscription = canToggleSubscription();
+                btnSubscribe.setHidden(!canToggleSubscription);
                 btnSubscribe.setBounds(57, 17);
                 btnSubscribe.setPosition(btnCoverflow.getRelativeX() + btnCoverflow.getWidth() + 8,
                         cover.getRelativeY() + cover.getHeight() - btnSubscribe.getHeight());
@@ -117,7 +137,7 @@ public class PlaylistPanel extends NCMPanel {
                 btnSubscribe.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             });
             btnSubscribe.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-                if (mouseButton != 0) {
+                if (mouseButton != 0 || !canToggleSubscription()) {
                     return false;
                 }
                 if (!playList.isSubscribed()) {
@@ -156,13 +176,17 @@ public class PlaylistPanel extends NCMPanel {
 
                         this.tfSearch.setHidden(!this.tfSearch.isFocused() && tfOpenAnimation < 21);
 
+                        boolean canToggleSubscription = canToggleSubscription();
+                        double searchAnchorX = canToggleSubscription
+                                ? btnSubscribe.getRelativeX() + btnSubscribe.getWidth()
+                                : btnCoverflow.getRelativeX() + btnCoverflow.getWidth();
                         searchBar
                                 .setAlpha(1f)
                                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.BORDER))
                                 .setWidth(tfOpenAnimation)
-                                .setHeight(btnSubscribe.getHeight())
+                                .setHeight(btnCoverflow.getHeight())
                                 .setRadius(7)
-                                .setPosition(btnSubscribe.getRelativeX() + btnSubscribe.getWidth() + 8, btnSubscribe.getRelativeY());
+                                .setPosition(searchAnchorX + 8, btnCoverflow.getRelativeY());
                     });
 
             RoundedRectWidget searchBarBg = new RoundedRectWidget();
@@ -373,6 +397,20 @@ public class PlaylistPanel extends NCMPanel {
 
             });
         }
+    }
+
+    /**
+     * Only external NetEase playlists support the subscribe/unsubscribe toggle.
+     * A playlist created by the current account is already part of “我的歌单”,
+     * so displaying “取消收藏” there is both misleading and ineffective.
+     */
+    private boolean canToggleSubscription() {
+        if (playList == null || playList.getPlatform() != MusicPlatform.NETEASE) {
+            return false;
+        }
+        User creator = playList.getCreator();
+        User currentUser = CloudMusic.profile;
+        return creator == null || currentUser == null || creator.getId() != currentUser.getId();
     }
 
     /**

@@ -114,10 +114,22 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     public void checkDirty() {
         if (this.dirty) {
             this.dirty = false;
+
+            /*
+             * 刷新帐号/歌单会重建侧栏和控制栏，但内容面板并不属于 basePanel，
+             * 因此可以安全保留。此前这里无条件 new HomePanel()，导致用户在
+             * 歌单详情、搜索结果等页面点击刷新后被强制送回主页。
+             */
+            NCMPanel panelBeforeLayout = this.currentPanel;
             this.layout();
 
-            // 游客与 QQ 音乐模式同样允许进入主页/搜索，不再强制网易云登录遮罩。
-            this.setCurrentPanel(new HomePanel());
+            if (panelBeforeLayout == null) {
+                // 首次打开播放器仍默认进入主页。
+                this.setCurrentPanel(new HomePanel());
+            } else if (this.playlistsPanel != null) {
+                // 新侧栏需要重新映射当前面板的选中状态；内容页面保持原样。
+                this.playlistsPanel.selectCurrentPanel(panelBeforeLayout);
+            }
         }
     }
 
@@ -478,6 +490,27 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             this.currentPanel.setAlpha(0);
             this.curPanelAlphaAnimation = 0f;
         }
+        if (this.playlistsPanel != null) {
+            this.playlistsPanel.selectCurrentPanel(panel);
+        }
+    }
+
+    /**
+     * Returns to the immediately preceding content page. The same history is
+     * used by the existing mouse side-button navigation, so the page animation
+     * and lifecycle remain consistent with the rest of the player.
+     */
+    public void navigateBack() {
+        if (currentActionPointer > 0) {
+            --currentActionPointer;
+            actions.get(currentActionPointer).run();
+            return;
+        }
+
+        // A standalone secondary panel can still offer a useful escape route.
+        if (!(this.currentPanel instanceof HomePanel)) {
+            this.setCurrentPanel(new HomePanel());
+        }
     }
 
     /**
@@ -600,10 +633,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             }
             // go back
             else if (mouseButton == 3) {
-                if (currentActionPointer > 0) {
-                    -- currentActionPointer;
-                    actions.get(currentActionPointer).run();
-                }
+                this.navigateBack();
             }
 
         } else {
