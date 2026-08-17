@@ -30,9 +30,9 @@ plugins {
     id "net.minecraftforge.gradle.forge" version "2.0.2"
 }
 */
-version = "1.0.4"
+version = "1.0.0"
 group = "com.deuterium.music"
-archivesBaseName = "deuteriummusic"
+archivesBaseName = "MuoniumPlayer"
 
 sourceCompatibility = targetCompatibility = '1.8'
 
@@ -183,7 +183,7 @@ shadowJar {
 }
 
 // ==== fat-jar：把 shade 依赖打进 jar，并 relocation 到 repackage/ ====
-// 产出：build/libs/deuteriummusic-1.0.4.jar（fat + SRG 重映射后），是真实客户端要复制的最终产物。
+// 产出：build/libs/MuoniumPlayer-1.0.0.jar（fat + SRG 重映射后），是真实客户端要复制的最终产物。
 // 为什么 relocation：真实 1.8.9 客户端自带 net.java.dev.jna:jna:3.4.0 + platform:3.4.0（版本 json 声明），
 // 而本 mod 代码基于 JNA 5.14.0 编写（Native.load(String,Class)、WinUser.IDC_* 等 3.4.0 缺失），
 // 若直接打包未迁移的 com.sun.jna 会与 MC 自带 3.4.0 冲突；迁到 repackage.com.sun.jna 则完全自洽。

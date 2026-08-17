@@ -38,22 +38,40 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class HomePanel extends NCMPanel {
 
     private final MusicPlatform platform;
+    /** A fixed result set is used by the in-player playlist search without touching homepage caches. */
+    private final List<PlayList> fixedPlaylists;
+    private final String fixedRecommendationTitle;
 
     public HomePanel() {
-        super();
-        this.platform = CadenceMusicService.getCurrentPlatform();
+        this(null, null);
     }
 
-    private static final int NETEASE_HOME_TARGET = 120;
+    /**
+     * Builds a read-only playlist-card page, currently used for NetEase playlist-search results.
+     * The result owns no global cache, so returning home always resumes the normal recommendation page.
+     */
+    public HomePanel(List<PlayList> playlists, String recommendationTitle) {
+        super();
+        this.platform = CadenceMusicService.getCurrentPlatform();
+        this.fixedPlaylists = playlists == null ? null : new ArrayList<>(playlists);
+        this.fixedRecommendationTitle = recommendationTitle;
+    }
+
+    private static final int NETEASE_HOME_TARGET = 240;
     private static final int NETEASE_PAGE_SIZE = 50;
     private static final ArrayList<PlayList> playLists = new ArrayList<>();
     private static volatile boolean neteaseHomeComplete;
-    private static final int QQ_HOME_TARGET = 60;
+    private static final int QQ_HOME_TARGET = 240;
     private static volatile List<PlayList> qqHomePlaylists = Collections.emptyList();
     private static volatile boolean qqHomeLoading;
 
     @Override
     public void onInit() {
+        if (fixedPlaylists != null) {
+            layout(fixedPlaylists, fixedRecommendationTitle == null || fixedRecommendationTitle.trim().isEmpty()
+                    ? "歌单搜索" : fixedRecommendationTitle);
+            return;
+        }
         if (platform == MusicPlatform.QQ) {
             loadQQHome();
         } else {
@@ -246,7 +264,7 @@ public class HomePanel extends NCMPanel {
     private void layout(List<PlayList> displayedPlayLists, String recommendationsText) {
         this.getChildren().clear();
         final String welcomeText = platform == MusicPlatform.QQ
-                ? "欢迎使用 QQ 音乐!" : "欢迎来到 Tritium Music!";
+                ? "欢迎使用 QQ 音乐!" : "欢迎来到 MuoniumPlayer!";
         final int margin = 12;
 
         // Font atlases report a negative height before their first draw. Keep a stable

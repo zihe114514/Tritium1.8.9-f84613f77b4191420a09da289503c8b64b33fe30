@@ -56,8 +56,11 @@ public final class ConfirmationOverlay extends NCMPanel {
         addChild(dialog);
         dialog.setOnClickCallback((x, y, button) -> true);
         dialog.setBeforeRenderCallback(() -> {
-            double width = Math.max(248, Math.min(356, getWidth() - 32));
-            double height = Math.max(154, Math.min(174, getHeight() - 28));
+            // The old 174-unit card left a large, visually empty middle section at
+            // normal GUI scale. Keep destructive confirmations compact and arrange
+            // all information in one clear header / message / actions flow.
+            double width = Math.max(248, Math.min(340, getWidth() - 32));
+            double height = Math.max(124, Math.min(132, getHeight() - 28));
             dialog.setBounds(width, height);
             dialog.center();
         });
@@ -65,33 +68,51 @@ public final class ConfirmationOverlay extends NCMPanel {
         RoundedRectWidget background = new RoundedRectWidget();
         dialog.addChild(background);
         background.setClickable(false);
-        background.setRadius(10);
+        background.setRadius(11);
         background.setColor(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
         background.setBeforeRenderCallback(() -> background.setMargin(0));
 
         RoundedRectWidget warningBadge = new RoundedRectWidget();
         dialog.addChild(warningBadge);
         warningBadge.setClickable(false);
-        warningBadge.setRadius(10);
+        warningBadge.setRadius(12);
         warningBadge.setColor(0xD87857);
-        warningBadge.setBeforeRenderCallback(() -> warningBadge.setBounds(20, 18, 20, 20));
+        warningBadge.setBeforeRenderCallback(() -> warningBadge.setBounds(18, 16, 24, 24));
 
-        LabelWidget warningMark = new LabelWidget("!", FontManager.pf14bold);
-        dialog.addChild(warningMark);
-        warningMark.setClickable(false);
-        warningMark.setBeforeRenderCallback(() -> {
-            warningMark.setColor(0xFFFFFF);
-            warningMark.setPosition(27, 22);
-        });
+        // Draw the warning mark from vector primitives instead of the custom font. The external
+        // font's half-width exclamation glyph can report a bad baseline/size on older Java 8 builds,
+        // which made the warning icon appear offset or malformed in the unsubscribe dialog.
+        RoundedRectWidget warningStem = new RoundedRectWidget();
+        dialog.addChild(warningStem);
+        warningStem.setClickable(false);
+        warningStem.setRadius(1);
+        warningStem.setColor(0xFFFFFF);
+        warningStem.setBeforeRenderCallback(() -> warningStem.setBounds(29, 21, 2, 8));
+
+        RoundedRectWidget warningDot = new RoundedRectWidget();
+        dialog.addChild(warningDot);
+        warningDot.setClickable(false);
+        warningDot.setRadius(1);
+        warningDot.setColor(0xFFFFFF);
+        warningDot.setBeforeRenderCallback(() -> warningDot.setBounds(29, 32, 2, 2));
 
         LabelWidget titleLabel = new LabelWidget(title, FontManager.pf18bold);
         dialog.addChild(titleLabel);
         titleLabel.setClickable(false);
         titleLabel.setBeforeRenderCallback(() -> {
             titleLabel.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            titleLabel.setPosition(50, 18);
+            titleLabel.setPosition(52, 19);
             titleLabel.setMaxWidth(dialog.getWidth() - 70);
             titleLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+        });
+
+        RoundedRectWidget messageSurface = new RoundedRectWidget();
+        dialog.addChild(messageSurface);
+        messageSurface.setClickable(false);
+        messageSurface.setRadius(6);
+        messageSurface.setBeforeRenderCallback(() -> {
+            messageSurface.setBounds(18, 50, Math.max(1, dialog.getWidth() - 36), 28);
+            messageSurface.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
 
         LabelWidget messageLabel = new LabelWidget(message, FontManager.pf12);
@@ -100,17 +121,28 @@ public final class ConfirmationOverlay extends NCMPanel {
         messageLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
         messageLabel.setBeforeRenderCallback(() -> {
             messageLabel.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            messageLabel.setPosition(20, 53);
-            messageLabel.setMaxWidth(dialog.getWidth() - 40);
+            messageLabel.setPosition(28, 60);
+            messageLabel.setMaxWidth(Math.max(1, dialog.getWidth() - 56));
+        });
+
+        RectWidget divider = new RectWidget();
+        dialog.addChild(divider);
+        divider.setClickable(false);
+        divider.setBeforeRenderCallback(() -> {
+            divider.setBounds(18, dialog.getHeight() - 43, Math.max(1, dialog.getWidth() - 36), .5);
+            divider.setColor(NCMScreen.getColor(NCMScreen.ColorType.BORDER));
         });
 
         RoundedButtonWidget cancelButton = new RoundedButtonWidget("取消", FontManager.pf12bold);
         dialog.addChild(cancelButton);
         cancelButton.setRadius(6);
         cancelButton.setBeforeRenderCallback(() -> {
-            double buttonWidth = Math.max(76, Math.min(104, (dialog.getWidth() - 56) * .38));
-            cancelButton.setBounds(buttonWidth, 29);
-            cancelButton.setPosition(dialog.getWidth() - buttonWidth * 2 - 28, dialog.getHeight() - 44);
+            double totalWidth = Math.max(1, dialog.getWidth() - 36);
+            double gap = 8;
+            double confirmWidth = Math.max(96, Math.min(126, totalWidth * .54));
+            double cancelWidth = Math.max(1, totalWidth - gap - confirmWidth);
+            cancelButton.setBounds(cancelWidth, 26);
+            cancelButton.setPosition(18, dialog.getHeight() - 34);
             cancelButton.setColor(cancelButton.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
@@ -126,9 +158,12 @@ public final class ConfirmationOverlay extends NCMPanel {
         dialog.addChild(confirmButton);
         confirmButton.setRadius(6);
         confirmButton.setBeforeRenderCallback(() -> {
-            double buttonWidth = Math.max(96, Math.min(128, (dialog.getWidth() - 56) * .52));
-            confirmButton.setBounds(buttonWidth, 29);
-            confirmButton.setPosition(dialog.getWidth() - buttonWidth - 20, dialog.getHeight() - 44);
+            double totalWidth = Math.max(1, dialog.getWidth() - 36);
+            double gap = 8;
+            double confirmWidth = Math.max(96, Math.min(126, totalWidth * .54));
+            double cancelWidth = Math.max(1, totalWidth - gap - confirmWidth);
+            confirmButton.setBounds(confirmWidth, 26);
+            confirmButton.setPosition(18 + cancelWidth + gap, dialog.getHeight() - 34);
             confirmButton.setColor(confirmButton.isHovering() ? 0xEC665D : 0xD94F4D);
             confirmButton.setTextColor(0xFFFFFF);
         });

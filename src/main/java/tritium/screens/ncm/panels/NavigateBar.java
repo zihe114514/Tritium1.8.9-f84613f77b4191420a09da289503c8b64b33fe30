@@ -1,9 +1,13 @@
 package tritium.screens.ncm.panels;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import lombok.Getter;
 import lombok.Setter;
 import org.lwjgl.input.Keyboard;
 import tritium.management.FontManager;
+import tritium.ncm.api.CloudMusicApi;
 import tritium.ncm.music.CadenceMusicService;
 import tritium.ncm.music.CloudMusic;
 import tritium.ncm.music.MusicPlatform;
@@ -26,6 +30,7 @@ import tritium.utils.Location;
 import tritium.utils.json.JsonUtils;
 import tritium.utils.other.multithreading.MultiThreadingUtil;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
@@ -38,6 +43,8 @@ public class NavigateBar extends NCMPanel {
 
 
     TextFieldWidget searchField = new TextFieldWidget(FontManager.pf14bold);
+    /** NetEase cloud search supports both tracks and playlists; QQ Cadence currently exposes tracks only. */
+    private boolean playlistSearchMode;
     ScrollPanel playlistPanel = new ScrollPanel();
     private PlaylistItem homeItem;
     private final List<PlaylistItem> playlistItems = new CopyOnWriteArrayList<>();
@@ -119,9 +126,36 @@ public class NavigateBar extends NCMPanel {
             lblSearchIcon.setPosition(lblSearchIcon.getRelativeY(), lblSearchIcon.getRelativeY());
         });
 
+        RoundedButtonWidget searchTypeToggle = new RoundedButtonWidget(
+                () -> playlistSearchMode ? "歌单" : "歌曲", FontManager.pf12bold);
+        searchBar.addChild(searchTypeToggle);
+        searchTypeToggle.setShouldOverrideMouseCursor(true);
+        searchTypeToggle.setBeforeRenderCallback(() -> {
+            boolean netease = CadenceMusicService.getCurrentPlatform() == MusicPlatform.NETEASE;
+            searchTypeToggle.setHidden(!netease);
+            searchTypeToggle.setClickable(netease);
+            searchTypeToggle.setBounds(32, 13);
+            searchTypeToggle.setPosition(Math.max(0, searchBar.getWidth() - searchTypeToggle.getWidth() - 2), 1.5);
+            searchTypeToggle.setRadius(3);
+            searchTypeToggle.setColor(playlistSearchMode
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            searchTypeToggle.setTextColor(playlistSearchMode
+                    ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)
+                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        });
+        searchTypeToggle.setOnClickCallback((x, y, button) -> {
+            if (button != 0 || CadenceMusicService.getCurrentPlatform() != MusicPlatform.NETEASE) {
+                return false;
+            }
+            playlistSearchMode = !playlistSearchMode;
+            searchField.setPlaceholder(playlistSearchMode ? "搜索歌单..." : "搜索歌曲...");
+            return true;
+        });
+
         searchBar.addChild(searchField);
 
-        this.searchField.setPlaceholder("搜索...");
+        this.searchField.setPlaceholder("搜索歌曲...");
 
         this.searchField.setOnKeyTypedCallback((character, keyCode) -> {
             if (this.searchField.isFocused()) {
@@ -129,26 +163,38 @@ public class NavigateBar extends NCMPanel {
                     this.searchField.setFocused(false);
 
                 if (keyCode == Keyboard.KEY_RETURN || keyCode == Keyboard.KEY_NUMPADENTER) {
+                    final String keyword = this.searchField.getText() == null ? "" : this.searchField.getText().trim();
+                    if (keyword.isEmpty()) {
+                        return true;
+                    }
 
-                    // new instance
-                    PlayList playList = JsonUtils.parse("{}", PlayList.class);
-                    playList.setSearchMode(true);
-                    playList.musics = new CopyOnWriteArrayList<>();
-                    PlaylistPanel panel = new PlaylistPanel(playList);
-                    NCMScreen.getInstance().setCurrentPanel(panel);
                     this.playlistPanel.getChildren().forEach(child -> {
-                        if (child instanceof PlaylistItem)
+                        if (child instanceof PlaylistItem) {
                             ((PlaylistItem) child).setSelected(false);
+                        }
                     });
 
-                    MultiThreadingUtil.runAsync(() -> {
-                        List<Music> search = CloudMusic.search(this.searchField.getText());
-                        playList.musics.addAll(search);
-                        panel.onInit();
-                    });
-//
-//                    System.out.println("SEARCH: " + this.searchField.getText());
-//                    CloudMusicApi.cloudSearch(this.searchField.getText(), CloudMusicApi.SearchType.Single).toJsonObject()
+                    final boolean searchPlaylists = playlistSearchMode
+                            && CadenceMusicService.getCurrentPlatform() == MusicPlatform.NETEASE;
+                    if (searchPlaylists) {
+                        MultiThreadingUtil.runAsync(() -> {
+                            List<PlayList> results = searchNeteasePlaylists(keyword);
+                            MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().setCurrentPanel(
+                                    new HomePanel(results, "歌单搜索 · " + keyword + " · " + results.size())));
+                        });
+                    } else {
+                        // Keep the original track-search flow and its independent temporary playlist.
+                        PlayList playList = JsonUtils.parse("{}", PlayList.class);
+                        playList.setSearchMode(true);
+                        playList.musics = new CopyOnWriteArrayList<>();
+                        PlaylistPanel panel = new PlaylistPanel(playList);
+                        NCMScreen.getInstance().setCurrentPanel(panel);
+                        MultiThreadingUtil.runAsync(() -> {
+                            List<Music> search = CloudMusic.search(keyword);
+                            playList.musics.addAll(search);
+                            panel.onInit();
+                        });
+                    }
                 }
 
                 return true;
@@ -161,7 +207,9 @@ public class NavigateBar extends NCMPanel {
             searchField.drawUnderline(false);
             searchField.setMargin(2);
             double xSpacing = lblSearchIcon.getRelativeX() + lblSearchIcon.getWidth() + 4;
-            searchField.setBounds(xSpacing, searchField.getRelativeY(), searchField.getWidth() - xSpacing, searchField.getHeight());
+            double typeToggleReserve = CadenceMusicService.getCurrentPlatform() == MusicPlatform.NETEASE ? 36.0 : 0.0;
+            searchField.setBounds(xSpacing, searchField.getRelativeY(),
+                    Math.max(1.0, searchBar.getWidth() - xSpacing - typeToggleReserve), searchField.getHeight());
             searchField.setColor(this.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             searchField.setDisabledTextColor(RenderSystem.reAlpha(this.getColor(NCMScreen.ColorType.PRIMARY_TEXT), .4f));
 //            Rect.draw(searchField.getX(), searchField.getY(), searchField.getWidth(), searchField.getHeight(), 0x800090ff);
@@ -202,7 +250,7 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
 
         this.playlistPanel.setSpacing(4);
 
-        LabelWidget lbl = new LabelWidget("Tritium Music", FontManager.pf14bold);
+        LabelWidget lbl = new LabelWidget("MuoniumPlayer", FontManager.pf14bold);
         lbl.setBeforeRenderCallback(() -> {
             lbl.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             lbl.setPosition(6, lbl.getRelativeY());
@@ -809,4 +857,50 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
         }
 
     }
+    /** Executes the documented NetEase cloud-search playlist endpoint (type 1000). */
+    private List<PlayList> searchNeteasePlaylists(String keyword) {
+        List<PlayList> results = new ArrayList<>();
+        try {
+            JsonObject response = CloudMusicApi.cloudSearch(keyword, CloudMusicApi.SearchType.Playlist).toJsonObject();
+            if (response == null || !response.has("result") || !response.get("result").isJsonObject()) {
+                return results;
+            }
+            JsonObject result = response.getAsJsonObject("result");
+            JsonArray playlists = result.getAsJsonArray("playlists");
+            if (playlists == null) {
+                return results;
+            }
+
+            for (JsonElement element : playlists) {
+                if (element == null || !element.isJsonObject()) {
+                    continue;
+                }
+                try {
+                    JsonObject object = element.getAsJsonObject();
+                    if ((!object.has("coverImgUrl") || object.get("coverImgUrl").isJsonNull())
+                            && object.has("picUrl") && !object.get("picUrl").isJsonNull()) {
+                        object.addProperty("coverImgUrl", object.get("picUrl").getAsString());
+                    }
+                    if ((!object.has("playCount") || object.get("playCount").isJsonNull())
+                            && object.has("playcount") && !object.get("playcount").isJsonNull()) {
+                        object.addProperty("playCount", object.get("playcount").getAsLong());
+                    }
+                    PlayList playlist = JsonUtils.parse(object, PlayList.class);
+                    if (playlist == null || playlist.getId() == 0L || playlist.getName() == null
+                            || playlist.getName().trim().isEmpty() || playlist.getCoverUrl() == null
+                            || playlist.getCoverUrl().trim().isEmpty()) {
+                        continue;
+                    }
+                    playlist.setPlatform(MusicPlatform.NETEASE);
+                    results.add(playlist);
+                } catch (Throwable ignored) {
+                    // A malformed item cannot invalidate the remaining search results.
+                }
+            }
+        } catch (Throwable throwable) {
+            System.err.println("[Music] NetEase playlist search failed: " + throwable.getMessage());
+        }
+        return results;
+    }
+
 }

@@ -85,6 +85,16 @@ public class Music {
     @SerializedName("tns")
     private final List<String> translatedName;
 
+    /**
+     * NetEase song-detail privilege fields. They remain distinct from the resolved
+     * audio quality: membership/album restrictions are licensing metadata.
+     */
+    @SerializedName("fee")
+    private int fee;
+
+    @SerializedName("payed")
+    private int payed;
+
     private transient String artistsName, translatedNames;
 
     /** 跨平台字段。旧网易云 JSON 不包含这些字段时会自然回退到 NETEASE + 数字 id。 */
@@ -210,6 +220,19 @@ public class Music {
         return getSource() == MusicPlatform.NETEASE;
     }
 
+    /**
+     * Returns whether the provider marks this track as membership or paid-content restricted.
+     * Cadence supplies the flag for QQ tracks; NetEase fee is copied from its privilege payload.
+     */
+    public boolean hasVipRestriction() {
+        return vip || (isNetease() && fee != 0);
+    }
+
+    /** True only for NetEase digital-album purchase tracks, not ordinary album metadata. */
+    public boolean isDigitalAlbumTrack() {
+        return isNetease() && fee == 4;
+    }
+
     public String getStableKey() {
         return getSource().name().toLowerCase() + '_' + Long.toUnsignedString(id);
     }
@@ -307,6 +330,22 @@ public class Music {
         return resolveCadenceWithStandardFallback();
     }
 
+    /**
+     * Re-resolves a NetEase song as a known-playable standard MP3 stream after
+     * byte-level inspection rejects the initially returned payload.
+     */
+    public Tuple<String, String> getStandardMp3PlayUrl() {
+        if (!isNetease()) {
+            return null;
+        }
+        return resolveWithTimeout(new Callable<Tuple<String, String>>() {
+            @Override
+            public Tuple<String, String> call() {
+                return resolveNeteasePlayUrl(CloudMusicApi.songUrlStandardMp3(id),
+                        "post-download standard MP3 fallback");
+            }
+        }, "post-download standard MP3 fallback");
+    }
     /** Tries the configured tier once, then a known-playable standard Cadence stream. */
     private Tuple<String, String> resolveCadenceWithStandardFallback() {
         final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;

@@ -18,7 +18,7 @@ import tritium.settings.ClientSettings;
 public class OpenNCMScreen extends ExtensionModule implements SharedConstants, EventHandler {
 
     public OpenNCMScreen() {
-        super("Tritium Music", "Open tritium music gui", EnumModuleCategory.MISC);
+        super("MuoniumPlayer", "Open MuoniumPlayer GUI", EnumModuleCategory.MISC);
         this.setEventHandler(this);
 
         this.addValues(this.quality, this.boundaries, this.lyricDebug);

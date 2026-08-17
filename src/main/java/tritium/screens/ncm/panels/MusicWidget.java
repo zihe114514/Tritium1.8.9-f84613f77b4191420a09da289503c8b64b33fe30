@@ -131,6 +131,11 @@ public class MusicWidget extends RoundedRectWidget {
 
         boolean musicDirty = music.isDirty();
         double dirtyIndicatorSize = 8;
+        boolean digitalAlbumTrack = music.isDigitalAlbumTrack();
+        // A digital-album purchase is a different entitlement from a VIP-only stream;
+        // show one clear badge instead of a redundant "VIP + 专辑" pair.
+        boolean vipRestricted = music.hasVipRestriction() && !digitalAlbumTrack;
+        double accessBadgeReserve = (vipRestricted ? 24.0 : 0.0) + (digitalAlbumTrack ? 28.0 : 0.0);
 
         String translatedNames = music.getTranslatedNames();
 
@@ -143,10 +148,55 @@ public class MusicWidget extends RoundedRectWidget {
                     lblMusicName.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
                     lblMusicName.centerVertically();
                     lblMusicName.setPosition(cover.getRelativeX() + cover.getWidth() + 4, lblMusicName.getRelativeY() - lblMusicName.getHeight() * .5 - 2);
-                    // 右侧预留：时长 + 喜欢按钮(20) + 加入歌单按钮(20) + 间距，避免歌名压到收藏按钮
-                    lblMusicName.setMaxWidth(this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4 + (music.isNetease() ? 80 : 40) + (musicDirty ? (dirtyIndicatorSize + 4) : 0)));
+                    // Reserve space for duration/actions and licensing badges so no badge can overlap a trimmed title.
+                    lblMusicName.setMaxWidth(Math.max(1.0, this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4
+                            + (music.isNetease() ? 80 : 40) + (musicDirty ? (dirtyIndicatorSize + 4) : 0)
+                            + accessBadgeReserve)));
                 });
         lblMusicName.setClickable(false);
+
+        double nextAccessBadgeX = 0.0;
+        if (vipRestricted) {
+            RoundedRectWidget vipBadge = new RoundedRectWidget(0, 0, 21, 10);
+            this.addChild(vipBadge);
+            vipBadge.setClickable(false);
+            vipBadge.setBeforeRenderCallback(() -> {
+                vipBadge.setRadius(2.5);
+                vipBadge.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+                vipBadge.setAlpha(.92f);
+                vipBadge.setPosition(lblMusicName.getRelativeX() + lblMusicName.getWidth() + 3,
+                        lblMusicName.getRelativeY() + lblMusicName.getHeight() * .5 - vipBadge.getHeight() * .5);
+            });
+            LabelWidget vipText = new LabelWidget("VIP", FontManager.pf12bold);
+            vipBadge.addChild(vipText);
+            vipText.setClickable(false);
+            vipText.setBeforeRenderCallback(() -> {
+                vipText.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                vipText.center();
+            });
+            nextAccessBadgeX = 24.0;
+        }
+
+        if (digitalAlbumTrack) {
+            final double albumBadgeOffset = nextAccessBadgeX;
+            RoundedRectWidget albumBadge = new RoundedRectWidget(0, 0, 25, 10);
+            this.addChild(albumBadge);
+            albumBadge.setClickable(false);
+            albumBadge.setBeforeRenderCallback(() -> {
+                albumBadge.setRadius(2.5);
+                albumBadge.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER));
+                albumBadge.setAlpha(.95f);
+                albumBadge.setPosition(lblMusicName.getRelativeX() + lblMusicName.getWidth() + 3 + albumBadgeOffset,
+                        lblMusicName.getRelativeY() + lblMusicName.getHeight() * .5 - albumBadge.getHeight() * .5);
+            });
+            LabelWidget albumText = new LabelWidget("专辑", FontManager.pf12bold);
+            albumBadge.addChild(albumText);
+            albumText.setClickable(false);
+            albumText.setBeforeRenderCallback(() -> {
+                albumText.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                albumText.center();
+            });
+        }
 
         if (musicDirty) {
             RoundedRectWidget dirtyIndicator = new RoundedRectWidget(0, 0, dirtyIndicatorSize, dirtyIndicatorSize);

@@ -43,6 +43,15 @@ public final class HudConfig {
     public static int currentLyricColorRgb = 0xFFFFFFFF;
 
     // Current lyric / active KTV word.
+    /** Master switch for current-line glow, bloom and breathing. */
+    public static boolean currentLyricEffectsEnabled = true;
+    /** Master switch for OSD per-character glow and retained scale emphasis. */
+    public static boolean osdKaraokeEmphasisEnabled = true;
+    /** Master switch for ordinary lyric-row glow and bloom. */
+    public static boolean normalLyricEffectsEnabled = true;
+    /** Allows the viewport-edge fade to be disabled without changing its configured size. */
+    public static boolean lyricEdgeFadeEnabled = true;
+
     public static float currentLineScale = 1.04f;
     public static float currentWordScale = 0.10f;
     public static float currentGlowStrength = 0.62f;
@@ -71,13 +80,15 @@ public final class HudConfig {
     /** Global download Dynamic Island. */
     public static boolean dynamicIslandEnabled = true;
     public static float dynamicIslandScale = 0.88f;
-    /** Dynamic Island typography scale, applied consistently to every style. */
+    /** Dynamic Island typography scale. Long content is reduced automatically before it is truncated. */
     public static float dynamicIslandTextScale = 1.0f;
+    /** Preferred resting width. Long notices may animate wider to keep their complete text visible. */
+    public static float dynamicIslandMaxWidth = 250.0f;
     /** Progress bar thickness in logical pixels. */
     public static float dynamicIslandProgressHeight = 1.35f;
     /** Seconds to keep the completed state visible before hiding. */
     public static float dynamicIslandCompletionHoldSeconds = 1.80f;
-    /** Visual preset for the global island: 0 pill, 1 glass, 2 compact, 3 card. */
+    /** Visual preset for the global island: 0 pill, 1 glass, 2 compact, 3 card, 4 system card. */
     public static int dynamicIslandStyle = 0;
 
     private HudConfig() {
@@ -87,6 +98,10 @@ public final class HudConfig {
     public static void resetLyricAppearance() {
         lyricColorRgb = 0xFFFFFFFF;
         currentLyricColorRgb = 0xFFFFFFFF;
+        currentLyricEffectsEnabled = true;
+        osdKaraokeEmphasisEnabled = true;
+        normalLyricEffectsEnabled = true;
+        lyricEdgeFadeEnabled = true;
         currentLineScale = 1.04f;
         currentWordScale = 0.10f;
         currentGlowStrength = 0.62f;
@@ -114,6 +129,7 @@ public final class HudConfig {
         dynamicIslandEnabled = true;
         dynamicIslandScale = 0.88f;
         dynamicIslandTextScale = 1.0f;
+        dynamicIslandMaxWidth = 250.0f;
         dynamicIslandProgressHeight = 1.35f;
         dynamicIslandCompletionHoldSeconds = 1.80f;
         dynamicIslandStyle = 0;
@@ -137,6 +153,11 @@ public final class HudConfig {
             lyricScale = clampScale(getFloat(o, "lyricScale", lyricScale));
             lyricColorRgb = getInt(o, "lyricColorRgb", lyricColorRgb);
             currentLyricColorRgb = getInt(o, "currentLyricColorRgb", currentLyricColorRgb);
+
+            currentLyricEffectsEnabled = getBoolean(o, "currentLyricEffectsEnabled", currentLyricEffectsEnabled);
+            osdKaraokeEmphasisEnabled = getBoolean(o, "osdKaraokeEmphasisEnabled", osdKaraokeEmphasisEnabled);
+            normalLyricEffectsEnabled = getBoolean(o, "normalLyricEffectsEnabled", normalLyricEffectsEnabled);
+            lyricEdgeFadeEnabled = getBoolean(o, "lyricEdgeFadeEnabled", lyricEdgeFadeEnabled);
 
             currentLineScale = clamp(getFloat(o, "currentLineScale", currentLineScale), 0.95f, 1.16f);
             currentWordScale = clamp(getFloat(o, "currentWordScale", currentWordScale), 0.0f, 0.28f);
@@ -163,10 +184,11 @@ public final class HudConfig {
 
             dynamicIslandEnabled = getBoolean(o, "dynamicIslandEnabled", dynamicIslandEnabled);
             dynamicIslandScale = clamp(getFloat(o, "dynamicIslandScale", dynamicIslandScale), 0.60f, 1.35f);
-            dynamicIslandTextScale = clamp(getFloat(o, "dynamicIslandTextScale", dynamicIslandTextScale), 0.75f, 1.35f);
+            dynamicIslandTextScale = clamp(getFloat(o, "dynamicIslandTextScale", dynamicIslandTextScale), 0.82f, 1.18f);
+            dynamicIslandMaxWidth = clamp(getFloat(o, "dynamicIslandMaxWidth", dynamicIslandMaxWidth), 160.0f, 720.0f);
             dynamicIslandProgressHeight = clamp(getFloat(o, "dynamicIslandProgressHeight", dynamicIslandProgressHeight), 0.75f, 4.0f);
             dynamicIslandCompletionHoldSeconds = clamp(getFloat(o, "dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds), 0.5f, 6.0f);
-            dynamicIslandStyle = clampInt(getInt(o, "dynamicIslandStyle", dynamicIslandStyle), 0, 3);
+            dynamicIslandStyle = clampInt(getInt(o, "dynamicIslandStyle", dynamicIslandStyle), 0, 4);
         } catch (Throwable ignored) {
         }
     }
@@ -184,6 +206,10 @@ public final class HudConfig {
             o.addProperty("lyricColorRgb", lyricColorRgb);
             o.addProperty("currentLyricColorRgb", currentLyricColorRgb);
 
+            o.addProperty("currentLyricEffectsEnabled", currentLyricEffectsEnabled);
+            o.addProperty("osdKaraokeEmphasisEnabled", osdKaraokeEmphasisEnabled);
+            o.addProperty("normalLyricEffectsEnabled", normalLyricEffectsEnabled);
+            o.addProperty("lyricEdgeFadeEnabled", lyricEdgeFadeEnabled);
             o.addProperty("currentLineScale", currentLineScale);
             o.addProperty("currentWordScale", currentWordScale);
             o.addProperty("currentGlowStrength", currentGlowStrength);
@@ -209,6 +235,7 @@ public final class HudConfig {
             o.addProperty("dynamicIslandEnabled", dynamicIslandEnabled);
             o.addProperty("dynamicIslandScale", dynamicIslandScale);
             o.addProperty("dynamicIslandTextScale", dynamicIslandTextScale);
+            o.addProperty("dynamicIslandMaxWidth", dynamicIslandMaxWidth);
             o.addProperty("dynamicIslandProgressHeight", dynamicIslandProgressHeight);
             o.addProperty("dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds);
             o.addProperty("dynamicIslandStyle", dynamicIslandStyle);

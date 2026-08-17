@@ -33,6 +33,14 @@ public class User {
     }
 
     /**
+     * NetEase exposes account membership through login-status profile.vipType.
+     * This is an identity marker only; actual playback permission remains track-specific.
+     */
+    public boolean isVipMember() {
+        return vip > 0;
+    }
+
+    /**
      * 用户歌单
      *
      * @return 歌单列表

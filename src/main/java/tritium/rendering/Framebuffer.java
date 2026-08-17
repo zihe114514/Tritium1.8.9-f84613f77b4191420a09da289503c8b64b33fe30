@@ -378,27 +378,113 @@ public class Framebuffer implements SharedConstants {
         return mcFramebuffer;
     }
 
-    static int lastDisplayWidth = 0, lastDisplayHeight = 0;
+    /**
+     * The vanilla 1.8.9 framebuffer owns a depth-only renderbuffer. A depth-only
+     * attachment has no stencil plane, so stencil tests silently accept every
+     * pixel and a rounded root clip degenerates into a rectangular clip. Keep
+     * track of the replacement supplied to the vanilla framebuffer so that a
+     * resize/recreation can be detected and repaired on the next GUI frame.
+     */
+    private static int minecraftStencilFramebuffer = -1;
+    private static int minecraftStencilDepthBuffer = -1;
+    private static int minecraftStencilWidth = -1;
+    private static int minecraftStencilHeight = -1;
 
-    public static void updateMcFramebuffer() {
-        if (currentlyBinding == null || (lastDisplayWidth != Display.getWidth() || lastDisplayHeight != Display.getHeight())) {
-            lastDisplayWidth = Display.getWidth();
-            lastDisplayHeight = Display.getHeight();
-
-            int fbo = GL11.glGetInteger(GL30.GL_FRAMEBUFFER_BINDING);
-            int texId = GL30.glGetFramebufferAttachmentParameteri(
-                    GL30.GL_FRAMEBUFFER,
-                    OpenGlHelper.GL_COLOR_ATTACHMENT0,
-                    GL30.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME
-            );
-
-            mcFramebuffer.framebufferObject = fbo;
-            mcFramebuffer.framebufferTexture = texId;
-            mcFramebuffer.framebufferWidth = Display.getWidth();
-            mcFramebuffer.framebufferHeight = Display.getHeight();
-
-            currentlyBinding = mcFramebuffer;
-            System.out.println("fbo = " + fbo + ", texId = " + texId);
+    /**
+     * Replaces Minecraft's depth-only attachment with a depth-stencil attachment.
+     * The replacement id is written back to the real Minecraft Framebuffer, which
+     * lets its normal resize/shutdown lifecycle release it. This is deliberately
+     * performed against the vanilla framebuffer rather than whichever auxiliary
+     * shader framebuffer happened to be bound most recently.
+     */
+    private static boolean ensureMinecraftStencilAttachment(net.minecraft.client.shader.Framebuffer vanillaFramebuffer) {
+        if (!OpenGlHelper.isFramebufferEnabled()
+                || vanillaFramebuffer == null
+                || vanillaFramebuffer.framebufferObject < 0
+                || vanillaFramebuffer.framebufferWidth <= 0
+                || vanillaFramebuffer.framebufferHeight <= 0) {
+            return false;
         }
+
+        if (minecraftStencilFramebuffer == vanillaFramebuffer.framebufferObject
+                && minecraftStencilDepthBuffer == vanillaFramebuffer.depthBuffer
+                && minecraftStencilWidth == vanillaFramebuffer.framebufferWidth
+                && minecraftStencilHeight == vanillaFramebuffer.framebufferHeight) {
+            return true;
+        }
+
+        final int previousFramebuffer = GL11.glGetInteger(GL30.GL_FRAMEBUFFER_BINDING);
+        final int previousRenderbuffer = GL11.glGetInteger(GL30.GL_RENDERBUFFER_BINDING);
+        final int oldDepthBuffer = vanillaFramebuffer.depthBuffer;
+        int depthStencilBuffer = -1;
+        boolean installed = false;
+
+        try {
+            OpenGlHelper.glBindFramebuffer(OpenGlHelper.GL_FRAMEBUFFER, vanillaFramebuffer.framebufferObject);
+            depthStencilBuffer = OpenGlHelper.glGenRenderbuffers();
+            OpenGlHelper.glBindRenderbuffer(OpenGlHelper.GL_RENDERBUFFER, depthStencilBuffer);
+            OpenGlHelper.glRenderbufferStorage(OpenGlHelper.GL_RENDERBUFFER, GL30.GL_DEPTH24_STENCIL8,
+                    vanillaFramebuffer.framebufferWidth, vanillaFramebuffer.framebufferHeight);
+            OpenGlHelper.glFramebufferRenderbuffer(OpenGlHelper.GL_FRAMEBUFFER, OpenGlHelper.GL_DEPTH_ATTACHMENT,
+                    OpenGlHelper.GL_RENDERBUFFER, depthStencilBuffer);
+            OpenGlHelper.glFramebufferRenderbuffer(OpenGlHelper.GL_FRAMEBUFFER, GL30.GL_STENCIL_ATTACHMENT,
+                    OpenGlHelper.GL_RENDERBUFFER, depthStencilBuffer);
+
+            if (OpenGlHelper.glCheckFramebufferStatus(OpenGlHelper.GL_FRAMEBUFFER)
+                    != OpenGlHelper.GL_FRAMEBUFFER_COMPLETE) {
+                // Restore the known-good vanilla depth attachment before returning.
+                OpenGlHelper.glFramebufferRenderbuffer(OpenGlHelper.GL_FRAMEBUFFER, OpenGlHelper.GL_DEPTH_ATTACHMENT,
+                        OpenGlHelper.GL_RENDERBUFFER, oldDepthBuffer);
+                OpenGlHelper.glFramebufferRenderbuffer(OpenGlHelper.GL_FRAMEBUFFER, GL30.GL_STENCIL_ATTACHMENT,
+                        OpenGlHelper.GL_RENDERBUFFER, 0);
+                return false;
+            }
+
+            // From this point Minecraft owns the new id. Its normal framebuffer
+            // recreation/deletion code will clean it up, just like its former depth buffer.
+            vanillaFramebuffer.depthBuffer = depthStencilBuffer;
+            if (oldDepthBuffer >= 0 && oldDepthBuffer != depthStencilBuffer) {
+                OpenGlHelper.glDeleteRenderbuffers(oldDepthBuffer);
+            }
+
+            minecraftStencilFramebuffer = vanillaFramebuffer.framebufferObject;
+            minecraftStencilDepthBuffer = depthStencilBuffer;
+            minecraftStencilWidth = vanillaFramebuffer.framebufferWidth;
+            minecraftStencilHeight = vanillaFramebuffer.framebufferHeight;
+            installed = true;
+            return true;
+        } finally {
+            OpenGlHelper.glBindRenderbuffer(OpenGlHelper.GL_RENDERBUFFER, previousRenderbuffer);
+            OpenGlHelper.glBindFramebuffer(OpenGlHelper.GL_FRAMEBUFFER, previousFramebuffer);
+            if (!installed && depthStencilBuffer >= 0) {
+                OpenGlHelper.glDeleteRenderbuffers(depthStencilBuffer);
+            }
+        }
+    }
+
+    /**
+     * Synchronizes the wrapper used by StencilClipManager with Minecraft's actual
+     * main framebuffer before GUI drawing. The prior implementation sampled the
+     * currently bound FBO only after GuiScreen rendering; that left the first
+     * player frame without a stencil attachment and made outer rounded corners
+     * render as square corners.
+     */
+    public static void updateMcFramebuffer() {
+        net.minecraft.client.shader.Framebuffer vanillaFramebuffer =
+                net.minecraft.client.Minecraft.getMinecraft().getFramebuffer();
+        if (vanillaFramebuffer == null) {
+            return;
+        }
+
+        ensureMinecraftStencilAttachment(vanillaFramebuffer);
+
+        mcFramebuffer.framebufferObject = vanillaFramebuffer.framebufferObject;
+        mcFramebuffer.framebufferTexture = vanillaFramebuffer.framebufferTexture;
+        mcFramebuffer.framebufferWidth = vanillaFramebuffer.framebufferWidth;
+        mcFramebuffer.framebufferHeight = vanillaFramebuffer.framebufferHeight;
+        mcFramebuffer.framebufferTextureWidth = vanillaFramebuffer.framebufferTextureWidth;
+        mcFramebuffer.framebufferTextureHeight = vanillaFramebuffer.framebufferTextureHeight;
+        mcFramebuffer.depthBuffer = vanillaFramebuffer.depthBuffer;
+        currentlyBinding = mcFramebuffer;
     }
 }

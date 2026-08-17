@@ -361,6 +361,9 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     private double calculateEdgeAlpha(double y, double visualHeight) {
+        if (!HudConfig.lyricEdgeFadeEnabled) {
+            return 1.0;
+        }
         double top = wpsInterface.getY();
         double bottom = top + wpsInterface.getHeight();
         double center = y + visualHeight * .5;
@@ -533,7 +536,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                                      float songProgress, int effectAlpha) {
         double centerX = getContentLeft() + getContentWidth() * .5;
         double centerY = y + layout.primaryVisualHeight * .5;
-        double scale = getCurrentLineScale(songProgress);
+        LyricVisualStyle visualStyle = getLyricVisualStyle(true, songProgress);
+        double scale = visualStyle.scale;
 
         api.getGLStateManager().pushMatrix();
         api.getGLStateManager().translate(centerX, centerY, 0);
@@ -545,7 +549,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             // active-colour glow to the complete row makes the whole sentence look sung.
             renderWrappedPrimaryUnscaled(layout.primaryLines, y,
                     getBaseLyricColor((int) (effectAlpha * .70f)));
-            renderKaraokeProgress(layout.karaokeLayout, y, songProgress, effectAlpha);
+            renderKaraokeProgress(layout.karaokeLayout, y, songProgress, effectAlpha, visualStyle);
         } finally {
             api.getGLStateManager().popMatrix();
         }
@@ -564,7 +568,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
      * moves through all characters continuously from left to right, karaoke-style.
      */
     private void renderKaraokeProgress(KaraokeLayout layout, double y,
-                                       float songProgress, int effectAlpha) {
+                                       float songProgress, int effectAlpha, LyricVisualStyle visualStyle) {
         int highlightColor = getCurrentLyricColor(effectAlpha);
         for (KaraokeSegment segment : layout.segments) {
             double rawProgress = getRawKaraokeProgress(segment.word, songProgress);
@@ -591,11 +595,11 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             double paintedWidth = clampKaraokeWidth(wordWidth * rawProgress - segmentWordOffset,
                     0.0, segment.width);
             renderKaraokeSweep(segment.text, segmentX, segmentY, paintedWidth, segment.width,
-                    highlightColor);
+                    highlightColor, visualStyle);
 
             // The fill is continuous in pixel space. The retained per-character emphasis
             // uses the same timed-word clock, making the scale wave follow its front.
-            renderKaraokeSegmentEmphasis(segment, segmentX, segmentY, rawProgress, highlightColor);
+            renderKaraokeSegmentEmphasis(segment, segmentX, segmentY, rawProgress, highlightColor, visualStyle);
         }
     }
 
@@ -605,19 +609,19 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
      * left to right, matching the full-screen KTV fill rather than swapping an entire word.
      */
     private void renderKaraokeSweep(String text, double x, double y, double paintedWidth,
-                                    double textWidth, int highlightColor) {
+                                    double textWidth, int highlightColor, LyricVisualStyle visualStyle) {
         if (paintedWidth <= .05 || textWidth <= .05) {
             return;
         }
         if (paintedWidth >= textWidth - .05) {
-            renderKaraokeLayer(text, x, y, 0.0, textWidth, highlightColor, .24);
+            renderKaraokeLayer(text, x, y, 0.0, textWidth, highlightColor, .24, visualStyle);
             return;
         }
 
         double featherWidth = Math.min(Math.max(1.5, HudConfig.osdKaraokeTransitionWidth), paintedWidth);
         double featherLeft = Math.max(0.0, paintedWidth - featherWidth);
         if (featherLeft > .05) {
-            renderKaraokeLayer(text, x, y, 0.0, featherLeft, highlightColor, .16);
+            renderKaraokeLayer(text, x, y, 0.0, featherLeft, highlightColor, .16, visualStyle);
         }
 
         for (int step = 0; step < KARAOKE_FEATHER_STEPS; step++) {
@@ -629,7 +633,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             double distanceBehindFront = 1.0 - step / (double) KARAOKE_FEATHER_STEPS;
             double opacity = .16 + .84 * smoothStep(distanceBehindFront);
             renderKaraokeLayer(text, x, y, left, right, multiplyAlpha(highlightColor, opacity),
-                    .07 + .22 * distanceBehindFront);
+                    .07 + .22 * distanceBehindFront, visualStyle);
         }
     }
 
@@ -649,7 +653,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     private void renderKaraokeSegmentEmphasis(KaraokeSegment segment, double x, double y,
-                                              double rawProgress, int highlightColor) {
+                                              double rawProgress, int highlightColor, LyricVisualStyle visualStyle) {
         double characterTimeline = Math.max(0.0, Math.min(1.0, rawProgress))
                 * segment.totalCharacterCount;
         int offset = 0;
@@ -663,7 +667,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             double characterProgress = getCharacterKaraokeProgress(characterTimeline, globalCharacterIndex);
             if (characterProgress > .001 && characterWidth > .05) {
                 renderKaraokeCharacterEmphasis(character, characterX, y, characterWidth,
-                        characterProgress, highlightColor);
+                        characterProgress, highlightColor, visualStyle);
             }
             characterX += characterWidth;
             offset = next;
@@ -678,15 +682,19 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
      * unchanged prevents wrapping and neighbouring glyphs from shifting.
      */
     private void renderKaraokeCharacterEmphasis(String character, double x, double y,
-                                                 double width, double progress, int highlightColor) {
-        if (HudConfig.osdKaraokePulseStrength <= .001f || width <= .05) {
+                                                 double width, double progress, int highlightColor,
+                                                 LyricVisualStyle visualStyle) {
+        if (!HudConfig.osdKaraokeEmphasisEnabled
+                || HudConfig.osdKaraokePulseStrength <= .001f || width <= .05) {
             return;
         }
 
         double emphasis = smoothStep(progress);
-        // A sine pulse returns to 1.0 at progress=1 and immediately shrinks text.
-        // Use monotonic emphasis so the completed characters remain enlarged.
-        double scale = 1.0 + HudConfig.osdKaraokePulseStrength * emphasis;
+        // Atlas glyphs are intentionally kept close to their native size. Quantising the
+        // small retained enlargement stabilises sub-pixel sampling on the 1.8.9 HUD while
+        // preserving the completed-character emphasis and its left-to-right progression.
+        double requestedScale = 1.0 + Math.min(.085, HudConfig.osdKaraokePulseStrength) * emphasis;
+        double scale = Math.round(requestedScale * 128.0) / 128.0;
         double centerX = x + width * .5;
         double centerY = y + getFontRenderer().getHeight() * .5;
 
@@ -700,13 +708,14 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             // completed glyphs retain the same emphasis as full-screen lyrics.
             renderKaraokeLayer(character, x, y, 0.0, paintedWidth,
                     multiplyAlpha(highlightColor, .40 + .44 * emphasis),
-                    .14 + .34 * emphasis);
+                    .14 + .34 * emphasis, visualStyle);
         } finally {
             api.getGLStateManager().popMatrix();
         }
     }
     private void renderKaraokeLayer(String text, double x, double y, double clipLeft,
-                                     double clipRight, int color, double glowStrength) {
+                                     double clipRight, int color, double glowStrength,
+                                     LyricVisualStyle visualStyle) {
         if (clipRight - clipLeft <= .05) {
             return;
         }
@@ -724,25 +733,58 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         ScissorClipManager.begin(x + clipLeft, y - 1,
                 clipRight - clipLeft, getFontRenderer().getHeight() + 4);
         try {
-            renderKaraokeGlow(text, x, y, color, glowStrength);
+            renderKaraokeGlow(text, x, y, color, glowStrength, visualStyle);
             bigFrString(text, x, y, color);
         } finally {
             ScissorClipManager.end();
         }
     }
 
-    /** Soft eight-direction aura for an already-clipped KTV fill or its travelling head. */
-    private void renderKaraokeGlow(String text, double x, double y, int color, double strength) {
-        if (strength <= .001 || RGBA.alpha(color) <= 0) {
+    /**
+     * Soft aura for the already-clipped KTV fill. The shared current-line style is
+     * deliberately resolved before entering this branch, so the HUD editor's
+     * current glow, bloom and radius sliders affect both the timed original text
+     * and its translation. OSD-specific sliders remain a gentle KTV accent rather
+     * than a separate replacement configuration path.
+     */
+    private void renderKaraokeGlow(String text, double x, double y, int color, double strength,
+                                   LyricVisualStyle visualStyle) {
+        if (!HudConfig.osdKaraokeEmphasisEnabled || strength <= .001 || RGBA.alpha(color) <= 0) {
             return;
         }
 
-        double configuredStrength = strength * HudConfig.osdKaraokeGlowStrength;
-        int cardinalColor = multiplyAlpha(color, Math.min(1.0, configuredStrength * 1.12));
-        int diagonalColor = multiplyAlpha(color, Math.min(1.0, configuredStrength * .78));
-        double radius = Math.max(.35, HudConfig.currentGlowRadius * (.32 + configuredStrength * .68));
-        double diagonalRadius = radius * .72;
+        double glowAccent = getKaraokeAccent(HudConfig.osdKaraokeGlowStrength);
+        double bloomAccent = getKaraokeAccent(HudConfig.osdKaraokeBloomStrength);
+        double configuredGlow = strength * visualStyle.glowStrength * glowAccent;
+        double configuredBloom = strength * visualStyle.bloomStrength * bloomAccent;
+        if (configuredGlow <= .001 && configuredBloom <= .001) {
+            return;
+        }
 
+        double baseRadius = Math.max(.35, visualStyle.glowRadius);
+        if (configuredGlow > .001) {
+            double glowRadius = baseRadius * (.32 + Math.min(1.0, configuredGlow) * .68);
+            drawKaraokeGlowRing(text, x, y, color, glowRadius, configuredGlow * 1.12);
+        }
+        if (configuredBloom > .001) {
+            drawKaraokeGlowRing(text, x, y, color, baseRadius * 1.35 + .8,
+                    configuredBloom * .52);
+            drawKaraokeGlowRing(text, x, y, color, baseRadius * 2.15 + 1.2,
+                    configuredBloom * .24);
+        }
+    }
+
+    /** OSD-specific values enhance the KTV foreground without disabling shared current-line styling. */
+    private double getKaraokeAccent(float configuredValue) {
+        double clamped = Math.max(0.0, Math.min(1.0, configuredValue));
+        return .35 + clamped * .65;
+    }
+
+    private void drawKaraokeGlowRing(String text, double x, double y, int color,
+                                     double radius, double alpha) {
+        int cardinalColor = multiplyAlpha(color, Math.min(1.0, alpha));
+        int diagonalColor = multiplyAlpha(color, Math.min(1.0, alpha * .72));
+        double diagonalRadius = radius * .72;
         getFontRenderer().drawString(text, x - radius, y, cardinalColor);
         getFontRenderer().drawString(text, x + radius, y, cardinalColor);
         getFontRenderer().drawString(text, x, y - radius, cardinalColor);
@@ -797,25 +839,40 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     private void renderPrimaryLine(String text, double y, int color, boolean isCurrent,
                                    float songProgress, boolean applyGlow) {
         double x = calculateTextX(text, getFontRenderer(), this.alignMode.getValue());
-        double scale = isCurrent ? getCurrentLineScale(songProgress) : HudConfig.normalScale;
-        double glow = applyGlow ? (isCurrent ? HudConfig.currentGlowStrength : HudConfig.normalGlowStrength) : 0.0;
-        double bloom = applyGlow ? (isCurrent ? HudConfig.currentBloomStrength : HudConfig.normalBloomStrength) : 0.0;
-        double radius = isCurrent ? HudConfig.currentGlowRadius : 1.2 + HudConfig.normalGlowStrength * 1.8;
-        renderScaledText(text, x, y, color, getFontRenderer(), scale, glow, bloom, radius, false);
+        LyricVisualStyle visualStyle = getLyricVisualStyle(isCurrent, songProgress);
+        renderScaledText(text, x, y, color, getFontRenderer(), visualStyle.scale,
+                applyGlow ? visualStyle.glowStrength : 0.0,
+                applyGlow ? visualStyle.bloomStrength : 0.0, visualStyle.glowRadius, false);
     }
 
     private void renderSecondaryLine(String text, double y, int color, boolean isCurrent,
                                      float songProgress) {
         double x = calculateTextX(text, getSmallFontRenderer(), this.alignMode.getValue());
-        double scale = isCurrent ? getCurrentLineScale(songProgress) : HudConfig.normalScale;
-        double glow = (isCurrent ? HudConfig.currentGlowStrength : HudConfig.normalGlowStrength) * .45;
-        double bloom = (isCurrent ? HudConfig.currentBloomStrength : HudConfig.normalBloomStrength) * .34;
-        double radius = isCurrent ? HudConfig.currentGlowRadius * .72 : 1.0 + HudConfig.normalGlowStrength;
-        renderScaledText(text, x, y, color, getSmallFontRenderer(), scale, glow, bloom, radius, false);
+        // The translation intentionally uses the same resolved style as the original.
+        // Its smaller font remains the only visual distinction; no hidden 0.45/0.34
+        // multipliers may split the HUD editor sliders into two unrelated effects.
+        LyricVisualStyle visualStyle = getLyricVisualStyle(isCurrent, songProgress);
+        renderScaledText(text, x, y, color, getSmallFontRenderer(), visualStyle.scale,
+                visualStyle.glowStrength, visualStyle.bloomStrength, visualStyle.glowRadius, false);
+    }
+
+    /** Resolves the shared current/ordinary visual configuration for original and translated text. */
+    private LyricVisualStyle getLyricVisualStyle(boolean isCurrent, float songProgress) {
+        if (isCurrent) {
+            double currentGlow = HudConfig.currentLyricEffectsEnabled ? HudConfig.currentGlowStrength : 0.0;
+            double currentBloom = HudConfig.currentLyricEffectsEnabled ? HudConfig.currentBloomStrength : 0.0;
+            return new LyricVisualStyle(getCurrentLineScale(songProgress), currentGlow, currentBloom,
+                    HudConfig.currentGlowRadius);
+        }
+        double normalGlow = HudConfig.normalLyricEffectsEnabled ? HudConfig.normalGlowStrength : 0.0;
+        double normalBloom = HudConfig.normalLyricEffectsEnabled ? HudConfig.normalBloomStrength : 0.0;
+        return new LyricVisualStyle(HudConfig.normalScale, normalGlow,
+                normalBloom, 1.2 + normalGlow * 1.8);
     }
 
     private double getCurrentLineScale(float songProgress) {
-        double breath = Math.sin(songProgress * .0032) * HudConfig.currentBreathStrength;
+        double breathStrength = HudConfig.currentLyricEffectsEnabled ? HudConfig.currentBreathStrength : 0.0;
+        double breath = Math.sin(songProgress * .0032) * breathStrength;
         return HudConfig.currentLineScale * (1.0 + breath);
     }
 
@@ -970,6 +1027,21 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         api.getGLStateManager().popMatrix();
         wpsInterface.setWidth(this.width.getValue().floatValue());
         wpsInterface.setHeight(this.height.getValue().floatValue());
+    }
+
+    /** Immutable resolved style shared by primary and translation lyric rendering. */
+    private static class LyricVisualStyle {
+        final double scale;
+        final double glowStrength;
+        final double bloomStrength;
+        final double glowRadius;
+
+        LyricVisualStyle(double scale, double glowStrength, double bloomStrength, double glowRadius) {
+            this.scale = scale;
+            this.glowStrength = glowStrength;
+            this.bloomStrength = bloomStrength;
+            this.glowRadius = glowRadius;
+        }
     }
 
     private static class LyricRenderInfo {

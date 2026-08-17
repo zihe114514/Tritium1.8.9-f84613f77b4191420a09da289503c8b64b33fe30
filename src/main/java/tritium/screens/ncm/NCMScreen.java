@@ -12,6 +12,7 @@ import tritium.ncm.OptionsUtil;
 import tritium.ncm.music.CloudMusic;
 import tritium.ncm.music.dto.Music;
 import tritium.rendering.Rect;
+import tritium.rendering.Framebuffer;
 import tritium.rendering.StencilClipManager;
 import tritium.rendering.animation.Interpolations;
 import tritium.rendering.rendersystem.RenderSystem;
@@ -243,6 +244,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         // 停留在上一次游戏帧值。每帧刷新 ScaledResolution，保证窗口 resize / GUI Scale 变化后
         // 布局与鼠标坐标映射立即正确。
         RenderSystem.refreshResolution();
+        // The root rounded clip needs the main Minecraft framebuffer's stencil
+        // attachment before any player pixels are drawn (DrawScreenEvent.Post is
+        // too late for the first frame).
+        Framebuffer.updateMcFramebuffer();
         this.updatePanelScaleAnimation();
 
         if (closing && alpha <= 0.02f)

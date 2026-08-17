@@ -55,6 +55,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -421,6 +422,61 @@ public class CloudMusic implements SharedConstants {
     }
 
     /**
+     * Returns the persisted player volume normalized to {@code 0.0..1.0}.
+     * The HUD module owns the stored Value so new AudioPlayer instances pick up
+     * exactly the same level after a track switch.
+     */
+    public static float getVolume() {
+        try {
+            return clampVolume(TritiumMusicExtension.getInstance().musicInfo.volume.getValue().floatValue());
+        } catch (RuntimeException ignored) {
+            AudioPlayer activePlayer = player;
+            return activePlayer == null ? 0.10f : clampVolume(activePlayer.getVolume());
+        }
+    }
+
+    /**
+     * Applies volume through one path for the two player UIs and global hotkeys.
+     * Values are quantized to the existing one-percent configuration precision.
+     *
+     * @return whether the persisted value changed
+     */
+    public static boolean setVolume(float volume, boolean showNotice) {
+        float safeVolume = Math.round(clampVolume(volume) * 100.0f) / 100.0f;
+        float previousVolume = getVolume();
+        if (Math.abs(previousVolume - safeVolume) < .0001f) {
+            return false;
+        }
+
+        try {
+            TritiumMusicExtension.getInstance().musicInfo.volume.setValue((double) safeVolume);
+        } catch (RuntimeException ignored) {
+            // The active player still receives the new value below if the module is not ready.
+        }
+
+        AudioPlayer activePlayer = player;
+        if (activePlayer != null) {
+            activePlayer.setVolume(safeVolume);
+        }
+
+        if (showNotice) {
+            DownloadDynamicIsland.showVolume(Math.round(safeVolume * 100.0f));
+        }
+        return true;
+    }
+
+    /** Adjusts volume by a normalized delta and reports the resulting percentage. */
+    public static boolean adjustVolume(float delta) {
+        return setVolume(getVolume() + delta, true);
+    }
+
+    private static float clampVolume(float volume) {
+        if (Float.isNaN(volume) || Float.isInfinite(volume)) {
+            return .10f;
+        }
+        return Math.max(0.0f, Math.min(1.0f, volume));
+    }
+    /**
      * Moves the current track by a relative amount and immediately aligns both
      * lyric renderers with the audio player's real clock. Keeping this in the
      * playback layer prevents each UI surface from implementing a subtly
@@ -646,6 +702,7 @@ public class CloudMusic implements SharedConstants {
 
             System.err.println("[NCM] No playable songs were found in the current playlist.");
             api.printMessage(EnumChatColor.RED + "当前歌单没有可播放的歌曲");
+            DownloadDynamicIsland.showPlaybackFailure("当前歌单", "没有可播放的歌曲");
             return true;
         }
 
@@ -726,7 +783,9 @@ public class CloudMusic implements SharedConstants {
             try {
                 musicFile = getMusicFile(playUrl, song);
             } catch (Exception e) {
-                if (!isPlaybackCancelled()) handlePlayerInitializationError(e);
+                if (!isPlaybackCancelled() && isSessionUsable(targetSession)) {
+                    handlePlayerInitializationError(song, e);
+                }
                 return false;
             }
 
@@ -740,7 +799,9 @@ public class CloudMusic implements SharedConstants {
                     ownedPlayer = player;
                     targetSession.player = ownedPlayer;
                 } catch (Exception e) {
-                    if (!isPlaybackCancelled()) handlePlayerInitializationError(e);
+                    if (!isPlaybackCancelled() && isSessionUsable(targetSession)) {
+                        handlePlayerInitializationError(song, e);
+                    }
                     return false;
                 }
             }
@@ -798,13 +859,17 @@ public class CloudMusic implements SharedConstants {
 
         private void handleUnplayableSong(Music song) {
             api.printMessage(EnumChatColor.RED + "无法播放: " + song.getName() + " - " + song.getArtistsName());
+            DownloadDynamicIsland.showPlaybackFailure(song.getName(), "没有可用音频源");
 
             System.err.printf("%s无法播放: %s - %s, 可能因为该歌曲没有版权\n", EnumChatColor.RED, song.getName(), song.getArtistsName());
         }
 
-        private void handlePlayerInitializationError(Exception e) {
+        private void handlePlayerInitializationError(Music song, Exception e) {
             e.printStackTrace();
-            System.err.printf(EnumChatColor.RED + "[NCM] Failed to initiate audio player! Error: %s\n", e.getMessage());
+            String message = e.getMessage();
+            DownloadDynamicIsland.showPlaybackFailure(song == null ? "当前歌曲" : song.getName(),
+                    message == null || message.trim().isEmpty() ? "音频加载或解码失败" : "音频加载失败");
+            System.err.printf(EnumChatColor.RED + "[NCM] Failed to initiate audio player! Error: %s\n", message);
         }
 
         private boolean startPlayback(Music song, Tuple<String, String> playUrl, File musicFile,
@@ -833,7 +898,9 @@ public class CloudMusic implements SharedConstants {
                         activePlayer.play();
                     }
                 } catch (Exception retryFailure) {
-                    if (!isPlaybackCancelled()) handlePlayerInitializationError(retryFailure);
+                    if (!isPlaybackCancelled() && isSessionUsable(targetSession)) {
+                        handlePlayerInitializationError(song, retryFailure);
+                    }
                     return false;
                 }
             }
@@ -861,50 +928,227 @@ public class CloudMusic implements SharedConstants {
         }
 
         private File getMusicFile(Tuple<String, String> playUrl, Music song) {
-
             String url = playUrl.getA();
-            String type = playUrl.getB().toLowerCase();
-
-            if (type.equals("flac") || type.equals("wav") || type.equals("mp3")) {
-                return getCachedOrTempFile(url, type, song);
+            String reportedType = normalizeReportedAudioContainer(playUrl.getB());
+            if (url == null || url.trim().isEmpty()) {
+                throw new IllegalArgumentException("Music URL is empty");
             }
-            throw new IllegalArgumentException("Unsupported music format, url: " + url + ", type: " + type);
+
+            // CDN extensions and API-reported types are advisory only. The cache is named from
+            // the downloaded bytes below, which also lets M4A/AAC fall back safely when the API
+            // reports a generic or incorrect MIME type.
+            try {
+                return getCachedOrTempFile(url, reportedType, song);
+            } catch (RuntimeException primaryFailure) {
+                return getNeteaseStandardFallbackFile(song, url, primaryFailure);
+            }
         }
 
+        /**
+         * A URL can be syntactically valid while serving a DASH video or another non-audio MP4
+         * payload. Once the byte-level validation rejects such a primary response, retry the
+         * existing NetEase standard-MP3 endpoint before treating the song as unplayable.
+         */
+        private File getNeteaseStandardFallbackFile(Music song, String failedUrl, RuntimeException primaryFailure) {
+            if (song == null || !song.isNetease()) {
+                throw primaryFailure;
+            }
+
+            Tuple<String, String> standardPlayUrl = song.getStandardMp3PlayUrl();
+            if (standardPlayUrl == null || standardPlayUrl.getA() == null
+                    || standardPlayUrl.getA().trim().isEmpty()
+                    || standardPlayUrl.getA().equals(failedUrl)) {
+                throw primaryFailure;
+            }
+
+            try {
+                System.err.println("[NCM] Primary response failed byte-level audio validation for "
+                        + song.getStableKey() + "; retrying standard MP3.");
+                return getCachedOrTempFile(standardPlayUrl.getA(),
+                        normalizeReportedAudioContainer(standardPlayUrl.getB()), song);
+            } catch (RuntimeException standardFailure) {
+                primaryFailure.addSuppressed(standardFailure);
+                throw primaryFailure;
+            }
+        }
+        /**
+         * The format advertised by a CDN URL is not always the actual container returned by the
+         * server. In particular, some lossless Netease URLs have been observed to return FLAC
+         * bytes while reporting an MP3 type. SoundFile selects its decoder by extension, so the
+         * cache extension must follow the downloaded bytes rather than the reported URL type.
+         */
         private File getCachedOrTempFile(String playUrl, String type, Music song) {
             File musicCacheDir = new File("MusicCache");
-
-            if (!musicCacheDir.exists()) {
-                musicCacheDir.mkdir();
+            if (!musicCacheDir.exists() && !musicCacheDir.mkdirs()) {
+                throw new IllegalStateException("Unable to create music cache directory: " + musicCacheDir.getAbsolutePath());
             }
 
-            String extension = "_" + quality.getQuality() + "." + type;
+            String cacheKey = song.getStableKey() + "_" + quality.getQuality();
+            File cachedMusic = findCachedAudioFile(musicCacheDir, cacheKey, type);
+            if (cachedMusic != null) {
+                return resolvePlayableAudioFile(cachedMusic);
+            }
 
-            File music = new File(musicCacheDir, song.getStableKey() + extension);
+            // Never expose a partially downloaded file to the decoder or cache lookup.
+            File temporaryMusic = new File(musicCacheDir, cacheKey + ".download");
+            if (temporaryMusic.exists() && !temporaryMusic.delete()) {
+                throw new IllegalStateException("Unable to replace incomplete music download: " + temporaryMusic.getName());
+            }
 
-            if (!music.exists()) {
-                downloadMusic(playUrl, music);
+            downloadMusic(playUrl, temporaryMusic);
+            if (!temporaryMusic.isFile() || temporaryMusic.length() < 4L) {
+                throw new IllegalStateException("music download failed or was interrupted: " + temporaryMusic.getName());
+            }
 
-                if (!music.exists()) {
-                    throw new IllegalStateException("music download failed or was interrupted: " + music.getName());
+            String actualType = detectAudioContainer(temporaryMusic);
+            if (!isSupportedAudioContainer(actualType)) {
+                temporaryMusic.delete();
+                throw new IllegalStateException("Downloaded audio has an unsupported or invalid container: " + cacheKey);
+            }
+
+            File music = new File(musicCacheDir, cacheKey + "." + actualType);
+            if (music.exists()) {
+                String existingType = detectAudioContainer(music);
+                if (actualType.equals(existingType)) {
+                    temporaryMusic.delete();
+                } else {
+                    music.delete();
+                    moveCacheFile(temporaryMusic, music);
+                }
+            } else {
+                moveCacheFile(temporaryMusic, music);
+            }
+
+            removeOtherQualityCaches(musicCacheDir, song.getStableKey(), quality.getQuality());
+            return resolvePlayableAudioFile(music);
+        }
+
+        /**
+         * JSyn can directly stream MP3, FLAC and WAV. AAC-in-ADTS and AAC-in-ISO-BMFF (M4A/MP4) are decoded
+         * once into a validated WAV sidecar so extensions can never route compressed AAC bytes
+         * into the wrong loader.
+         */
+        private File resolvePlayableAudioFile(File sourceFile) {
+            String container = detectAudioContainer(sourceFile);
+            if (!isSupportedAudioContainer(container)) {
+                throw new IllegalStateException("Cached audio has an unsupported or invalid container: "
+                        + sourceFile.getName());
+            }
+            if (!requiresAacDecode(container)) {
+                return sourceFile;
+            }
+
+            File decodedFile = getDecodedWavCacheFile(sourceFile);
+            if (isReusableDecodedWav(sourceFile, decodedFile)) {
+                return decodedFile;
+            }
+            if (decodedFile.exists() && !decodedFile.delete()) {
+                throw new IllegalStateException("Unable to replace invalid decoded audio cache: "
+                        + decodedFile.getName());
+            }
+
+            long transcodeStartedAt = System.currentTimeMillis();
+            DownloadDynamicIsland.beginTranscode(sourceFile.getName(), decodedFile.getName());
+            try {
+                AacAudioDecoder.decodeToWav(sourceFile, container, decodedFile,
+                        new AacAudioDecoder.ProgressListener() {
+                            @Override
+                            public void onProgress(double progress) {
+                                DownloadDynamicIsland.updateTranscodeProgress(progress);
+                            }
+                        });
+                if (!isReusableDecodedWav(sourceFile, decodedFile)) {
+                    throw new IOException("Decoded AAC cache is invalid: " + sourceFile.getName());
+                }
+            } catch (Exception exception) {
+                DownloadDynamicIsland.cancelTranscode();
+                if (decodedFile.exists()) {
+                    decodedFile.delete();
+                }
+                // A generic MP4/M4A that cannot yield PCM is a deterministic bad cache entry
+                // (video-only, DRM or an unsupported codec). Do not retry the same bytes forever.
+                if (sourceFile.exists() && !sourceFile.delete()) {
+                    System.err.println("[NCM] Unable to remove undecodable audio cache: " + sourceFile.getName());
+                }
+                throw new IllegalStateException("Unable to decode " + container.toUpperCase()
+                        + " audio into a playable WAV cache", exception);
+            }
+            DownloadDynamicIsland.finishTranscode(sourceFile.getName(), decodedFile.getName(),
+                    System.currentTimeMillis() - transcodeStartedAt);
+            return decodedFile;
+        }
+        private File getDecodedWavCacheFile(File sourceFile) {
+            String name = sourceFile.getName();
+            int extensionIndex = name.lastIndexOf('.');
+            String baseName = extensionIndex > 0 ? name.substring(0, extensionIndex) : name;
+            return new File(sourceFile.getParentFile(), baseName + ".decoded.wav");
+        }
+
+        private boolean isReusableDecodedWav(File sourceFile, File decodedFile) {
+            return decodedFile.isFile()
+                    && decodedFile.length() > 44L
+                    && decodedFile.lastModified() >= sourceFile.lastModified()
+                    && "wav".equals(detectAudioContainer(decodedFile));
+        }
+
+        private File findCachedAudioFile(File musicCacheDir, String cacheKey, String reportedType) {
+            List<String> candidateTypes = new ArrayList<>();
+            if (isSupportedAudioContainer(reportedType)) {
+                candidateTypes.add(reportedType);
+            }
+            for (String supportedType : SUPPORTED_AUDIO_CONTAINERS) {
+                if (!candidateTypes.contains(supportedType)) {
+                    candidateTypes.add(supportedType);
+                }
+            }
+
+            for (String candidateType : candidateTypes) {
+                File candidate = new File(musicCacheDir, cacheKey + "." + candidateType);
+                if (!candidate.isFile()) {
+                    continue;
                 }
 
-                // delete all other qualities
+                String actualType = detectAudioContainer(candidate);
+                if (!isSupportedAudioContainer(actualType)) {
+                    candidate.delete();
+                    continue;
+                }
 
-                MultiThreadingUtil.runAsync(() -> {
+                File normalized = new File(musicCacheDir, cacheKey + "." + actualType);
+                if (candidate.equals(normalized)) {
+                    return candidate;
+                }
 
-                    for (File file : musicCacheDir.listFiles()) {
-
-                        if (file.getName().startsWith(song.getStableKey() + "_") && !file.getName().startsWith(song.getStableKey() + "_" + quality.getQuality())) {
-                            file.delete();
-                        }
-
+                if (normalized.isFile()) {
+                    String normalizedType = detectAudioContainer(normalized);
+                    if (actualType.equals(normalizedType)) {
+                        candidate.delete();
+                        return normalized;
                     }
+                    normalized.delete();
+                }
 
-                });
+                moveCacheFile(candidate, normalized);
+                return normalized;
             }
+            return null;
+        }
 
-            return music;
+        private void removeOtherQualityCaches(File musicCacheDir, String stableKey, String currentQuality) {
+            MultiThreadingUtil.runAsync(() -> {
+                File[] cacheFiles = musicCacheDir.listFiles();
+                if (cacheFiles == null) {
+                    return;
+                }
+
+                String allQualitiesPrefix = stableKey + "_";
+                String currentQualityPrefix = allQualitiesPrefix + currentQuality;
+                for (File file : cacheFiles) {
+                    if (file.getName().startsWith(allQualitiesPrefix) && !file.getName().startsWith(currentQualityPrefix)) {
+                        file.delete();
+                    }
+                }
+            });
         }
 
         private AudioPlayer initializePlayer(File musicFile) {
@@ -1099,6 +1343,197 @@ public class CloudMusic implements SharedConstants {
         converter.convert(Files.newInputStream(mp3In.toPath()), destFile.getAbsolutePath(), null, null);
 
         return destFile;
+    }
+
+    private static final List<String> SUPPORTED_AUDIO_CONTAINERS =
+            Arrays.asList("flac", "wav", "mp3", "aac", "m4a", "mp4");
+
+    private static boolean isSupportedAudioContainer(String container) {
+        return container != null && SUPPORTED_AUDIO_CONTAINERS.contains(container);
+    }
+
+    private static boolean requiresAacDecode(String container) {
+        return "aac".equals(container) || "m4a".equals(container) || "mp4".equals(container);
+    }
+
+    /**
+     * Normalizes an API MIME type/extension, but callers must still inspect the file bytes before
+     * playing it. This deliberately accepts unknown values as null so a valid CDN response with
+     * a bad Content-Type can still be recognized after it is downloaded.
+     */
+    private static String normalizeReportedAudioContainer(String reportedType) {
+        if (reportedType == null) {
+            return null;
+        }
+        String type = reportedType.trim().toLowerCase();
+        int parameterIndex = type.indexOf(';');
+        if (parameterIndex >= 0) {
+            type = type.substring(0, parameterIndex).trim();
+        }
+        if (type.startsWith("audio/")) {
+            type = type.substring("audio/".length());
+        }
+        if ("mpeg".equals(type) || "mpga".equals(type) || "x-mp3".equals(type)) {
+            return "mp3";
+        }
+        if ("x-wav".equals(type) || "wave".equals(type)) {
+            return "wav";
+        }
+        if ("x-flac".equals(type)) {
+            return "flac";
+        }
+        if ("adts".equals(type) || "x-aac".equals(type)) {
+            return "aac";
+        }
+        if ("mp4".equals(type) || "mp4a".equals(type) || "m4a".equals(type)) {
+            return "m4a";
+        }
+        return isSupportedAudioContainer(type) ? type : null;
+    }
+
+    /**
+     * Identifies the real container from its bytes rather than trusting a URL suffix or API type.
+     * AAC ADTS must be recognized before an MPEG frame: both begin with an 0xFFF sync word.
+     */
+    private static String detectAudioContainer(File file) {
+        if (file == null || !file.isFile() || file.length() < 4L) {
+            return null;
+        }
+
+        byte[] header = new byte[64];
+        try (InputStream input = Files.newInputStream(file.toPath())) {
+            int offset = 0;
+            while (offset < header.length) {
+                int read = input.read(header, offset, header.length - offset);
+                if (read < 0) {
+                    break;
+                }
+                offset += read;
+            }
+
+            if (hasAscii(header, offset, 0, "fLaC")) {
+                return "flac";
+            }
+            if (hasAscii(header, offset, 0, "RIFF") && hasAscii(header, offset, 8, "WAVE")) {
+                return "wav";
+            }
+            if (hasAscii(header, offset, 0, "OggS")) {
+                return "ogg";
+            }
+            if (isAsfHeader(header, offset)) {
+                return "asf";
+            }
+            String isoBaseMediaContainer = detectIsoBaseMediaContainer(header, offset);
+            if (isoBaseMediaContainer != null) {
+                return isoBaseMediaContainer;
+            }
+            if (hasAscii(header, offset, 0, "ID3")) {
+                return "mp3";
+            }
+            if (isAdtsAacHeader(header, offset)) {
+                return "aac";
+            }
+            if (isMpegAudioHeader(header, offset)) {
+                return "mp3";
+            }
+        } catch (IOException ignored) {
+            return null;
+        }
+        return null;
+    }
+
+    private static boolean hasAscii(byte[] bytes, int length, int start, String value) {
+        if (bytes == null || length < start + value.length()) {
+            return false;
+        }
+        for (int index = 0; index < value.length(); index++) {
+            if ((bytes[start + index] & 0xFF) != value.charAt(index)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Classifies ISO-BMFF files by the ftyp box itself. A generic MP4/video payload is not
+     * playable audio merely because it begins with ftyp; only an explicitly audio-branded M4A
+     * file is allowed onto the AAC decoder path.
+     */
+    private static String detectIsoBaseMediaContainer(byte[] header, int length) {
+        if (!hasAscii(header, length, 4, "ftyp")) {
+            return null;
+        }
+        long boxSize = ((long) (header[0] & 0xFF) << 24)
+                | ((long) (header[1] & 0xFF) << 16)
+                | ((long) (header[2] & 0xFF) << 8)
+                | (header[3] & 0xFF);
+        if (boxSize < 16L || boxSize > length) {
+            return "mp4";
+        }
+
+        // Major brand is at byte 8; compatible brands start at byte 16.
+        for (int brandOffset = 8; brandOffset + 4 <= boxSize; brandOffset += 4) {
+            if (hasIsoAudioBrand(header, length, brandOffset)) {
+                return "m4a";
+            }
+        }
+        return "mp4";
+    }
+
+    private static boolean hasIsoAudioBrand(byte[] header, int length, int offset) {
+        return hasAscii(header, length, offset, "M4A ")
+                || hasAscii(header, length, offset, "M4B ")
+                || hasAscii(header, length, offset, "M4P ")
+                || hasAscii(header, length, offset, "mp4a");
+    }
+
+    private static boolean isAdtsAacHeader(byte[] header, int length) {
+        if (length < 7 || (header[0] & 0xFF) != 0xFF || (header[1] & 0xF0) != 0xF0) {
+            return false;
+        }
+        // ADTS has a zero Layer field; MPEG audio has a non-zero Layer field.
+        if ((header[1] & 0x06) != 0) {
+            return false;
+        }
+        int frequencyIndex = (header[2] >>> 2) & 0x0F;
+        if (frequencyIndex == 0x0F) {
+            return false;
+        }
+        int frameLength = ((header[3] & 0x03) << 11)
+                | ((header[4] & 0xFF) << 3)
+                | ((header[5] >>> 5) & 0x07);
+        return frameLength >= 7;
+    }
+
+    private static boolean isMpegAudioHeader(byte[] header, int length) {
+        if (length < 4 || (header[0] & 0xFF) != 0xFF || (header[1] & 0xE0) != 0xE0) {
+            return false;
+        }
+        int layer = (header[1] >>> 1) & 0x03;
+        int bitrateIndex = (header[2] >>> 4) & 0x0F;
+        return layer != 0 && bitrateIndex != 0 && bitrateIndex != 0x0F;
+    }
+
+    private static boolean isAsfHeader(byte[] header, int length) {
+        int[] asfHeaderGuid = {0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11,
+                0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C};
+        if (length < asfHeaderGuid.length) {
+            return false;
+        }
+        for (int index = 0; index < asfHeaderGuid.length; index++) {
+            if ((header[index] & 0xFF) != asfHeaderGuid[index]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void moveCacheFile(File source, File destination) {
+        try {
+            Files.move(source.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to finalize music cache file: " + source.getName(), e);
+        }
     }
 
     @SneakyThrows

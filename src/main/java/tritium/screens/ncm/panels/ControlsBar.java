@@ -9,6 +9,7 @@ import tritium.screens.ncm.MusicLyricsPanel;
 import tritium.screens.ncm.NCMPanel;
 import tritium.screens.ncm.NCMScreen;
 import tritium.screens.ncm.NCMTheme;
+import tritium.screens.ncm.VolumeControl;
 import tritium.widget.impl.MusicLyricsWidget;
 
 
@@ -277,6 +278,30 @@ public class ControlsBar extends NCMPanel {
                                 playingCover.getRelativeX() + playingCover.getWidth() + 4,
                                 lblMusicArtist.getRelativeY() + lblMusicArtist.getHeight() * .5 + 2
                         ));
+
+        // Bottom-right compact volume strip. It delegates all visual and input behavior to the
+        // full-screen control implementation, so both surfaces remain visually synchronized.
+        final VolumeControl compactVolumeControl = new VolumeControl();
+        RoundedRectWidget compactVolumeWidget = new RoundedRectWidget() {
+            @Override
+            public void onRender(double mouseX, double mouseY) {
+                compactVolumeControl.render(mouseX, mouseY, this.getX(),
+                        this.getY() + this.getHeight() * .5, this.getWidth(), this.getAlpha());
+            }
+        };
+        this.addChild(compactVolumeWidget);
+        compactVolumeWidget
+                .setClickable(false)
+                .setShouldOverrideMouseCursor(true)
+                .setBeforeRenderCallback(() -> {
+                    double controlWidth = Math.max(74.0,
+                            Math.min(122.0, compactVolumeWidget.getParentWidth() * .18));
+                    compactVolumeWidget
+                            .setBounds(controlWidth, 20.0)
+                            .setPosition(compactVolumeWidget.getParentWidth() - controlWidth - 8.0,
+                                    Math.max(1.0, compactVolumeWidget.getParentHeight() - 22.0))
+                            .setAlpha(ControlsBar.this.getAlpha());
+                });
     }
 
     private String formatDuration(float totalMillis) {

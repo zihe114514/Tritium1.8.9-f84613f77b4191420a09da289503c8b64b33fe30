@@ -60,6 +60,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     boolean progressBarDragging = false;
     double progressBarProgressOverride = 0;
     double progressBarHeight = 8, volumeBarHeight = 8;
+    private final VolumeControl volumeControl = new VolumeControl();
 
     boolean prevMouse = false;
 
@@ -856,34 +857,17 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         FontManager.pf12bold.drawString(remainingTime, elementsXOffset + progressBarWidth - FontManager.pf12bold.getStringWidthD(remainingTime), progressBarYOffset + 8, hexColor(1, 1, 1, alpha * .5f));
 
         double volumeBarYOffset = posY + height - Math.max(18, height * .08);
-        double volumeBarWidth = coverSizeMax - FontManager.music40.getStringWidthD("I") - FontManager.music40.getStringWidthD("J");
-//        double v = (center - getCoverSizeMax() * .575 - NCMScreen.getInstance().getSpacing());
-//        Rect.draw(0, posY + height - v, width, v, -1);
-
-        double volumeIconY = volumeBarYOffset - FontManager.music40.getHeight() * .5 - .5;
-        FontManager.music40.drawString("I", elementsXOffset - 8, volumeIconY, hexColor(1, 1, 1, alpha * .5f));
-        FontManager.music40.drawString("J", elementsXOffset + progressBarWidth - FontManager.music40.getStringWidthD("J") + 4, volumeIconY, hexColor(1, 1, 1, alpha * .5f));
-
+        double volumeBarWidth = coverSizeMax - FontManager.music40.getStringWidthD("I")
+                - FontManager.music40.getStringWidthD("J");
         double volumeBarXOffset = elementsXOffset + FontManager.music40.getStringWidthD("I") - 2;
-        roundedRect(volumeBarXOffset, volumeBarYOffset - volumeBarHeight * .5, volumeBarWidth, volumeBarHeight, (this.volumeBarHeight / 8.0f) * 2.5, hexColor(1, 1, 1, alpha * .5f));
-        // 音量条填充：同进度条，stencil 裁剪在屏幕空间失效，改为按 player.getVolume() 直接画 partial 宽度圆角矩形。
-        double volumeFillWidth = volumeBarWidth * (player == null ? 0 : player.getVolume());
-        if (volumeFillWidth > 0)
-            roundedRect(volumeBarXOffset, volumeBarYOffset - volumeBarHeight * .5, volumeFillWidth, volumeBarHeight, Math.min((this.volumeBarHeight / 8.0f) * 2.5, volumeFillWidth * .5), hexColor(1, 1, 1, alpha));
-
-        boolean hoveringVolumeBar = this.isHovered(mouseX, mouseY, volumeBarXOffset, volumeBarYOffset - volumeBarHeight * .5, volumeBarWidth, 8);
-        this.volumeBarHeight = Interpolations.interpolate(this.volumeBarHeight, hoveringVolumeBar ? 8 : 5, 0.3f);
-        if (hoveringVolumeBar && lmbDown) {
-            double xDelta = Math.max(0, Math.min(volumeBarWidth, (mouseX - (volumeBarXOffset))));
-            double percent = xDelta / volumeBarWidth;
-
-            TritiumMusicExtension.getInstance().musicInfo.volume.setValue(percent);
-        }
+        // Both player surfaces delegate to this exact control so drag behavior, theme colors,
+        // hover animation and Dynamic Island feedback stay synchronized.
+        boolean hoveringVolumeBar = volumeControl.render(mouseX, mouseY, elementsXOffset - 8,
+                volumeBarYOffset, progressBarWidth + 12.0, alpha);
 
         if (hoveringProgressBar || hoveringVolumeBar) {
             CursorUtils.setOverride(CursorUtils.HAND);
         }
-
         playPauseButton.setAlpha(alpha);
         playPauseButton.setWidth(32);
         playPauseButton.setHeight(32);

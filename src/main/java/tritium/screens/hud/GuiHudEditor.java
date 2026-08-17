@@ -3,6 +3,7 @@ package tritium.screens.hud;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.gui.ScaledResolution;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
@@ -40,6 +41,8 @@ public class GuiHudEditor extends GuiScreen {
     private static final int SV_W = 180;
     private static final int SV_H = 86;
     private static final int HUE_H = 10;
+    private static final int HEX_INPUT_W = 84;
+    private static final int HEX_INPUT_H = 18;
 
     private enum EditingColor {
         NONE, NORMAL, CURRENT
@@ -67,7 +70,8 @@ public class GuiHudEditor extends GuiScreen {
         SCROLL_SMOOTHNESS("滚动柔和", 0.00f, 1.00f),
         SECONDARY_OPACITY("副歌词透明", 0.30f, 1.00f),
         DYNAMIC_ISLAND_SCALE("灵动岛大小", 0.60f, 1.35f),
-        DYNAMIC_ISLAND_TEXT_SCALE("灵动岛字体", 0.75f, 1.35f),
+        DYNAMIC_ISLAND_TEXT_SCALE("灵动岛字体", 0.82f, 1.18f),
+        DYNAMIC_ISLAND_MAX_WIDTH("灵动岛基础宽度", 160.0f, 720.0f),
         DYNAMIC_ISLAND_PROGRESS_HEIGHT("进度条粗细", 0.75f, 4.00f),
         DYNAMIC_ISLAND_COMPLETION_HOLD("完成停留", 0.50f, 6.00f);
 
@@ -111,6 +115,7 @@ public class GuiHudEditor extends GuiScreen {
     private static final SliderSetting[] ISLAND_SLIDERS = {
             SliderSetting.DYNAMIC_ISLAND_SCALE,
             SliderSetting.DYNAMIC_ISLAND_TEXT_SCALE,
+            SliderSetting.DYNAMIC_ISLAND_MAX_WIDTH,
             SliderSetting.DYNAMIC_ISLAND_PROGRESS_HEIGHT,
             SliderSetting.DYNAMIC_ISLAND_COMPLETION_HOLD
     };
@@ -134,12 +139,14 @@ public class GuiHudEditor extends GuiScreen {
     private float pickerBrightness;
     private boolean draggingSaturationBrightness;
     private boolean draggingHue;
+    private GuiTextField hexColorInput;
     private boolean lyricSettingsDirty;
     private boolean resetConfirmationVisible;
 
     @Override
     public void initGui() {
         Keyboard.enableRepeatEvents(true);
+        ensureHexColorInput();
         settingsScroll = clampScroll(settingsScroll, getSettingsPanelHeight());
     }
 
@@ -159,95 +166,114 @@ public class GuiHudEditor extends GuiScreen {
 
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
-        RenderSystem.refreshResolution();
-        // Keep the current Minecraft frame visible behind the editor. GuiScreen already
-        // renders on top of the game because doesGuiPauseGame() is false; drawing the
-        // vanilla background here would replace that frame with an opaque gradient.
+        // The rounded-rectangle shader intentionally disables alpha testing.
+        // This editor is rendered while the world remains visible, so any leaked GL
+        // state would carry into Forge overlays and the next world frame (transparent
+        // leaves, glass, scoreboards and third-party HUDs). Keep the complete editor,
+        // including live previews, inside one state boundary.
+        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+        GL11.glPushMatrix();
+        try {
+            RenderSystem.refreshResolution();
+            // Keep the current Minecraft frame visible behind the editor. GuiScreen already
+            // renders on top of the game because doesGuiPauseGame() is false; drawing the
+            // vanilla background here would replace that frame with an opaque gradient.
 
-        MusicInfoWidget info = TritiumMusicExtension.getInstance().musicInfo;
-        MusicLyricsWidget lyrics = TritiumMusicExtension.getInstance().musicLyrics;
-        FontRenderer fr = fontRendererObj;
-        int sw = width;
-        int sh = height;
-        int panelX = sw - SETTINGS_W - SETTINGS_MARGIN;
-        int panelY = SETTINGS_MARGIN;
-        int panelH = getSettingsPanelHeight();
+            MusicInfoWidget info = TritiumMusicExtension.getInstance().musicInfo;
+            MusicLyricsWidget lyrics = TritiumMusicExtension.getInstance().musicLyrics;
+            FontRenderer fr = fontRendererObj;
+            int sw = width;
+            int sh = height;
+            int panelX = sw - SETTINGS_W - SETTINGS_MARGIN;
+            int panelY = SETTINGS_MARGIN;
+            int panelH = getSettingsPanelHeight();
 
-        drawEditorBackdrop(panelX, panelY, panelH);
-        DownloadDynamicIsland.renderEditorPreview();
+            drawEditorBackdrop(panelX, panelY, panelH);
+            DownloadDynamicIsland.renderEditorPreview();
 
-        int wheel = resetConfirmationVisible ? 0 : Mouse.getDWheel();
-        boolean overPanel = isInside(mouseX, mouseY, panelX, panelY, SETTINGS_W, panelH);
-        boolean overPicker = editingColor != EditingColor.NONE && isInside(mouseX, mouseY,
-                getPickerX(panelX), getPickerY(panelY), PICKER_W, PICKER_H);
-        if (wheel != 0 && overPanel) {
-            settingsScroll = clampScroll(settingsScroll + (wheel > 0 ? -24 : 24), panelH);
-            wheel = 0;
-        }
+            int wheel = resetConfirmationVisible ? 0 : Mouse.getDWheel();
+            boolean overPanel = isInside(mouseX, mouseY, panelX, panelY, SETTINGS_W, panelH);
+            boolean overPicker = editingColor != EditingColor.NONE && isInside(mouseX, mouseY,
+                    getPickerX(panelX), getPickerY(panelY), PICKER_W, PICKER_H);
+            if (wheel != 0 && overPanel) {
+                settingsScroll = clampScroll(settingsScroll + (wheel > 0 ? -24 : 24), panelH);
+                wheel = 0;
+            }
 
-        if (!resetConfirmationVisible) {
-            updateColorPickerWhileDragging(mouseX, mouseY, lyrics, panelX, panelY);
-            updateSliderWhileDragging(mouseX, panelX);
-        }
+            if (!resetConfirmationVisible) {
+                updateColorPickerWhileDragging(mouseX, mouseY, lyrics, panelX, panelY);
+                updateSliderWhileDragging(mouseX, panelX);
+            }
 
-        boolean lmb = !resetConfirmationVisible && Mouse.isButtonDown(0);
-        boolean mouseOverSettings = resetConfirmationVisible || overPanel || overPicker;
+            boolean lmb = !resetConfirmationVisible && Mouse.isButtonDown(0);
+            boolean mouseOverSettings = resetConfirmationVisible || overPanel || overPicker;
 
-        // ==== Song information HUD: draw the real card whenever a song is active. ====
-        int infoW = (int) (INFO_BASE_W * HudConfig.infoScale);
-        int infoH = (int) (INFO_BASE_H * HudConfig.infoScale);
-        int infoX = (int) (HudConfig.infoX * (sw - infoW));
-        int infoY = (int) (HudConfig.infoY * (sh - infoH));
-        handleDrag(lmb && !mouseOverSettings, mouseOverSettings ? 0 : wheel,
-                mouseX, mouseY, infoX, infoY, infoW, infoH, true);
-        boolean liveInfoPreview = hasLiveInfoPreview();
-        if (liveInfoPreview) {
-            renderLiveInfoPreview(info);
-        } else {
-            drawInfoPlaceholder(fr, infoX, infoY, infoW, infoH);
-        }
-        drawHudSelection(fr, "歌曲信息", infoX, infoY, infoW, infoH, 0xFF7DD3FC);
+            // ==== Song information HUD: draw the real card whenever a song is active. ====
+            int infoW = (int) (INFO_BASE_W * HudConfig.infoScale);
+            int infoH = (int) (INFO_BASE_H * HudConfig.infoScale);
+            int infoX = (int) (HudConfig.infoX * (sw - infoW));
+            int infoY = (int) (HudConfig.infoY * (sh - infoH));
+            handleDrag(lmb && !mouseOverSettings, mouseOverSettings ? 0 : wheel,
+                    mouseX, mouseY, infoX, infoY, infoW, infoH, true);
+            boolean liveInfoPreview = hasLiveInfoPreview();
+            if (liveInfoPreview) {
+                renderLiveInfoPreview(info);
+            } else {
+                drawInfoPlaceholder(fr, infoX, infoY, infoW, infoH);
+            }
+            drawHudSelection(fr, "歌曲信息", infoX, infoY, infoW, infoH, 0xFF7DD3FC);
 
-        // ==== Lyrics HUD ====
-        float lrBaseW = lyrics.width.getValue().floatValue();
-        float lrBaseH = lyrics.height.getValue().floatValue();
-        int lrW = (int) (lrBaseW * HudConfig.lyricScale);
-        int lrH = (int) (lrBaseH * HudConfig.lyricScale);
-        int lrX = (int) (HudConfig.lyricX * (sw - lrW));
-        int lrY = (int) (HudConfig.lyricY * (sh - lrH));
-        handleDrag(lmb && !mouseOverSettings, mouseOverSettings ? 0 : wheel,
-                mouseX, mouseY, lrX, lrY, lrW, lrH, false);
-        boolean liveLyricsPreview = hasLiveLyricsPreview();
-        if (liveLyricsPreview) {
-            renderLiveLyricsPreview(lyrics, lrX, lrY);
-        } else {
-            drawLyricsPreview(fr, lrX, lrY, lrW, lrH);
-        }
-        drawHudSelection(fr, "桌面歌词", lrX, lrY, lrW, lrH, 0xFFA78BFA);
+            // ==== Lyrics HUD ====
+            float lrBaseW = lyrics.width.getValue().floatValue();
+            float lrBaseH = lyrics.height.getValue().floatValue();
+            int lrW = (int) (lrBaseW * HudConfig.lyricScale);
+            int lrH = (int) (lrBaseH * HudConfig.lyricScale);
+            int lrX = (int) (HudConfig.lyricX * (sw - lrW));
+            int lrY = (int) (HudConfig.lyricY * (sh - lrH));
+            handleDrag(lmb && !mouseOverSettings, mouseOverSettings ? 0 : wheel,
+                    mouseX, mouseY, lrX, lrY, lrW, lrH, false);
+            boolean liveLyricsPreview = hasLiveLyricsPreview();
+            if (liveLyricsPreview) {
+                renderLiveLyricsPreview(lyrics, lrX, lrY);
+            } else {
+                drawLyricsPreview(fr, lrX, lrY, lrW, lrH);
+            }
+            drawHudSelection(fr, "桌面歌词", lrX, lrY, lrW, lrH, 0xFFA78BFA);
 
-        drawLyricsSettings(fr, lyrics, panelX, panelY, panelH, mouseX, mouseY);
-        if (editingColor != EditingColor.NONE) {
-            drawColorPicker(fr, panelX, panelY, mouseX, mouseY);
-        }
+            drawLyricsSettings(fr, lyrics, panelX, panelY, panelH, mouseX, mouseY);
+            if (editingColor != EditingColor.NONE) {
+                drawColorPicker(fr, panelX, panelY, mouseX, mouseY);
+            }
 
-        drawBottomToolbar(fr, info, lyrics, sw, sh, mouseX, mouseY);
+            drawBottomToolbar(fr, info, lyrics, sw, sh, mouseX, mouseY);
 
-        if (showSnapGuide) {
-            int cx = sw / 2;
-            int cy = sh / 2;
-            Gui.drawRect(0, cy, sw, cy + 1, 0x558DDCFF);
-            Gui.drawRect(cx, 0, cx + 1, sh, 0x558DDCFF);
-        }
-        super.drawScreen(mouseX, mouseY, partialTicks);
-        if (resetConfirmationVisible) {
-            drawResetConfirmation(fr, mouseX, mouseY);
+            if (showSnapGuide) {
+                int cx = sw / 2;
+                int cy = sh / 2;
+                Gui.drawRect(0, cy, sw, cy + 1, 0x558DDCFF);
+                Gui.drawRect(cx, 0, cx + 1, sh, 0x558DDCFF);
+            }
+            super.drawScreen(mouseX, mouseY, partialTicks);
+            if (resetConfirmationVisible) {
+                drawResetConfirmation(fr, mouseX, mouseY);
+            }
+        } finally {
+            // Scissor is normally closed by drawLyricsSettings, but explicitly closing it
+            // before restoring attributes also covers an interrupted drawing path.
+            GL11.glDisable(GL11.GL_SCISSOR_TEST);
+            GL11.glPopMatrix();
+            GL11.glPopAttrib();
         }
     }
     private void drawEditorBackdrop(int panelX, int panelY, int panelH) {
-        // The game world is the editor canvas. Only the settings panel gets a local
-        // backdrop, so collapsing it never leaves a second canvas over the game.
-        drawRoundedRect(panelX - 4, panelY + 3, SETTINGS_W, panelH, 13, 0x66000000);
-        drawRoundedRect(panelX, panelY, SETTINGS_W, panelH, 13, 0xF0171C26);
+        // The game world is the editor canvas. Keep the shadow local, circular and on
+        // the lower-right only; the old left-shifted black duplicate looked like a canvas.
+        drawSoftCardShadow(panelX, panelY, SETTINGS_W, panelH, 13);
+    }
+
+    private void drawSoftCardShadow(int x, int y, int w, int h, int radius) {
+        drawRoundedRect(x + 1, y + 2, w, h, radius, 0x30000000);
+        drawRoundedRect(x + 2, y + 3, w, h, radius, 0x18000000);
     }
 
     private boolean hasLiveInfoPreview() {
@@ -293,7 +319,7 @@ public class GuiHudEditor extends GuiScreen {
     }
 
     private void drawInfoPlaceholder(FontRenderer fr, int x, int y, int w, int h) {
-        drawRoundedRect(x + 3, y + 4, w, h, 10, 0x55000000);
+        drawSoftCardShadow(x, y, w, h, 10);
         drawRoundedRect(x, y, w, h, 10, 0xC52B3543);
         drawRoundedRect(x + 1, y + 1, w - 2, 1, 1, 0x445E7188);
         drawRoundedRect(x + 12, y + 17, 26, 26, 7, 0x554C617B);
@@ -303,7 +329,7 @@ public class GuiHudEditor extends GuiScreen {
     }
 
     private void drawLyricsPreview(FontRenderer fr, int x, int y, int w, int h) {
-        drawRoundedRect(x + 3, y + 4, w, h, 12, 0x44000000);
+        drawSoftCardShadow(x, y, w, h, 12);
         drawRoundedRect(x, y, w, h, 12, 0x8C31283F);
         int center = x + w / 2;
         drawCenteredString(fr, "桌面歌词", center, y + Math.max(8, h / 2 - 13), 0xFFDCCFFF);
@@ -395,6 +421,12 @@ public class GuiHudEditor extends GuiScreen {
                 drawColorRow(fr, "当前歌词颜色", lyrics.currentLyricColor.getValue(),
                         editingColor == EditingColor.CURRENT, x + 6, rowY, mouseX, mouseY);
                 rowY += COLOR_ROW_H;
+                drawToggleRow(fr, "当前歌词特效", HudConfig.currentLyricEffectsEnabled,
+                        x + 6, rowY, mouseX, mouseY);
+                rowY += COLOR_ROW_H;
+                drawToggleRow(fr, "OSD 逐字强调", HudConfig.osdKaraokeEmphasisEnabled,
+                        x + 6, rowY, mouseX, mouseY);
+                rowY += COLOR_ROW_H;
                 for (SliderSetting setting : CURRENT_SLIDERS) {
                     drawSlider(fr, setting, x + 6, rowY, SETTINGS_W - 12, mouseX, mouseY);
                     rowY += SLIDER_ROW_H;
@@ -407,6 +439,12 @@ public class GuiHudEditor extends GuiScreen {
             if (normalExpanded) {
                 drawColorRow(fr, "普通歌词颜色", lyrics.lyricColor.getValue(),
                         editingColor == EditingColor.NORMAL, x + 6, rowY, mouseX, mouseY);
+                rowY += COLOR_ROW_H;
+                drawToggleRow(fr, "普通歌词特效", HudConfig.normalLyricEffectsEnabled,
+                        x + 6, rowY, mouseX, mouseY);
+                rowY += COLOR_ROW_H;
+                drawToggleRow(fr, "边缘淡出", HudConfig.lyricEdgeFadeEnabled,
+                        x + 6, rowY, mouseX, mouseY);
                 rowY += COLOR_ROW_H;
                 for (SliderSetting setting : NORMAL_SLIDERS) {
                     drawSlider(fr, setting, x + 6, rowY, SETTINGS_W - 12, mouseX, mouseY);
@@ -514,7 +552,7 @@ public class GuiHudEditor extends GuiScreen {
     private void drawColorPicker(FontRenderer fr, int panelX, int panelY, int mouseX, int mouseY) {
         int x = getPickerX(panelX);
         int y = getPickerY(panelY);
-        drawRoundedRect(x + 3, y + 4, PICKER_W, PICKER_H, 12, 0x66000000);
+        drawSoftCardShadow(x, y, PICKER_W, PICKER_H, 12);
         drawRoundedRect(x, y, PICKER_W, PICKER_H, 12, 0xF51A202A);
         drawRoundedRect(x + 1, y + 1, PICKER_W - 2, 27, 10, 0xFF252E3B);
         drawString(fr, editingColor == EditingColor.CURRENT ? "当前歌词颜色" : "普通歌词颜色",
@@ -528,8 +566,23 @@ public class GuiHudEditor extends GuiScreen {
         drawHueSlider(svX, hueY);
         Color preview = Color.getHSBColor(pickerHue, pickerSaturation, pickerBrightness);
         drawRoundedRect(x + 12, hueY + 23, 26, 18, 7, preview.getRGB() | 0xFF000000);
-        drawString(fr, toHex(preview), x + 46, hueY + 28, 0xFFF4F7FB);
-        drawString(fr, "拖动即可实时预览", x + 102, hueY + 28, 0xFF8F9BAD);
+
+        // Hex preview is also an editor: type #RRGGBB and apply the colour to the
+        // live lyric preview as soon as the six hexadecimal digits are valid.
+        ensureHexColorInput();
+        int inputX = x + 46;
+        int inputY = hueY + 23;
+        hexColorInput.xPosition = inputX + 5;
+        hexColorInput.yPosition = inputY + 4;
+        hexColorInput.width = HEX_INPUT_W - 10;
+        hexColorInput.height = HEX_INPUT_H - 8;
+        hexColorInput.setTextColor(0xFFF4F7FB);
+        drawRoundedRect(inputX, inputY, HEX_INPUT_W, HEX_INPUT_H, 6,
+                hexColorInput.isFocused() ? 0xFF39495E : 0xFF2B3645);
+        drawRoundedRect(inputX, inputY, HEX_INPUT_W, 1, 1,
+                hexColorInput.isFocused() ? 0xFF8AB9FF : 0xFF617187);
+        hexColorInput.drawTextBox();
+        drawString(fr, "输入 HEX", inputX + HEX_INPUT_W + 8, hueY + 28, 0xFF8F9BAD);
     }
     private void drawSmallButton(FontRenderer fr, String text, int x, int y, int w, int h,
                                  int mouseX, int mouseY) {
@@ -666,11 +719,20 @@ public class GuiHudEditor extends GuiScreen {
             int pickerY = getPickerY(panelY);
             if (isInside(mouseX, mouseY, pickerX + PICKER_W - 24, pickerY + 5, 16, 16)) {
                 editingColor = EditingColor.NONE;
+                if (hexColorInput != null) hexColorInput.setFocused(false);
                 return;
             }
             int svX = pickerX + 12;
             int svY = pickerY + 32;
             int hueY = svY + SV_H + 10;
+            int inputX = pickerX + 46;
+            int inputY = hueY + 23;
+            ensureHexColorInput();
+            if (isInside(mouseX, mouseY, inputX, inputY, HEX_INPUT_W, HEX_INPUT_H)) {
+                hexColorInput.mouseClicked(mouseX, mouseY, button);
+                return;
+            }
+            hexColorInput.setFocused(false);
             if (isInside(mouseX, mouseY, svX, svY, SV_W, SV_H)) {
                 draggingSaturationBrightness = true;
                 applyPickerAt(mouseX, mouseY, lyrics, panelX, panelY);
@@ -726,6 +788,18 @@ public class GuiHudEditor extends GuiScreen {
                     return;
                 }
                 rowY += COLOR_ROW_H;
+                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                    HudConfig.currentLyricEffectsEnabled = !HudConfig.currentLyricEffectsEnabled;
+                    HudConfig.save();
+                    return;
+                }
+                rowY += COLOR_ROW_H;
+                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                    HudConfig.osdKaraokeEmphasisEnabled = !HudConfig.osdKaraokeEmphasisEnabled;
+                    HudConfig.save();
+                    return;
+                }
+                rowY += COLOR_ROW_H;
                 for (SliderSetting setting : CURRENT_SLIDERS) {
                     if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, SLIDER_ROW_H)) {
                         draggingSlider = setting;
@@ -745,6 +819,18 @@ public class GuiHudEditor extends GuiScreen {
             if (normalExpanded) {
                 if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
                     beginColorEdit(EditingColor.NORMAL, lyrics.lyricColor.getValue());
+                    return;
+                }
+                rowY += COLOR_ROW_H;
+                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                    HudConfig.normalLyricEffectsEnabled = !HudConfig.normalLyricEffectsEnabled;
+                    HudConfig.save();
+                    return;
+                }
+                rowY += COLOR_ROW_H;
+                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                    HudConfig.lyricEdgeFadeEnabled = !HudConfig.lyricEdgeFadeEnabled;
+                    HudConfig.save();
                     return;
                 }
                 rowY += COLOR_ROW_H;
@@ -839,6 +925,24 @@ public class GuiHudEditor extends GuiScreen {
             }
             return;
         }
+        if (editingColor != EditingColor.NONE && hexColorInput != null && hexColorInput.isFocused()) {
+            if (keyCode == Keyboard.KEY_RETURN || keyCode == Keyboard.KEY_NUMPADENTER) {
+                hexColorInput.setFocused(false);
+                if (lyricSettingsDirty) {
+                    HudConfig.save();
+                    lyricSettingsDirty = false;
+                }
+                return;
+            }
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                hexColorInput.setFocused(false);
+                return;
+            }
+            if (hexColorInput.textboxKeyTyped(typedChar, keyCode)) {
+                applyHexColorInput(TritiumMusicExtension.getInstance().musicLyrics);
+            }
+            return;
+        }
         if (keyCode == Keyboard.KEY_ESCAPE || keyCode == Keyboard.KEY_RCONTROL) {
             mc.displayGuiScreen(null);
             return;
@@ -853,7 +957,7 @@ public class GuiHudEditor extends GuiScreen {
         int dialogH = 126;
         int dialogX = (width - dialogW) / 2;
         int dialogY = Math.max(18, (height - dialogH) / 2);
-        drawRoundedRect(dialogX + 3, dialogY + 4, dialogW, dialogH, 12, 0x72000000);
+        drawSoftCardShadow(dialogX, dialogY, dialogW, dialogH, 12);
         drawRoundedRect(dialogX, dialogY, dialogW, dialogH, 12, 0xF01A202A);
         drawRoundedRect(dialogX + 16, dialogY + 17, 20, 20, 10, 0xFFD96B53);
         drawCenteredString(fr, "!", dialogX + 26, dialogY + 22, 0xFFFFFFFF);
@@ -906,6 +1010,53 @@ public class GuiHudEditor extends GuiScreen {
         pickerHue = hsb[0];
         pickerSaturation = hsb[1];
         pickerBrightness = hsb[2];
+        ensureHexColorInput();
+        hexColorInput.setText(toHex(color));
+        hexColorInput.setFocused(false);
+    }
+
+    private void ensureHexColorInput() {
+        if (hexColorInput == null) {
+            hexColorInput = new GuiTextField(0, fontRendererObj, 0, 0, HEX_INPUT_W - 10, HEX_INPUT_H - 8);
+            hexColorInput.setEnableBackgroundDrawing(false);
+            hexColorInput.setMaxStringLength(7);
+            hexColorInput.setTextColor(0xFFF4F7FB);
+        }
+    }
+
+    private void applyHexColorInput(MusicLyricsWidget lyrics) {
+        if (hexColorInput == null) return;
+        Color selected = parseHexColor(hexColorInput.getText());
+        if (selected == null) return;
+
+        float[] hsb = Color.RGBtoHSB(selected.getRed(), selected.getGreen(), selected.getBlue(), null);
+        pickerHue = hsb[0];
+        pickerSaturation = hsb[1];
+        pickerBrightness = hsb[2];
+        applySelectedColor(selected, lyrics);
+    }
+
+    private static Color parseHexColor(String value) {
+        if (value == null) return null;
+        String normalized = value.trim();
+        if (normalized.startsWith("#")) normalized = normalized.substring(1);
+        if (!normalized.matches("[0-9a-fA-F]{6}")) return null;
+        try {
+            return new Color(Integer.parseInt(normalized, 16));
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private void applySelectedColor(Color selected, MusicLyricsWidget lyrics) {
+        if (editingColor == EditingColor.NORMAL) {
+            lyrics.lyricColor.setValue(selected);
+            HudConfig.lyricColorRgb = selected.getRGB();
+        } else if (editingColor == EditingColor.CURRENT) {
+            lyrics.currentLyricColor.setValue(selected);
+            HudConfig.currentLyricColorRgb = selected.getRGB();
+        }
+        lyricSettingsDirty = true;
     }
 
     private void updateColorPickerWhileDragging(int mouseX, int mouseY, MusicLyricsWidget lyrics,
@@ -931,14 +1082,10 @@ public class GuiHudEditor extends GuiScreen {
             pickerHue = clamp01((mouseX - svX) / (float) (SV_W - 1));
         }
         Color selected = Color.getHSBColor(pickerHue, pickerSaturation, pickerBrightness);
-        if (editingColor == EditingColor.NORMAL) {
-            lyrics.lyricColor.setValue(selected);
-            HudConfig.lyricColorRgb = selected.getRGB();
-        } else if (editingColor == EditingColor.CURRENT) {
-            lyrics.currentLyricColor.setValue(selected);
-            HudConfig.currentLyricColorRgb = selected.getRGB();
+        applySelectedColor(selected, lyrics);
+        if (hexColorInput != null && !hexColorInput.isFocused()) {
+            hexColorInput.setText(toHex(selected));
         }
-        lyricSettingsDirty = true;
     }
 
     private void updateSliderWhileDragging(int mouseX, int panelX) {
@@ -979,6 +1126,7 @@ public class GuiHudEditor extends GuiScreen {
             case SECONDARY_OPACITY: return HudConfig.secondaryOpacity;
             case DYNAMIC_ISLAND_SCALE: return HudConfig.dynamicIslandScale;
             case DYNAMIC_ISLAND_TEXT_SCALE: return HudConfig.dynamicIslandTextScale;
+            case DYNAMIC_ISLAND_MAX_WIDTH: return HudConfig.dynamicIslandMaxWidth;
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT: return HudConfig.dynamicIslandProgressHeight;
             case DYNAMIC_ISLAND_COMPLETION_HOLD: return HudConfig.dynamicIslandCompletionHoldSeconds;
             default: return 0.0f;
@@ -1010,6 +1158,7 @@ public class GuiHudEditor extends GuiScreen {
             case SECONDARY_OPACITY: HudConfig.secondaryOpacity = value; break;
             case DYNAMIC_ISLAND_SCALE: HudConfig.dynamicIslandScale = value; break;
             case DYNAMIC_ISLAND_TEXT_SCALE: HudConfig.dynamicIslandTextScale = value; break;
+            case DYNAMIC_ISLAND_MAX_WIDTH: HudConfig.dynamicIslandMaxWidth = value; break;
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT: HudConfig.dynamicIslandProgressHeight = value; break;
             case DYNAMIC_ISLAND_COMPLETION_HOLD: HudConfig.dynamicIslandCompletionHoldSeconds = value; break;
         }
@@ -1037,6 +1186,7 @@ public class GuiHudEditor extends GuiScreen {
             case SECONDARY_OPACITY:
                 return Math.round(value * 100.0f) + "%";
             case CURRENT_GLOW_RADIUS:
+            case DYNAMIC_ISLAND_MAX_WIDTH:
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT:
                 return String.format("%.1f px", value);
             case DYNAMIC_ISLAND_COMPLETION_HOLD:
@@ -1060,8 +1210,8 @@ public class GuiHudEditor extends GuiScreen {
 
     private int getSettingsContentHeight() {
         int result = SECTION_H * 3 + 8;
-        if (currentExpanded) result += COLOR_ROW_H + CURRENT_SLIDERS.length * SLIDER_ROW_H;
-        if (normalExpanded) result += COLOR_ROW_H + NORMAL_SLIDERS.length * SLIDER_ROW_H;
+        if (currentExpanded) result += COLOR_ROW_H * 3 + CURRENT_SLIDERS.length * SLIDER_ROW_H;
+        if (normalExpanded) result += COLOR_ROW_H * 3 + NORMAL_SLIDERS.length * SLIDER_ROW_H;
         if (islandExpanded) result += COLOR_ROW_H * 2 + ISLAND_SLIDERS.length * SLIDER_ROW_H;
         return result;
     }

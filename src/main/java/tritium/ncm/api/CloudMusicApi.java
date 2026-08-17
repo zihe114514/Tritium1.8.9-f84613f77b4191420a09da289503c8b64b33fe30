@@ -263,17 +263,38 @@ public class CloudMusicApi {
             detailData.put("c", "[" + String.join(",", batch) + "]");
             RequestUtil.RequestAnswer detailAnswer = RequestUtil.createRequest(
                     "/api/v3/song/detail", detailData, OptionsUtil.createOptions());
-            JsonArray songs = detailAnswer.toJsonObject().getAsJsonArray("songs");
+            JsonObject detailBody = detailAnswer.toJsonObject();
+            JsonArray songs = detailBody.getAsJsonArray("songs");
             if (songs == null) {
                 throw new IllegalStateException("song detail batch missing 'songs' field (status="
                         + detailAnswer.getStatus() + ")");
             }
 
+            // The endpoint returns licensing details separately from song metadata. Preserve fee/payed
+            // on each song before DTO parsing so the GUI can distinguish ordinary, VIP, and digital-album tracks.
+            Map<Long, JsonObject> privilegesById = new HashMap<>();
+            JsonArray privileges = detailBody.getAsJsonArray("privileges");
+            if (privileges != null) {
+                for (JsonElement privilegeElement : privileges) {
+                    if (privilegeElement == null || !privilegeElement.isJsonObject()) continue;
+                    JsonObject privilege = privilegeElement.getAsJsonObject();
+                    if (privilege.has("id") && !privilege.get("id").isJsonNull()) {
+                        privilegesById.put(privilege.get("id").getAsLong(), privilege);
+                    }
+                }
+            }
+
             for (JsonElement songElement : songs) {
                 if (songElement != null && songElement.isJsonObject()) {
                     JsonObject song = songElement.getAsJsonObject();
-                    if (song.has("id")) {
-                        songsById.put(song.get("id").getAsLong(), song);
+                    if (song.has("id") && !song.get("id").isJsonNull()) {
+                        long songId = song.get("id").getAsLong();
+                        JsonObject privilege = privilegesById.get(songId);
+                        if (privilege != null) {
+                            copyPrivilegeField(privilege, song, "fee");
+                            copyPrivilegeField(privilege, song, "payed");
+                        }
+                        songsById.put(songId, song);
                     }
                 }
             }
@@ -291,6 +312,12 @@ public class CloudMusicApi {
         result.add("songs", orderedSongs);
         return RequestUtil.RequestAnswer.of(result, v6Detail.getStatus(), v6Detail.getCookies());
     }
+    private static void copyPrivilegeField(JsonObject privilege, JsonObject song, String field) {
+        if (privilege.has(field) && !privilege.get(field).isJsonNull()) {
+            song.add(field, privilege.get(field));
+        }
+    }
+
     public RequestUtil.RequestAnswer playlistUpdatePlaycount(long id) {
         Map<String, Object> data = new HashMap<>();
         data.put("id", id);
