@@ -1,3 +1,6 @@
 key.categories.deuteriummusic=氚音乐
 key.deuteriummusic.open_music=打开音乐界面
 key.deuteriummusic.edit_hud=编辑 HUD 位置
+
+key.deuteriummusic.previous_track=上一曲
+key.deuteriummusic.next_track=下一曲

@@ -15,6 +15,14 @@ void main() {
     float distance = length(max(abs(center) - (u_size * 0.5 - u_radius - 1.0), 0.0)) - u_radius;
     // 使用smoothstep进行抗锯齿
     float alpha = 1.0 - smoothstep(0.0, 1.0, distance);
+    // Rounded-corner clipping must discard pixels outside the shape instead of
+    // only writing alpha = 0. Stencil evaluation happens before blending, so a
+    // transparent fragment would otherwise still make this full rectangle part
+    // of the clip and allow square child backgrounds to leak through corners.
+    if (alpha <= 0.0) {
+        discard;
+    }
+
     // 设置片元颜色
     gl_FragColor = vec4(u_color.rgb, u_color.a * alpha);
 }

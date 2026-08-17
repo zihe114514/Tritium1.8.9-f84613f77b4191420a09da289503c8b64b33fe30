@@ -321,13 +321,13 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
         this.addChild(quickActionsSurface);
         quickActionsSurface.setClickable(false);
         quickActionsSurface.setBeforeRenderCallback(() -> {
-            // Keep the action rail compact but give the three icon buttons enough
-            // breathing room at narrow sidebar widths.
+            // Keep the original compact action rail dimensions; only the glyph rendering
+            // is strengthened so the sidebar layout and button size stay unchanged.
             quickActionsSurface.setBounds(Math.max(1, this.getWidth() - 16), 32);
             quickActionsSurface.setPosition(8, this.getHeight() - 63);
             quickActionsSurface.setRadius(9);
             quickActionsSurface.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
-            quickActionsSurface.setAlpha(.82f);
+            quickActionsSurface.setAlpha(.90f);
         });
 
         SidebarActionButton btnTheme = new SidebarActionButton(SidebarActionIcon.THEME);
@@ -560,20 +560,25 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
 
             double centerX = getX() + getWidth() * .5;
             double centerY = getY() + getHeight() * .5;
-            double iconScale = 1.00 + hoverAnimation * .07 - pressAnimation * .045;
-            float alpha = getAlpha() * (.84f + hoverAnimation * .16f);
-            int accent = RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.ACCENT), alpha);
-            int foreground = RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT), alpha);
+            double iconScale = 1.13 + hoverAnimation * .08 - pressAnimation * .055;
+            float alpha = getAlpha() * (.92f + hoverAnimation * .08f);
+            // Keep the source colors opaque here. The old implementation pre-applied alpha
+            // and then applied it again inside each primitive, which made the glyphs visibly
+            // fade into the dark action rail on several themes.
+            int accent = getIconAccentColor();
+            int foreground = NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT);
 
-            // A restrained accent halo makes the glyph readable without introducing
-            // a second opaque button layer or leaking the GUI render state.
-            if (hoverAnimation > .01f) {
-                roundedRect(centerX - 8.0, centerY - 8.0, 16.0, 16.0, 8.0,
-                        RenderSystem.reAlpha(accent, hoverAnimation * .13f));
-                roundedRect(getX() + 5.0, getY() + getHeight() - 2.0,
-                        Math.max(1.0, getWidth() - 10.0), 1.15, .55,
-                        RenderSystem.reAlpha(accent, hoverAnimation * .90f));
-            }
+            // Every action now has a persistent contrasting icon plate and a colored bottom
+            // marker. This preserves the compact icon-only layout while making the three
+            // controls immediately distinguishable before the pointer hovers them.
+            roundedRect(centerX - 8.6, centerY - 8.6, 17.2, 17.2, 8.6,
+                    RenderSystem.reAlpha(accent, alpha * (.16f + hoverAnimation * .16f)));
+            roundedRect(centerX - 7.4, centerY - 7.4, 14.8, 14.8, 7.4,
+                    RenderSystem.reAlpha(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND),
+                            alpha * (.38f - hoverAnimation * .12f)));
+            roundedRect(getX() + 4.0, getY() + getHeight() - 2.4,
+                    Math.max(1.0, getWidth() - 8.0), 1.35, .675,
+                    RenderSystem.reAlpha(accent, alpha * (.58f + hoverAnimation * .38f)));
 
             api.getGLStateManager().pushMatrix();
             scaleAtPos(centerX, centerY, iconScale);
@@ -594,18 +599,18 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
         }
 
         private void renderThemeIcon(double x, double y, float alpha, int accent, int foreground) {
-            // Four softly colored palette dots are more recognizable than the old
-            // cross-shaped glyph and remain crisp at the narrow sidebar scale.
-            roundedRect(x - 1.7, y - 5.4, 3.4, 3.4, 1.7,
+            // A four-color palette mark: larger dots and a bright center remain readable
+            // on both dark and liquid-glass themes without relying on a font glyph.
+            roundedRect(x - 2.15, y - 6.25, 4.3, 4.3, 2.15,
                     RenderSystem.reAlpha(accent, alpha));
-            roundedRect(x - 5.4, y - 1.7, 3.4, 3.4, 1.7,
-                    RenderSystem.reAlpha(0xFF73B9FF, alpha * .92f));
-            roundedRect(x + 2.0, y - 1.7, 3.4, 3.4, 1.7,
-                    RenderSystem.reAlpha(0xFFFF86B8, alpha * .92f));
-            roundedRect(x - 1.7, y + 2.0, 3.4, 3.4, 1.7,
-                    RenderSystem.reAlpha(0xFF75E0B1, alpha * .92f));
-            roundedRect(x - .85, y - .85, 1.7, 1.7, .85,
-                    RenderSystem.reAlpha(foreground, alpha * .76f));
+            roundedRect(x - 6.25, y - 2.15, 4.3, 4.3, 2.15,
+                    RenderSystem.reAlpha(0xFF73B9FF, alpha));
+            roundedRect(x + 1.95, y - 2.15, 4.3, 4.3, 2.15,
+                    RenderSystem.reAlpha(0xFFFF86B8, alpha));
+            roundedRect(x - 2.15, y + 1.95, 4.3, 4.3, 2.15,
+                    RenderSystem.reAlpha(0xFF75E0B1, alpha));
+            roundedRect(x - 1.05, y - 1.05, 2.1, 2.1, 1.05,
+                    RenderSystem.reAlpha(foreground, alpha * .92f));
         }
 
         private void renderRefreshIcon(double x, double y, float alpha, int accent, int foreground) {
@@ -621,25 +626,25 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
                 api.getGLStateManager().pushMatrix();
                 api.getGLStateManager().translate(x, y, 0);
                 api.getGLStateManager().rotate((float) (rotation + segment * 45.0), 0, 0, 1);
-                roundedRect(-.65, -6.0, 1.3, 2.55, .65,
+                roundedRect(-.85, -6.55, 1.7, 3.25, .85,
                         RenderSystem.reAlpha(spinning ? accent : foreground, segmentAlpha));
                 api.getGLStateManager().popMatrix();
             }
             // Small arrow tips close the two gaps and turn the ring into a clear
             // refresh symbol rather than a generic loading spinner.
-            drawRotatedPill(x - 3.65, y - 3.55, 3.4, 1.15, -42f,
+            drawRotatedPill(x - 4.25, y - 4.05, 4.45, 1.65, -42f,
                     RenderSystem.reAlpha(spinning ? accent : foreground, alpha));
-            drawRotatedPill(x + 3.65, y + 3.55, 3.4, 1.15, 138f,
+            drawRotatedPill(x + 4.25, y + 4.05, 4.45, 1.65, 138f,
                     RenderSystem.reAlpha(spinning ? accent : foreground, alpha));
         }
 
         private void renderScaleIcon(double x, double y, float alpha, int accent, int foreground) {
-            double left = x - 5.2;
-            double top = y - 5.2;
-            double right = x + 5.2;
-            double bottom = y + 5.2;
-            double thickness = 1.15;
-            double arm = 3.65;
+            double left = x - 6.15;
+            double top = y - 6.15;
+            double right = x + 6.15;
+            double bottom = y + 6.15;
+            double thickness = 1.65;
+            double arm = 4.7;
             int corner = RenderSystem.reAlpha(foreground, alpha);
             int highlight = RenderSystem.reAlpha(accent, alpha * .94f);
 
@@ -651,8 +656,14 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
             roundedRect(left, bottom - arm, thickness, arm, thickness * .5, corner);
             roundedRect(right - arm, bottom - thickness, arm, thickness, thickness * .5, highlight);
             roundedRect(right - thickness, bottom - arm, thickness, arm, thickness * .5, highlight);
-            roundedRect(x - .8, y - .8, 1.6, 1.6, .8,
-                    RenderSystem.reAlpha(foreground, alpha * .72f));
+            roundedRect(x - 1.15, y - 1.15, 2.3, 2.3, 1.15,
+                    RenderSystem.reAlpha(foreground, alpha * .92f));
+        }
+
+        private int getIconAccentColor() {
+            if (icon == SidebarActionIcon.SCALE) return 0xFF67D8FF;
+            if (icon == SidebarActionIcon.REFRESH) return 0xFF59E3A5;
+            return NCMScreen.getColor(NCMScreen.ColorType.ACCENT);
         }
 
         private void drawRotatedPill(double centerX, double centerY, double width, double height,

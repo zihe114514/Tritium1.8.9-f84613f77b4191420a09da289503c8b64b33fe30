@@ -17,7 +17,6 @@ import tritium.reflection.Reflection;
 import tritium.rendering.RGBA;
 import tritium.rendering.Rect;
 import tritium.rendering.StencilClipManager;
-import tritium.rendering.animation.Easing;
 import tritium.rendering.animation.Interpolations;
 import tritium.rendering.font.CFontRenderer;
 import tritium.screens.ncm.LyricLine;
@@ -36,7 +35,6 @@ import java.util.List;
  * Date: 2025/2/14 20:34
  */
 public class MusicLyricsWidget extends ExtensionModule implements SharedConstants, SharedRenderingConstants, EventHandler {
-    public ModeValue scrollEffects = api.getValueManager().createModes("Scroll Effects", "KTV", new String[] { "KTV", "Scroll", "FadeIn", "SlideIn" });
     public ModeValue alignMode = api.getValueManager().createModes("Align Mode", "Center", new String[]{ "Left", "Center", "Right" });
 
     public enum AlignMode {
@@ -74,7 +72,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         showRoman.setHiddenPredicate(() -> !showTranslation.getValue());
         dynIsland.setHiddenPredicate(() -> !Reflection.DYNAMIC_ISLAND_SUPPORTED);
         
-        this.addValues(scrollEffects, alignMode, width, height, lyricHeight, lyricColor, currentLyricColor, shadow, singleLine, graceScroll, showRoman, dynIsland);
+        this.addValues(alignMode, width, height, lyricHeight, lyricColor, currentLyricColor, shadow, singleLine, graceScroll, showRoman, dynIsland);
 
         Tuple<ExtensionWidget, WidgetWrapper.WidgetPosSizeInterface> wrapped = WidgetWrapper.createWrapper(this, this::onRender);
         this.widget = wrapped.getA();
@@ -414,7 +412,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                     currentLine.setLength(0);
                     currentWidth = 0.0;
                 }
-                segments.add(new KaraokeSegment(text, word, physicalLines.size(), currentWidth, wordWidth));
+                segments.add(new KaraokeSegment(text, word, physicalLines.size(), currentWidth, wordWidth,
+                        0, text.codePointCount(0, text.length())));
                 currentLine.append(text);
                 currentWidth += wordWidth;
                 continue;
@@ -441,7 +440,9 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
 
                 String fragment = text.substring(start, end);
                 double fragmentWidth = getFontRenderer().getStringWidthD(fragment);
-                segments.add(new KaraokeSegment(fragment, word, physicalLines.size(), currentWidth, fragmentWidth));
+                segments.add(new KaraokeSegment(fragment, word, physicalLines.size(), currentWidth, fragmentWidth,
+                        text.codePointCount(0, start), fragment.codePointCount(0, fragment.length()),
+                        text.codePointCount(0, text.length())));
                 currentLine.append(fragment);
                 currentWidth += fragmentWidth;
                 start = end;
@@ -502,12 +503,10 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                                  int index, int currentIndex, LyricLayout layout,
                                  float songProgress) {
         boolean isCurrent = index == currentIndex;
-        boolean hasWords = !line.words.isEmpty();
-        boolean useKaraoke = isCurrent && layout.karaokeLayout != null
-                && "KTV".equals(this.scrollEffects.getValue());
-        boolean canAnimateWords = isCurrent && hasWords && layout.primaryLines.length == 1 && !useKaraoke;
-        boolean slideIn = canAnimateWords && this.scrollEffects.getValue().equals("SlideIn")
-                && !this.alignMode.getValue().equals("Left");
+        // A KaraokeLayout is created only from parsed word-level timing. Whenever that
+        // timing is available the current OSD line must use the one KTV renderer; an
+        // optional legacy effect must never be able to replace its left-to-right fill.
+        boolean useKaraoke = isCurrent && layout.karaokeLayout != null;
         int effectAlpha = (int) (255 * line.lineAlpha * renderInfo.visibilityAlpha);
 
         if (useKaraoke) {
@@ -515,12 +514,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             // Otherwise current-line scaling makes the coloured layer drift away from the glyphs.
             renderKaraokeBlock(layout, renderInfo.yPosition, songProgress, effectAlpha);
         } else {
-            int primaryAlpha = (int) ((isCurrent && hasWords ? 80 : 255)
-                    * line.lineAlpha * renderInfo.visibilityAlpha);
-            if (!slideIn) {
-                renderWrappedPrimary(layout.primaryLines, renderInfo.yPosition,
-                        getConfiguredLyricColor(line, primaryAlpha), isCurrent, songProgress, true);
-            }
+            renderWrappedPrimary(layout.primaryLines, renderInfo.yPosition,
+                    getConfiguredLyricColor(line, effectAlpha), isCurrent, songProgress, true);
         }
 
         if (layout.secondaryLines.length > 0) {
@@ -530,12 +525,6 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                     + PRIMARY_TO_SECONDARY_SPACING;
             renderWrappedSecondary(layout.secondaryLines, secondaryY,
                     getConfiguredLyricColor(line, secondaryAlpha), isCurrent, songProgress);
-        }
-
-        if (!useKaraoke && canAnimateWords) {
-            // The legacy effects require one uninterrupted baseline. Wrapped lyrics
-            // retain their responsive layout unless KTV mode is selected.
-            handleScrollEffects(line, renderInfo, songProgress, effectAlpha);
         }
     }
 
@@ -572,55 +561,78 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
      * the unsung text with one hard clipping edge. The completed portion stays crisp while
      * the front edge has several translucent layers and a restrained halo.
      */
+    /**
+     * Paints the active OSD line one Unicode code point at a time. The word timing
+     * remains the source of truth, while its timeline is distributed over every
+     * character so the fill travels smoothly from left to right like karaoke.
+     */
     private void renderKaraokeProgress(KaraokeLayout layout, double y,
                                        float songProgress, int effectAlpha) {
+        int highlightColor = getCurrentLyricColor(effectAlpha);
         for (KaraokeSegment segment : layout.segments) {
             double rawProgress = getRawKaraokeProgress(segment.word, songProgress);
-            double progress = Math.max(0.0, Math.min(1.0, rawProgress));
+            double characterTimeline = Math.max(0.0, Math.min(1.0, rawProgress))
+                    * segment.totalCharacterCount;
 
             String physicalLine = layout.primaryLines[segment.lineIndex];
             double lineX = calculateAlignmentX(physicalLine, this.alignMode.getValue());
-            double x = lineX + segment.offsetX;
+            double characterX = lineX + segment.offsetX;
             double segmentY = y + segment.lineIndex * (getFontRenderer().getHeight() + PRIMARY_LINE_SPACING);
-            int highlightColor = getCurrentLyricColor(effectAlpha);
 
-            if (progress > .002) {
-                if (progress >= .998) {
-                    // The whole sung area keeps a visible aura instead of only the moving head glowing.
-                    renderKaraokeLayer(segment.text, x, segmentY, 0, segment.width,
-                            highlightColor, .24);
-                } else {
-                    // 颜色前沿严格跟随真实字词时间：羽化只发生在前沿后方，绝不提前染到未播放区域。
-                    double front = segment.width * progress;
-                    double featherWidth = Math.min(Math.max(3.0, HudConfig.currentTransitionWidth),
-                            Math.max(3.0, Math.min(segment.width, front)));
-                    double featherLeft = Math.max(0.0, front - featherWidth);
+            int offset = 0;
+            int characterIndex = 0;
+            while (offset < segment.text.length()) {
+                int next = segment.text.offsetByCodePoints(offset, 1);
+                String character = segment.text.substring(offset, next);
+                double characterWidth = getFontRenderer().getStringWidthD(character);
+                int globalCharacterIndex = segment.characterOffset + characterIndex;
+                double characterProgress = getCharacterKaraokeProgress(characterTimeline, globalCharacterIndex);
 
-                    renderKaraokeLayer(segment.text, x, segmentY, 0, featherLeft,
-                            highlightColor, .20);
+                if (characterProgress > .002 && characterWidth > .05) {
+                    if (characterProgress >= .998) {
+                        renderKaraokeLayer(character, characterX, segmentY, 0.0, characterWidth,
+                                highlightColor, .24);
+                    } else {
+                        double front = characterWidth * characterProgress;
+                        double featherWidth = Math.min(
+                                Math.max(2.0, HudConfig.osdKaraokeTransitionWidth),
+                                Math.max(2.0, Math.min(characterWidth, front)));
+                        double featherLeft = Math.max(0.0, front - featherWidth);
 
-                    for (int step = 0; step < KARAOKE_FEATHER_STEPS; step++) {
-                        double left = featherLeft + (front - featherLeft) * step / KARAOKE_FEATHER_STEPS;
-                        double right = featherLeft + (front - featherLeft) * (step + 1) / KARAOKE_FEATHER_STEPS;
-                        if (right <= left) continue;
-
-                        double behindFront = 1.0 - step / (double) KARAOKE_FEATHER_STEPS;
-                        double opacity = .18 + .80 * smoothStep(behindFront);
-                        renderKaraokeLayer(segment.text, x, segmentY, left, right,
-                                multiplyAlpha(highlightColor, opacity), .08 + .24 * behindFront);
+                        renderKaraokeLayer(character, characterX, segmentY, 0.0, featherLeft,
+                                highlightColor, .16);
+                        for (int step = 0; step < KARAOKE_FEATHER_STEPS; step++) {
+                            double left = featherLeft + (front - featherLeft) * step / KARAOKE_FEATHER_STEPS;
+                            double right = featherLeft + (front - featherLeft) * (step + 1) / KARAOKE_FEATHER_STEPS;
+                            if (right <= left) {
+                                continue;
+                            }
+                            double behindFront = 1.0 - step / (double) KARAOKE_FEATHER_STEPS;
+                            double opacity = .16 + .84 * smoothStep(behindFront);
+                            renderKaraokeLayer(character, characterX, segmentY, left, right,
+                                    multiplyAlpha(highlightColor, opacity), .07 + .22 * behindFront);
+                        }
                     }
                 }
+
+                // Keep every already-sung character enlarged. The emphasis does not
+                // fall back when the next character begins, so the scale travels from
+                // left to right together with the KTV colour fill.
+                if (characterProgress > .001) {
+                    renderKaraokeCharacterEmphasis(character, characterX, segmentY,
+                            characterWidth, characterProgress, highlightColor);
+                }
+
+                characterX += characterWidth;
+                offset = next;
+                characterIndex++;
             }
 
-            // Render the light head against the complete physical line rather than against
-            // one timed word. Its halo can therefore overlap the previous and next glyph,
-            // producing a continuous travelling light instead of a per-character flash.
+            // Keep one continuous travelling halo for the word, including wrapped fragments.
             renderKaraokeTransitionGlow(physicalLine, lineX, segmentY, segment,
                     rawProgress, songProgress, highlightColor);
-            renderKaraokeWordPulse(segment, x, segmentY, rawProgress, highlightColor);
         }
     }
-
     private void renderKaraokeAmbientGlow(KaraokeLayout layout, double y, int effectAlpha) {
         int ambientColor = getCurrentLyricColor((int) (effectAlpha * .52));
         for (int lineIndex = 0; lineIndex < layout.primaryLines.length; lineIndex++) {
@@ -628,24 +640,28 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             double x = calculateAlignmentX(text, this.alignMode.getValue());
             double lineY = y + lineIndex * (getFontRenderer().getHeight() + PRIMARY_LINE_SPACING);
             renderTextGlow(getFontRenderer(), text, x, lineY, ambientColor,
-                    HudConfig.currentGlowStrength * .44,
-                    HudConfig.currentBloomStrength, HudConfig.currentGlowRadius);
+                    HudConfig.osdKaraokeGlowStrength * .44,
+                    HudConfig.osdKaraokeBloomStrength, HudConfig.currentGlowRadius);
         }
     }
 
     /**
-     * Layout-neutral KTV pulse. Only the already-painted portion is redrawn around the
-     * segment centre; wrapping and neighbouring glyph positions therefore never jump.
+     * Matches the full-screen lyric emphasis model: every character owns a local
+     * transform, so characters that have already crossed the KTV fill front remain
+     * enlarged while the next character eases in. Keeping the layout coordinates
+     * unchanged prevents wrapping and neighbouring glyphs from shifting.
      */
-    private void renderKaraokeWordPulse(KaraokeSegment segment, double x, double y,
-                                        double rawProgress, int highlightColor) {
-        if (HudConfig.currentWordScale <= .001f || rawProgress <= 0.0 || rawProgress >= 1.0) {
+    private void renderKaraokeCharacterEmphasis(String character, double x, double y,
+                                                 double width, double progress, int highlightColor) {
+        if (HudConfig.osdKaraokePulseStrength <= .001f || width <= .05) {
             return;
         }
-        double progress = Math.max(0.0, Math.min(1.0, rawProgress));
-        double pulse = Math.sin(Math.PI * smoothStep(progress));
-        double scale = 1.0 + HudConfig.currentWordScale * pulse;
-        double centerX = x + segment.width * .5;
+
+        double emphasis = smoothStep(progress);
+        // A sine pulse returns to 1.0 at progress=1 and immediately shrinks text.
+        // Use monotonic emphasis so the completed characters remain enlarged.
+        double scale = 1.0 + HudConfig.osdKaraokePulseStrength * emphasis;
+        double centerX = x + width * .5;
         double centerY = y + getFontRenderer().getHeight() * .5;
 
         api.getGLStateManager().pushMatrix();
@@ -653,15 +669,16 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         api.getGLStateManager().scale(scale, scale, 1);
         api.getGLStateManager().translate(-centerX, -centerY, 0);
         try {
-            double paintedWidth = segment.width * progress;
-            renderKaraokeLayer(segment.text, x, y, 0.0, paintedWidth,
-                    multiplyAlpha(highlightColor, .38 + .36 * pulse),
-                    .18 + .28 * pulse);
+            double paintedWidth = width * progress;
+            // Clip before scaling: the feather still sweeps left-to-right, while
+            // completed glyphs retain the same emphasis as full-screen lyrics.
+            renderKaraokeLayer(character, x, y, 0.0, paintedWidth,
+                    multiplyAlpha(highlightColor, .40 + .44 * emphasis),
+                    .14 + .34 * emphasis);
         } finally {
             api.getGLStateManager().popMatrix();
         }
     }
-
     private void renderKaraokeTransitionGlow(String physicalLine, double lineX, double lineY,
                                               KaraokeSegment segment, double rawProgress,
                                               float songProgress, int highlightColor) {
@@ -683,9 +700,11 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             return;
         }
 
-        double progress = Math.max(0.0, Math.min(1.0, rawProgress));
-        double center = segment.offsetX + segment.width * progress;
-        double halfBand = Math.max(4.0, HudConfig.currentTransitionWidth);
+        double wordTimeline = Math.max(0.0, Math.min(1.0, rawProgress)) * segment.totalCharacterCount;
+        double segmentProgress = (wordTimeline - segment.characterOffset) / segment.characterCount;
+        segmentProgress = Math.max(0.0, Math.min(1.0, segmentProgress));
+        double center = segment.offsetX + segment.width * segmentProgress;
+        double halfBand = Math.max(4.0, HudConfig.osdKaraokeTransitionWidth);
         double lineWidth = getFontRenderer().getStringWidthD(physicalLine);
 
         for (int step = 0; step < KARAOKE_HEAD_STEPS; step++) {
@@ -726,7 +745,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             return;
         }
 
-        double configuredStrength = strength * HudConfig.currentGlowStrength;
+        double configuredStrength = strength * HudConfig.osdKaraokeGlowStrength;
         int cardinalColor = multiplyAlpha(color, Math.min(1.0, configuredStrength * 1.12));
         int diagonalColor = multiplyAlpha(color, Math.min(1.0, configuredStrength * .78));
         double radius = Math.max(.35, HudConfig.currentGlowRadius * (.32 + configuredStrength * .68));
@@ -750,6 +769,13 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     private double smoothStep(double value) {
         double clamped = Math.max(0.0, Math.min(1.0, value));
         return clamped * clamped * (3.0 - 2.0 * clamped);
+    }
+
+    private double getCharacterKaraokeProgress(double characterTimeline, int characterIndex) {
+        double raw = Math.max(0.0, Math.min(1.0, characterTimeline - characterIndex));
+        double eased = smoothStep(raw);
+        double smoothing = Math.max(0.0, Math.min(1.0, HudConfig.osdKaraokeSmoothing));
+        return raw + (eased - raw) * smoothing;
     }
 
     private double getRawKaraokeProgress(LyricLine.Word word, float songProgress) {
@@ -892,146 +918,26 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         return RGBA.color(activeColor.getRed(), activeColor.getGreen(), activeColor.getBlue(), alpha);
     }
 
-    private void handleScrollEffects(LyricLine line, LyricRenderInfo renderInfo, float songProgress, int effectAlpha) {
-        WordInfo wordInfo = calculateCurrentWordInfo(line, songProgress);
-
-        updateScrollWidth(line, wordInfo, songProgress);
-
-        renderScrollEffect(line, renderInfo, wordInfo, songProgress, effectAlpha);
-    }
-
+    /**
+     * Resolves the timed word currently under playback. This is retained for the
+     * Dynamic Island text bridge and diagnostics; OSD painting itself uses the
+     * per-code-point KTV path above.
+     */
     private WordInfo calculateCurrentWordInfo(LyricLine line, float songProgress) {
         WordInfo info = new WordInfo();
+        if (line.words.isEmpty()) {
+            return info;
+        }
 
-        // find current word index
         for (int k = 0; k < line.words.size(); k++) {
             LyricLine.Word word = line.words.get(k);
-
             if (word.timestamp > songProgress) {
                 info.currentIndex = Math.max(0, k - 1);
-                break;
-            } else if (k == line.words.size() - 1) {
-                info.currentIndex = k;
+                return info;
             }
         }
-
-        // calculate text before current word
-        for (int m = 0; m < info.currentIndex; m++) {
-            info.textBefore.append(line.words.get(m).word);
-        }
-
-        // calculate accumulated text
-        for (int m = 0; m < info.currentIndex + 1; m++) {
-            info.textAccumulated.append(line.words.get(m).word);
-        }
-
+        info.currentIndex = line.words.size() - 1;
         return info;
-    }
-
-    private void updateScrollWidth(LyricLine line, WordInfo wordInfo, float songProgress) {
-        LyricLine.Word current = line.words.get(wordInfo.currentIndex);
-
-        double value = (songProgress - current.timestamp) / (double) (current.duration);
-
-        double progress = Mth.limit(value, 0, 1);
-
-        double offsetX = progress * getFontRenderer().getStringWidthD(current.word);
-
-        line.scrollWidth = getFontRenderer().getStringWidthD(wordInfo.textBefore.toString()) + offsetX;
-    }
-
-    private void renderScrollEffect(LyricLine line, LyricRenderInfo renderInfo, WordInfo wordInfo, float songProgress, int effectAlpha) {
-        String effectMode = this.scrollEffects.getValue();
-
-        switch (effectMode) {
-            case "Scroll":
-                renderScrollMode(line, renderInfo, effectAlpha);
-                break;
-            case "FadeIn":
-                renderFadeInMode(line, renderInfo, wordInfo, songProgress, effectAlpha);
-                break;
-            case "SlideIn":
-                renderSlideInMode(line, renderInfo, wordInfo, songProgress, effectAlpha);
-                break;
-        }
-    }
-
-    private void renderScrollMode(LyricLine line, LyricRenderInfo renderInfo, int effectAlpha) {
-        String alignMode = this.alignMode.getValue();
-        double x = calculateAlignmentX(line.getLyric(), alignMode);
-
-        StencilClipManager.beginClip(() -> Rect.draw(x, renderInfo.yPosition, line.scrollWidth + 1, getFontRenderer().getHeight() + 4, -1));
-
-        renderAlignedText(line.getLyric(), renderInfo.yPosition, getConfiguredLyricColor(line, effectAlpha), alignMode);
-
-        StencilClipManager.endClip();
-    }
-
-    private void renderFadeInMode(LyricLine line, LyricRenderInfo renderInfo, WordInfo wordInfo, float songProgress, int effectAlpha) {
-        String alignMode = this.alignMode.getValue();
-
-        double offsetX = calculateAlignmentX(line.getLyric(), alignMode);
-        for (int m = 0; m < wordInfo.currentIndex + 1; m++) {
-            LyricLine.Word word = line.words.get(m);
-            String wordText = word.word;
-
-            if (m == wordInfo.currentIndex) {
-                updateCurrentWordAnimation(word, line, wordInfo.currentIndex, songProgress);
-            } else if (m < wordInfo.currentIndex) {
-                word.alpha = 1;
-            }
-
-            double stWidth = getFontRenderer().getStringWidthD(wordText);
-            bigFrString(wordText, offsetX, renderInfo.yPosition,
-                    getConfiguredLyricColor(line, (int) (word.alpha * effectAlpha)));
-
-            offsetX += stWidth;
-        }
-    }
-
-    private void renderSlideInMode(LyricLine line, LyricRenderInfo renderInfo, WordInfo wordInfo, float songProgress, int effectAlpha) {
-        String alignMode = this.alignMode.getValue();
-
-        double targetX = calculateSlideInTargetX(line, alignMode);
-
-        Runnable renderTask = () -> {
-            double offsetX = targetX;
-            double targetOffsetX = 0;
-
-            for (int m = 0; m < wordInfo.currentIndex + 1; m++) {
-                LyricLine.Word word = line.words.get(m);
-                String wordText = word.word;
-                double stWidth = getFontRenderer().getStringWidthD(wordText);
-
-                if (m == wordInfo.currentIndex) {
-                    updateCurrentWordAnimation(word, line, wordInfo.currentIndex, songProgress);
-
-                    Easing easeInOutQuad = Easing.EASE_OUT_CUBIC;
-                    targetOffsetX += stWidth * easeInOutQuad.getFunction().apply(word.progress);
-                } else if (m < wordInfo.currentIndex) {
-                    word.alpha = 1;
-                    targetOffsetX += stWidth;
-                }
-
-                bigFrString(wordText, offsetX, renderInfo.yPosition,
-                        getConfiguredLyricColor(line, (int) (word.alpha * effectAlpha)));
-
-                offsetX += stWidth;
-            }
-
-            line.targetOffsetX = targetOffsetX;
-        };
-
-        renderTask.run();
-    }
-
-    private void updateCurrentWordAnimation(LyricLine.Word word, LyricLine line,
-                                            int currentIndex, float songProgress) {
-        double perc = Mth.limit((songProgress - word.timestamp) / (double) (word.duration), 0, 1);
-        double clamped = Math.max(0, Math.min(1, perc));
-
-        word.progress = Interpolations.interpolate(word.progress, clamped, 1);
-        word.alpha = (float) Math.min(1, clamped * 1.25f);
     }
 
     private double calculateAlignmentX(String text, String alignMode) {
@@ -1048,26 +954,13 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         }
     }
 
-    private double calculateSlideInTargetX(LyricLine line, String alignMode) {
-        switch (alignMode) {
-            case "Left":
-                return getContentLeft();
-            case "Center":
-                return getContentLeft() + getContentWidth() * .5 - line.targetOffsetX * .5;
-            case "Right":
-                return getContentLeft() + getContentWidth() - line.targetOffsetX;
-            default:
-                throw new IllegalStateException("Unexpected value: " + alignMode);
-        }
-    }
-
+    /**
+     * The active colour is reserved for the clipped KTV foreground layer. Rendering
+     * an entire current line with it would bypass word timing and look like a hard
+     * colour switch, so the unfilled base always uses the ordinary lyric colour.
+     */
     private int getConfiguredLyricColor(LyricLine line, int alpha) {
-        Color baseColor = line == CloudMusic.currentLyric ? currentLyricColor.getValue() : lyricColor.getValue();
-        return RGBA.color(baseColor.getRed(), baseColor.getGreen(), baseColor.getBlue(), alpha);
-    }
-
-    private void renderAlignedText(String text, double y, int color, String alignMode) {
-        bigFrString(text, calculateAlignmentX(text, alignMode), y, color);
+        return getBaseLyricColor(alpha);
     }
 
     private void cleanupRender() {
@@ -1130,20 +1023,30 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         final int lineIndex;
         final double offsetX;
         final double width;
+        final int characterOffset;
+        final int characterCount;
+        final int totalCharacterCount;
 
-        KaraokeSegment(String text, LyricLine.Word word, int lineIndex, double offsetX, double width) {
+        KaraokeSegment(String text, LyricLine.Word word, int lineIndex, double offsetX, double width,
+                       int characterOffset, int characterCount) {
+            this(text, word, lineIndex, offsetX, width,
+                    characterOffset, characterCount, characterCount);
+        }
+
+        KaraokeSegment(String text, LyricLine.Word word, int lineIndex, double offsetX, double width,
+                       int characterOffset, int characterCount, int totalCharacterCount) {
             this.text = text;
             this.word = word;
             this.lineIndex = lineIndex;
             this.offsetX = offsetX;
             this.width = width;
+            this.characterOffset = characterOffset;
+            this.characterCount = Math.max(1, characterCount);
+            this.totalCharacterCount = Math.max(this.characterCount, totalCharacterCount);
         }
     }
-
     private static class WordInfo {
-        int currentIndex = 0;
-        StringBuilder textBefore = new StringBuilder();
-        StringBuilder textAccumulated = new StringBuilder();
+        int currentIndex;
     }
 
     private static CFontRenderer getFontRenderer() {

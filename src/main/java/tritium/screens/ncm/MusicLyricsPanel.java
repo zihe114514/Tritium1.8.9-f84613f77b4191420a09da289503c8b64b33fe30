@@ -364,6 +364,11 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         // It remains on the Minecraft framebuffer stack and is restored after every KTV FBO pass.
         StencilClipManager.beginClip(() -> Rect.draw(lyricsViewportLeft, lyricsViewportTop,
                 lyricsWidth, lyricsViewportHeight, -1));
+        // The KTV renderer temporarily binds small word-sized framebuffers.  Stencil is
+        // intentionally disabled there, so keep a screen-space clip active for every
+        // direct lyric draw on the Minecraft framebuffer as the non-negotiable boundary.
+        ScissorClipManager.begin(lyricsViewportLeft, lyricsViewportTop, lyricsWidth, lyricsViewportHeight);
+        boolean lyricScissorActive = true;
         try {
             for (int k = 0; k < CloudMusic.lyrics.size(); k++) {
             LyricLine lyric = CloudMusic.lyrics.get(k);
@@ -466,6 +471,11 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                         }
 
                         if (shouldClip) {
+                            // The character textures are rendered into compact auxiliary FBOs.
+                            // A screen-space scissor would be invalid in those FBO coordinate systems,
+                            // so suspend it only for the off-screen generation pass.
+                            ScissorClipManager.end();
+                            lyricScissorActive = false;
 
                             int scale = 2;
                             int fbWidth = ((int) stringWidthD) * scale, fbHeight = (FontManager.pf65bold.getHeight() + 6) * scale;
@@ -542,6 +552,11 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                             api.getGLStateManager().matrixMode(GL11.GL_PROJECTION);
                             api.getGLStateManager().popMatrix();
                             api.getGLStateManager().matrixMode(GL11.GL_MODELVIEW);
+
+                            // Back on the Minecraft framebuffer: restore the viewport scissor
+                            // before compositing the enlarged/glowing word texture.
+                            ScissorClipManager.begin(lyricsViewportLeft, lyricsViewportTop, lyricsWidth, lyricsViewportHeight);
+                            lyricScissorActive = true;
 
 //                            if (StencilClipManager.stencilClipping())
 //                                GL11.glEnable(GL11.GL_STENCIL_TEST);
@@ -634,22 +649,18 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             }
         }
 
-        api.getGLStateManager().pushMatrix();
-        this.scaleAtPos(lyricRenderOffsetX, posY + height * .5, 1.0 / getContentScale(alpha));
-        // Scissor 在 shader 的输入 FBO、两次 blur pass 及最终合成期间保持有效，
-        // 因而高斯核的边缘扩散也无法越过歌词内容区域。
-        ScissorClipManager.begin(lyricsViewportLeft, lyricsViewportTop, lyricsWidth, lyricsViewportHeight);
-        try {
-            Shaders.BLUR_SHADER.run(blurRects);
-            // The blur pass returns from a full-screen auxiliary framebuffer.
-            // Re-enable the parent rounded-player clip before any later panel
-            // content is rendered.
-            StencilClipManager.restoreActiveClip();
-            } finally {
-                ScissorClipManager.end();
-                api.getGLStateManager().popMatrix();
-            }
+        // The blur input/output framebuffers use the full game resolution.  Keep the same
+        // lyric viewport scissor active through both passes and final composition; do not
+        // cancel the content transform here, otherwise the projected scissor no longer
+        // matches the dynamically scaled player bounds.
+        Shaders.BLUR_SHADER.run(blurRects);
+        // The blur pass returns from a full-screen auxiliary framebuffer.
+        // Re-enable the parent rounded-player clip before any later panel content is rendered.
+        StencilClipManager.restoreActiveClip();
         } finally {
+            if (lyricScissorActive) {
+                ScissorClipManager.end();
+            }
             // Blur/FBO rendering can toggle raw stencil state. Restore the lyric viewport
             // before leaving it, then pop only the clip introduced by this method.
             StencilClipManager.restoreActiveClip();
@@ -982,33 +993,48 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             coverAlpha = 0.0f;
         }
 
-        if (texBg != null || prevBg != null) {
+        // The blurred cover is intentionally oversized to keep its crop stable while the
+        // player resizes.  Do not rely solely on the parent stencil: auxiliary FBO/shader
+        // passes may temporarily disable it.  A projected scissor is the hard boundary that
+        // keeps this oversized texture inside the live player rectangle at every scale.
+        StencilClipManager.restoreActiveClip();
+        ScissorClipManager.begin(posX, posY, width, height);
+        try {
+            if (texBg != null || prevBg != null) {
+                api.getGLStateManager().pushMatrix();
+                try {
+                    double bgSize = Math.max(width, height);
 
-            api.getGLStateManager().pushMatrix();
+                    if (prevBg != null && musicBgAlpha < 0.99f) {
+                        int glTextureId = prevBg.getGlTextureId();
+                        api.getGLStateManager().bindTexture(glTextureId);
+                        prevBg.linearFilter();
+                        api.getGLStateManager().color(1, 1, 1, alpha);
+                        Image.draw(posX + width * .5 - bgSize * .5, posY + height * .5 - bgSize * .5,
+                                bgSize, bgSize, Image.Type.NoColor);
+                    }
 
-
-            double bgSize = Math.max(width, height);
-
-            if (prevBg != null && musicBgAlpha < 0.99f) {
-                int glTextureId = prevBg.getGlTextureId();
-                api.getGLStateManager().bindTexture(glTextureId);
-                prevBg.linearFilter();
-                api.getGLStateManager().color(1, 1, 1, alpha);
-                Image.draw(posX + width * .5 - bgSize * .5, posY + height * .5 - bgSize * .5, bgSize, bgSize, Image.Type.NoColor);
+                    if (texBg != null) {
+                        this.musicBgAlpha = Interpolations.interpolate(this.musicBgAlpha, 1.0f,
+                                prevBg == null ? 0.15f : 0.05f);
+                        api.getGLStateManager().bindTexture(texBg.getGlTextureId());
+                        texBg.linearFilter();
+                        api.getGLStateManager().color(1, 1, 1, alpha * this.musicBgAlpha);
+                        Image.draw(posX + width * .5 - bgSize * .5, posY + height * .5 - bgSize * .5,
+                                bgSize, bgSize, Image.Type.NoColor);
+                    }
+                } finally {
+                    api.getGLStateManager().popMatrix();
+                }
             }
 
-            if (texBg != null) {
-                this.musicBgAlpha = Interpolations.interpolate(this.musicBgAlpha, 1.0f, prevBg == null ? 0.15f : 0.05f);
-                api.getGLStateManager().bindTexture(texBg.getGlTextureId());
-                texBg.linearFilter();
-                api.getGLStateManager().color(1, 1, 1, alpha * this.musicBgAlpha);
-                Image.draw(posX + width * .5 - bgSize * .5, posY + height * .5 - bgSize * .5, bgSize, bgSize, Image.Type.NoColor);
-            }
-
-            api.getGLStateManager().popMatrix();
+            Rect.draw(posX, posY, width, height, hexColor(0, 0, 0, alpha * .35f));
+        } finally {
+            ScissorClipManager.end();
+            // Image rendering changes raw GL state; the enclosing rounded-player clip must
+            // remain valid for controls and lyric layers rendered afterwards.
+            StencilClipManager.restoreActiveClip();
         }
-
-        Rect.draw(posX, posY, width, height, hexColor(0, 0, 0, alpha * .35f));
     }
 
 }

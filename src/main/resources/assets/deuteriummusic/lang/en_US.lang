@@ -1,3 +1,6 @@
 key.categories.deuteriummusic=Deuterium Music
 key.deuteriummusic.open_music=Open Music GUI
 key.deuteriummusic.edit_hud=Edit HUD Position
+
+key.deuteriummusic.previous_track=Previous Track
+key.deuteriummusic.next_track=Next Track
