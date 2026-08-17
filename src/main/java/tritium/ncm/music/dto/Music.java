@@ -103,6 +103,10 @@ public class Music {
     private transient String sourceMid;
     private transient String externalCoverUrl;
     private transient boolean vip;
+    /** True only when the NetEase payload explicitly marks this track as a cloud-drive track. */
+    private transient boolean cloudSong;
+    /** Highest provider tier advertised by song/privilege metadata; empty means not supplied. */
+    private transient String highestQualityLabel = "";
     private transient Track cadenceTrack;
 
     /** Actual stream quality resolved for the current playback request. */
@@ -158,6 +162,94 @@ public class Music {
         }
     }
 
+    /** Applies optional NetEase song/privilege fields without assuming they exist for QQ/Cadence tracks. */
+    public void applyNeteaseMetadata(JsonObject song, JsonObject privilege) {
+        if (!isNetease()) return;
+        cloudSong = cloudSong || isCloudMarked(song) || isCloudMarked(privilege);
+        if (privilege != null) {
+            if (privilege.has("fee") && !privilege.get("fee").isJsonNull()) {
+                fee = safeInt(privilege, "fee", fee);
+            }
+            if (privilege.has("payed") && !privilege.get("payed").isJsonNull()) {
+                payed = safeInt(privilege, "payed", payed);
+            }
+            considerHighestQuality(readString(privilege, "maxBrLevel"), readLong(privilege, "maxbr"));
+            considerHighestQuality(readString(privilege, "playMaxBrLevel"), readLong(privilege, "playMaxBr"));
+            considerHighestQuality(readString(privilege, "downloadMaxBrLevel"), readLong(privilege, "downloadMaxBr"));
+            considerHighestQuality(readString(privilege, "plLevel"), readLong(privilege, "br"));
+            considerHighestQuality(readString(privilege, "dlLevel"), 0L);
+        }
+        if (song != null) {
+            considerHighestQuality(readString(song, "maxBrLevel"), readLong(song, "maxbr"));
+        }
+        if ((highestQualityLabel == null || highestQualityLabel.isEmpty()) && isHiRes()) {
+            highestQualityLabel = "Hi-Res";
+        }
+    }
+
+    public boolean isCloudSong() {
+        return cloudSong;
+    }
+
+    public String getHighestQualityLabel() {
+        if (highestQualityLabel == null || highestQualityLabel.trim().isEmpty()) {
+            return isHiRes() ? "Hi-Res" : "";
+        }
+        return highestQualityLabel;
+    }
+
+    private void considerHighestQuality(String level, long bitrate) {
+        String candidate = toQualityLabel(level, bitrate);
+        if (qualityRank(candidate) > qualityRank(highestQualityLabel)) {
+            highestQualityLabel = candidate;
+        }
+    }
+
+    private static String toQualityLabel(String level, long bitrate) {
+        String normalized = nonNull(level).trim().toLowerCase(Locale.ROOT);
+        if ("jymaster".equals(normalized) || "hires".equals(normalized)) return "Hi-Res";
+        if ("lossless".equals(normalized) || "jyeffect".equals(normalized) || bitrate >= 900000L) return "无损";
+        if ("higher".equals(normalized) || "exhigh".equals(normalized) || "sky".equals(normalized)
+                || bitrate >= 256000L) return "HQ";
+        if ("standard".equals(normalized) || bitrate > 0L) return "标准";
+        return "";
+    }
+
+    private static int qualityRank(String label) {
+        if ("Hi-Res".equals(label)) return 4;
+        if ("无损".equals(label)) return 3;
+        if ("HQ".equals(label)) return 2;
+        if ("标准".equals(label)) return 1;
+        return 0;
+    }
+
+    private static boolean isCloudMarked(JsonObject object) {
+        if (object == null) return false;
+        return isTruthy(object, "cloudSong") || isTruthy(object, "cloudsong")
+                || isTruthy(object, "isCloudSong") || isTruthy(object, "cloudStatus")
+                || isTruthy(object, "cloudSongId");
+    }
+
+    private static boolean isTruthy(JsonObject object, String property) {
+        if (!object.has(property) || object.get(property).isJsonNull()) return false;
+        try {
+            if (object.get(property).isJsonObject()) return true;
+            if (object.get(property).getAsJsonPrimitive().isBoolean()) return object.get(property).getAsBoolean();
+            if (object.get(property).getAsJsonPrimitive().isNumber()) return object.get(property).getAsLong() != 0L;
+            String value = object.get(property).getAsString();
+            return "true".equalsIgnoreCase(value) || (!"0".equals(value) && !value.trim().isEmpty());
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static int safeInt(JsonObject object, String property, int fallback) {
+        try {
+            return object.get(property).getAsInt();
+        } catch (Throwable ignored) {
+            return fallback;
+        }
+    }
     public static Music fromCadenceTrack(Track track) {
         MusicPlatform platform = MusicPlatform.fromCadence(track.getSource());
         String id = nonNull(track.getId());
@@ -369,6 +461,7 @@ public class Music {
         Tuple<String, String> resolved = normalizePlayUrl(CadenceMusicService.getSongUrl(this, requestedQuality));
         if (resolved != null) {
             this.playbackQuality = detectCadencePlaybackQuality(resolved.getB(), requestedQuality);
+            considerHighestQuality(resolved.getB(), 0L);
         }
         return resolved;
     }
@@ -409,6 +502,7 @@ public class Music {
             Tuple<String, String> normalized = normalizePlayUrl(new Tuple<>(url, type));
             if (normalized != null) {
                 this.playbackQuality = detectNeteasePlaybackQuality(music, normalized.getB());
+                considerHighestQuality(readString(music, "level"), readLong(music, "br"));
             }
             return normalized;
         } catch (Throwable throwable) {

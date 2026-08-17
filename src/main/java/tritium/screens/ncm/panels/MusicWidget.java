@@ -135,7 +135,11 @@ public class MusicWidget extends RoundedRectWidget {
         // A digital-album purchase is a different entitlement from a VIP-only stream;
         // show one clear badge instead of a redundant "VIP + 专辑" pair.
         boolean vipRestricted = music.hasVipRestriction() && !digitalAlbumTrack;
-        double accessBadgeReserve = (vipRestricted ? 24.0 : 0.0) + (digitalAlbumTrack ? 28.0 : 0.0);
+        boolean cloudSong = music.isCloudSong();
+        String highestQuality = music.getHighestQualityLabel();
+        boolean showHighestQuality = highestQuality != null && !highestQuality.isEmpty();
+        double accessBadgeReserve = (vipRestricted ? 24.0 : 0.0) + (digitalAlbumTrack ? 28.0 : 0.0)
+                + (cloudSong ? 28.0 : 0.0) + (showHighestQuality ? 38.0 : 0.0);
 
         String translatedNames = music.getTranslatedNames();
 
@@ -198,6 +202,54 @@ public class MusicWidget extends RoundedRectWidget {
             });
         }
 
+        // Keep the title badges in one advancing row: VIP / digital album / cloud drive / highest tier.
+        nextAccessBadgeX += digitalAlbumTrack ? 28.0 : 0.0;
+        if (cloudSong) {
+            final double cloudBadgeOffset = nextAccessBadgeX;
+            RoundedRectWidget cloudBadge = new RoundedRectWidget(0, 0, 25, 10);
+            this.addChild(cloudBadge);
+            cloudBadge.setClickable(false);
+            cloudBadge.setBeforeRenderCallback(() -> {
+                cloudBadge.setRadius(2.5);
+                cloudBadge.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER));
+                cloudBadge.setAlpha(.95f);
+                cloudBadge.setPosition(lblMusicName.getRelativeX() + lblMusicName.getWidth() + 3 + cloudBadgeOffset,
+                        lblMusicName.getRelativeY() + lblMusicName.getHeight() * .5 - cloudBadge.getHeight() * .5);
+            });
+            LabelWidget cloudText = new LabelWidget("网盘", FontManager.pf12bold);
+            cloudBadge.addChild(cloudText);
+            cloudText.setClickable(false);
+            cloudText.setBeforeRenderCallback(() -> {
+                cloudText.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                cloudText.center();
+            });
+            nextAccessBadgeX += 28.0;
+        }
+
+        if (showHighestQuality) {
+            final double qualityBadgeOffset = nextAccessBadgeX;
+            final double qualityBadgeWidth = "Hi-Res".equals(highestQuality) ? 34.0 : 27.0;
+            RoundedRectWidget qualityBadge = new RoundedRectWidget(0, 0, qualityBadgeWidth, 10);
+            this.addChild(qualityBadge);
+            qualityBadge.setClickable(false);
+            qualityBadge.setBeforeRenderCallback(() -> {
+                qualityBadge.setRadius(2.5);
+                qualityBadge.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+                qualityBadge.setAlpha(.82f);
+                qualityBadge.setPosition(lblMusicName.getRelativeX() + lblMusicName.getWidth() + 3 + qualityBadgeOffset,
+                        lblMusicName.getRelativeY() + lblMusicName.getHeight() * .5 - qualityBadge.getHeight() * .5);
+            });
+            LabelWidget qualityText = new LabelWidget(highestQuality, FontManager.pf12bold);
+            qualityBadge.addChild(qualityText);
+            qualityText.setClickable(false);
+            qualityText.setBeforeRenderCallback(() -> {
+                qualityText.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+                qualityText.center();
+            });
+            nextAccessBadgeX += qualityBadgeWidth + 3.0;
+        }
+
+        final double dirtyBadgeOffset = nextAccessBadgeX;
         if (musicDirty) {
             RoundedRectWidget dirtyIndicator = new RoundedRectWidget(0, 0, dirtyIndicatorSize, dirtyIndicatorSize);
             this.addChild(dirtyIndicator);
@@ -207,7 +259,7 @@ public class MusicWidget extends RoundedRectWidget {
 
             dirtyIndicator.setBeforeRenderCallback(() -> {
 //                dirtyIndicator.centerVertically();
-                dirtyIndicator.setPosition(lblMusicName.getRelativeX() + lblMusicName.getWidth() + 2, lblMusicName.getRelativeY() + lblMusicName.getHeight() * .5 - dirtyIndicatorSize * .5);
+                dirtyIndicator.setPosition(lblMusicName.getRelativeX() + lblMusicName.getWidth() + 2 + dirtyBadgeOffset, lblMusicName.getRelativeY() + lblMusicName.getHeight() * .5 - dirtyIndicatorSize * .5);
             });
 
             dirtyIndicator.setClickable(false);

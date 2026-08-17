@@ -46,6 +46,9 @@ public class TritiumMusicExtension {
     public void init(OpenAPI api) {
         api.registerEvent(TritiumEventHandler.getInstance());
 
+        // Load the persisted quality before the asynchronous account bootstrap can resolve a URL.
+        NCMPlayerConfig.load();
+        CloudMusic.quality = NCMPlayerConfig.getAudioQuality();
         MultiThreadingUtil.runAsync(CloudMusic::initNCM);
         Reflection.init(api);
 //        Framebuffer.updateMcFramebuffer();
@@ -73,7 +76,6 @@ public class TritiumMusicExtension {
         this.musicLyrics.setEnabled(true);
         HudConfig.load();
         NCMTheme.load();
-        NCMPlayerConfig.load();
         this.musicLyrics.loadHudEditorSettings();
     }
 

@@ -4,6 +4,9 @@ import org.lwjgl.input.Mouse;
 import tritium.management.FontManager;
 import tritium.ncm.music.AudioPlayer;
 import tritium.ncm.music.CloudMusic;
+import tritium.screens.ncm.NCMPlayerConfig;
+import tritium.rendering.DownloadDynamicIsland;
+import tritium.ncm.music.Quality;
 import tritium.rendering.ui.widgets.*;
 import tritium.screens.ncm.MusicLyricsPanel;
 import tritium.screens.ncm.NCMPanel;
@@ -302,8 +305,70 @@ public class ControlsBar extends NCMPanel {
                                     Math.max(1.0, compactVolumeWidget.getParentHeight() - 22.0))
                             .setAlpha(ControlsBar.this.getAlpha());
                 });
+
+        // Compact quality switch: each primary click moves to the next provider tier.  The
+        // button stays a single row and deliberately has no expanding menu or transition.
+        final Quality[] selectableQualities = Quality.values();
+        final double qualityButtonHeight = 20.0;
+        RoundedRectWidget qualitySelector = new RoundedRectWidget();
+        this.addChild(qualitySelector);
+        qualitySelector
+                .setClickable(true)
+                .setShouldOverrideMouseCursor(true)
+                .setBeforeRenderCallback(() -> {
+                    double selectorWidth = 94.0;
+                    double volumeWidth = Math.max(74.0, Math.min(122.0, qualitySelector.getParentWidth() * .18));
+                    qualitySelector
+                            .setBounds(selectorWidth, qualityButtonHeight)
+                            .setRadius(5.0)
+                            .setColor(qualitySelector.isHovering()
+                                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND))
+                            .setAlpha(ControlsBar.this.getAlpha() * .94f)
+                            .setPosition(Math.max(6.0, qualitySelector.getParentWidth() - volumeWidth - selectorWidth - 14.0),
+                                    Math.max(1.0, qualitySelector.getParentHeight() - qualityButtonHeight - 2.0));
+                })
+                .setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+                    if (mouseButton != 0) {
+                        return true;
+                    }
+                    Quality current = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
+                    int currentIndex = 0;
+                    for (int index = 0; index < selectableQualities.length; index++) {
+                        if (selectableQualities[index] == current) {
+                            currentIndex = index;
+                            break;
+                        }
+                    }
+                    Quality selected = selectableQualities[(currentIndex + 1) % selectableQualities.length];
+                    CloudMusic.quality = selected;
+                    NCMPlayerConfig.setAudioQuality(selected);
+                    DownloadDynamicIsland.showPlaybackQuality("已切换 " + formatQuality(selected), "下次播放生效");
+                    return true;
+                });
+
+        LabelWidget qualityText = new LabelWidget(() -> "音质 · " + formatQuality(CloudMusic.quality), FontManager.pf12bold);
+        qualitySelector.addChild(qualityText);
+        qualityText.setClickable(false);
+        qualityText.setBeforeRenderCallback(() -> qualityText
+                .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
+                .setPosition(7.0, Math.max(2.0, (qualityButtonHeight - qualityText.getHeight()) * .5)));
     }
 
+    private static String formatQuality(Quality quality) {
+        if (quality == null) return "无损";
+        switch (quality) {
+            case STANDARD: return "标准";
+            case HIGHER: return "高品质";
+            case EXHIGH: return "极高";
+            case LOSSLESS: return "无损";
+            case HIRES: return "Hi-Res";
+            case JYEFFECT: return "高清环绕";
+            case SKY: return "沉浸音质";
+            case JYMASTER: return "母带";
+            default: return quality.getQuality();
+        }
+    }
     private String formatDuration(float totalMillis) {
         int totalSeconds = (int) (totalMillis / 1000);
         int hours = totalSeconds / 3600;

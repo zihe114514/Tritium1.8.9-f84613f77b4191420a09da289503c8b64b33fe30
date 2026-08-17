@@ -7,6 +7,7 @@ import lombok.Getter;
 import tritium.management.FontManager;
 import tritium.ncm.api.CloudMusicApi;
 import tritium.ncm.music.CadenceMusicService;
+import tritium.ncm.music.CloudMusic;
 import tritium.ncm.music.MusicPlatform;
 import tritium.ncm.music.dto.Music;
 import tritium.ncm.music.dto.PlayList;
@@ -275,7 +276,8 @@ public class HomePanel extends NCMPanel {
         final double recommendationsY = margin + welcomeHeight + 2
                 + margin * .5 - recommendationsHeight * .5;
         final double contentTop = Math.max(52.0, Math.ceil(recommendationsY + recommendationsHeight + margin * .75));
-        final double bottomPadding = 14.0;
+        // Reserve space for the compact account identity at the player-content lower left.
+        final double bottomPadding = 30.0;
 
         scrollPanel = new ScrollPanel();
         this.addChild(scrollPanel);
@@ -298,6 +300,28 @@ public class HomePanel extends NCMPanel {
                 .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)));
         this.addChild(lblWelcome);
+        // Keep the account identity unobtrusive and out of the title area.  The status lives at
+        // the lower-left of the player content and uses the concise "VIP" wording requested.
+        LabelWidget lblAccountStatus = new LabelWidget(() -> {
+            if (platform == MusicPlatform.QQ) {
+                return "QQ · " + CadenceMusicService.getAccountName(MusicPlatform.QQ);
+            }
+            if (CloudMusic.profile == null) {
+                return "网易云 · 未登录";
+            }
+            return CloudMusic.profile.isVipMember() ? "网易云 · VIP" : "网易云 · 普通";
+        }, FontManager.pf12bold);
+        lblAccountStatus.setClickable(false);
+        lblAccountStatus.setBeforeRenderCallback(() -> {
+            boolean vip = platform == MusicPlatform.NETEASE && CloudMusic.profile != null
+                    && CloudMusic.profile.isVipMember();
+            lblAccountStatus.setColor(vip ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
+                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            lblAccountStatus.setMaxWidth(Math.max(56.0, this.getWidth() * .38));
+            lblAccountStatus.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            lblAccountStatus.setPosition(margin, Math.max(margin, this.getHeight() - margin - lblAccountStatus.getHeight()));
+        });
+        this.addChild(lblAccountStatus);
 
         LabelWidget lblRecommendations = new LabelWidget(recommendationsText, FontManager.pf14bold);
         lblRecommendations.setBeforeRenderCallback(() -> lblRecommendations

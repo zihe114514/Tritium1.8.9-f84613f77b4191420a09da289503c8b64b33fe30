@@ -252,6 +252,9 @@ public class CloudMusicApi {
         }
 
         Map<Long, JsonObject> songsById = new HashMap<>();
+        // Retain the full privilege payload so playlist consumers can show the provider's
+        // advertised maximum quality and cloud-drive state, not only fee/payed flags.
+        Map<Long, JsonObject> privilegesById = new HashMap<>();
         for (int start = 0; start < orderedIds.size(); start += detailBatchSize) {
             int end = Math.min(start + detailBatchSize, orderedIds.size());
             List<String> batch = new ArrayList<>(end - start);
@@ -272,7 +275,6 @@ public class CloudMusicApi {
 
             // The endpoint returns licensing details separately from song metadata. Preserve fee/payed
             // on each song before DTO parsing so the GUI can distinguish ordinary, VIP, and digital-album tracks.
-            Map<Long, JsonObject> privilegesById = new HashMap<>();
             JsonArray privileges = detailBody.getAsJsonArray("privileges");
             if (privileges != null) {
                 for (JsonElement privilegeElement : privileges) {
@@ -301,15 +303,20 @@ public class CloudMusicApi {
         }
 
         JsonArray orderedSongs = new JsonArray();
+        JsonArray orderedPrivileges = new JsonArray();
         for (Long songId : orderedIds) {
             JsonObject song = songsById.get(songId);
             if (song != null) {
                 orderedSongs.add(song);
+                JsonObject privilege = privilegesById.get(songId);
+                // Preserve song/privilege index alignment expected by PlayList.queryMusics().
+                orderedPrivileges.add(privilege == null ? new JsonObject() : privilege);
             }
         }
 
         JsonObject result = new JsonObject();
         result.add("songs", orderedSongs);
+        result.add("privileges", orderedPrivileges);
         return RequestUtil.RequestAnswer.of(result, v6Detail.getStatus(), v6Detail.getCookies());
     }
     private static void copyPrivilegeField(JsonObject privilege, JsonObject song, String field) {

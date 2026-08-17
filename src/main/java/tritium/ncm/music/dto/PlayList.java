@@ -1,6 +1,7 @@
 package tritium.ncm.music.dto;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import com.google.gson.annotations.SerializedName;
 import lombok.Data;
 import tritium.ncm.RequestUtil;
@@ -187,17 +188,27 @@ public class PlayList {
                 }
             } else {
                 RequestUtil.RequestAnswer requestAnswer = CloudMusicApi.playlistTrackAll(id, 8);
-                JsonArray songs = requestAnswer.toJsonObject().getAsJsonArray("songs");
+                JsonObject response = requestAnswer.toJsonObject();
+                JsonArray songs = response == null ? null : response.getAsJsonArray("songs");
+                JsonArray privileges = response == null ? null : response.getAsJsonArray("privileges");
                 if (songs == null) {
                     throw new IllegalStateException("playlist song detail response does not contain songs");
                 }
 
                 // CopyOnWriteArrayList copies its backing array on every single add.
-                // Parse first, then publish the complete result in one addAll call.
+                // Parse first, then publish the complete result in one addAll call. NetEase
+                // returns max quality/permission data in a parallel privileges array.
                 loadedMusics = new ArrayList<>(songs.size());
-                songs.forEach(element -> loadedMusics.add(JsonUtils.parse(element.getAsJsonObject(), Music.class)));
+                for (int index = 0; index < songs.size(); index++) {
+                    JsonObject songObject = songs.get(index).getAsJsonObject();
+                    Music music = JsonUtils.parse(songObject, Music.class);
+                    JsonObject privilege = privileges != null && index < privileges.size()
+                            && privileges.get(index).isJsonObject()
+                            ? privileges.get(index).getAsJsonObject() : null;
+                    music.applyNeteaseMetadata(songObject, privilege);
+                    loadedMusics.add(music);
+                }
             }
-
             synchronized (this) {
                 ensureMusicsList();
                 this.musics.clear();

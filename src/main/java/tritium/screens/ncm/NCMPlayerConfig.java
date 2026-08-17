@@ -12,6 +12,7 @@ import java.io.OutputStreamWriter;
 import java.io.Reader;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import tritium.ncm.music.Quality;
 
 
 /** 持久化播放器窗口尺寸。布局使用真实逻辑尺寸，避免额外 GL 缩放造成点击和裁剪错位。 */
@@ -25,6 +26,7 @@ public final class NCMPlayerConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private static float playerScale = 1.0f;
+    private static Quality audioQuality = Quality.LOSSLESS;
     private static boolean loaded;
 
     private NCMPlayerConfig() {
@@ -40,6 +42,13 @@ public final class NCMPlayerConfig {
             if (object != null && object.has("playerScale")) {
                 playerScale = normalize(object.get("playerScale").getAsFloat());
             }
+            if (object != null && object.has("audioQuality")) {
+                try {
+                    audioQuality = Quality.valueOf(object.get("audioQuality").getAsString());
+                } catch (Throwable ignored) {
+                    audioQuality = Quality.LOSSLESS;
+                }
+            }
         } catch (Throwable ignored) {
             playerScale = 1.0f;
         }
@@ -52,6 +61,17 @@ public final class NCMPlayerConfig {
 
     public static synchronized int getPlayerScalePercent() {
         return Math.round(getPlayerScale() * 100.0f);
+    }
+
+    public static synchronized Quality getAudioQuality() {
+        load();
+        return audioQuality == null ? Quality.LOSSLESS : audioQuality;
+    }
+
+    public static synchronized void setAudioQuality(Quality quality) {
+        load();
+        audioQuality = quality == null ? Quality.LOSSLESS : quality;
+        save();
     }
 
     public static synchronized float increaseScale() {
@@ -97,6 +117,7 @@ public final class NCMPlayerConfig {
         try {
             JsonObject object = new JsonObject();
             object.addProperty("playerScale", playerScale);
+            object.addProperty("audioQuality", getAudioQuality().name());
             try (Writer writer = new OutputStreamWriter(new FileOutputStream(FILE), StandardCharsets.UTF_8)) {
                 writer.write(GSON.toJson(object));
             }
