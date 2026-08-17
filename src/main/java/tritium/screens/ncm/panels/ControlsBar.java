@@ -57,7 +57,6 @@ public class ControlsBar extends NCMPanel {
 
                     return true;
                 });
-
         double buttonsYOffset = -4;
 
         IconWidget playPause = new IconWidget("B", FontManager.icon30, 0, 0, 20, 20);
@@ -100,7 +99,6 @@ public class ControlsBar extends NCMPanel {
                         .center()
                         .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
                         .setPosition(prev.getRelativeX() - 20 - prev.getWidth() * .5, prev.getRelativeY() + buttonsYOffset));
-
         IconWidget next = new IconWidget("E", FontManager.icon30, 0, 0, 20, 20);
         this.addChild(next);
 
@@ -115,7 +113,6 @@ public class ControlsBar extends NCMPanel {
                         .center()
                         .setPosition(next.getRelativeX() + next.getWidth() * .5 + 20, next.getRelativeY() + buttonsYOffset)
                         .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)));
-
         // 播放模式与核心控件并列：顺序播放 → 随机播放 → 单曲循环。
         IconWidget playMode = new IconWidget(CloudMusic.playMode.getIcon(), FontManager.icon30, 0, 0, 20, 20);
         this.addChild(playMode);
@@ -126,7 +123,7 @@ public class ControlsBar extends NCMPanel {
                     playMode
                             .center()
                             .setIcon(mode.getIcon())
-                            .setPosition(next.getRelativeX() + next.getWidth() + 16, next.getRelativeY())
+                            .setPosition(next.getRelativeX() + next.getWidth() + 10, next.getRelativeY())
                             .setColor(mode == CloudMusic.PlayMode.Sequential
                                     ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)
                                     : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));

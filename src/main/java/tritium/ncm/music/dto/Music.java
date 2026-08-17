@@ -9,6 +9,7 @@ import tritium.ncm.api.CloudMusicApi;
 import tritium.ncm.music.CadenceMusicService;
 import tritium.ncm.music.CloudMusic;
 import tritium.ncm.music.MusicPlatform;
+import tritium.ncm.music.Quality;
 import tritium.utils.Location;
 import tritium.utils.Tuple;
 
@@ -93,6 +94,59 @@ public class Music {
     private transient String externalCoverUrl;
     private transient boolean vip;
     private transient Track cadenceTrack;
+
+    /** Actual stream quality resolved for the current playback request. */
+    private transient volatile PlaybackQuality playbackQuality = PlaybackQuality.UNKNOWN;
+
+    /**
+     * Gson may allocate this DTO without running field initializers when it decodes
+     * the immutable NetEase response model. Keep the render-facing state non-null
+     * even for such deserialized instances.
+     */
+    public PlaybackQuality getPlaybackQuality() {
+        PlaybackQuality current = playbackQuality;
+        if (current == null) {
+            playbackQuality = PlaybackQuality.UNKNOWN;
+            return PlaybackQuality.UNKNOWN;
+        }
+        return current;
+    }
+
+    public enum PlaybackQuality {
+        UNKNOWN(""),
+        STANDARD(""),
+        HQ("HQ"),
+        LOSSLESS("无损");
+
+        private final String badge;
+
+        PlaybackQuality(String badge) {
+            this.badge = badge;
+        }
+
+        public String getBadge() {
+            return badge;
+        }
+
+        public boolean hasBadge() {
+            return !badge.isEmpty();
+        }
+
+        /** Human-readable resolved stream tier for runtime status notifications. */
+        public String getDisplayName() {
+            switch (this) {
+                case LOSSLESS:
+                    return "无损";
+                case HQ:
+                    return "HQ";
+                case STANDARD:
+                    return "标准";
+                case UNKNOWN:
+                default:
+                    return "未知";
+            }
+        }
+    }
 
     public static Music fromCadenceTrack(Track track) {
         MusicPlatform platform = MusicPlatform.fromCadence(track.getSource());
@@ -218,30 +272,22 @@ public class Music {
     }
 
     /**
-     * 获得歌曲播放 URL。
+     * 获得歌曲播放 URL。每一次点歌都会重新解析，不缓存失败结果。
      *
-     * 每次调用都会重新执行解析，不缓存失败结果。网易云歌曲会在主解析器失败或超时后自动
-     * 切换到另一个解析器；QQ 曲目没有可用的网易云 id，因此只使用 Cadence。
+     * 默认配置是无损优先：先请求无损；曲目没有无损、账号没有 VIP、接口返回空链接、
+     * 解析异常或超时时，再明确降级到标准音质。网易云在主解析器失败后继续切换
+     * 备用解析器；QQ 仅能使用 Cadence，但同样执行无损到标准的降级。
      */
     public Tuple<String, String> getPlayUrl() {
+        // Never show a quality badge carried over from a previous failed resolve.
+        this.playbackQuality = PlaybackQuality.UNKNOWN;
         if (isQQ()) {
-            return resolveWithTimeout(new Callable<Tuple<String, String>>() {
-                @Override
-                public Tuple<String, String> call() {
-                    return resolveWithCadence();
-                }
-            }, "Cadence");
+            return resolveCadenceWithStandardFallback();
         }
 
-        // Cadence 搜索得到的网易云歌曲优先保持原来源解析，失败后使用项目内置网易云 API。
-        // 原生网易云歌曲则反过来，避免正常路径无谓经过两套服务。
+        // Cadence 搜索得到的网易云歌曲仍优先保持原来源，且该来源内部先尝试无损。
         if (cadenceTrack != null) {
-            Tuple<String, String> result = resolveWithTimeout(new Callable<Tuple<String, String>>() {
-                @Override
-                public Tuple<String, String> call() {
-                    return resolveWithCadence();
-                }
-            }, "Cadence");
+            Tuple<String, String> result = resolveCadenceWithStandardFallback();
             if (result != null) return result;
             return resolveWithTimeout(new Callable<Tuple<String, String>>() {
                 @Override
@@ -258,26 +304,44 @@ public class Music {
             }
         }, "built-in NetEase API");
         if (result != null) return result;
+        return resolveCadenceWithStandardFallback();
+    }
+
+    /** Tries the configured tier once, then a known-playable standard Cadence stream. */
+    private Tuple<String, String> resolveCadenceWithStandardFallback() {
+        final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
+        Tuple<String, String> result = resolveWithTimeout(new Callable<Tuple<String, String>>() {
+            @Override
+            public Tuple<String, String> call() {
+                return resolveWithCadence(requestedQuality);
+            }
+        }, "Cadence " + requestedQuality.getQuality());
+        if (result != null || requestedQuality == Quality.STANDARD) return result;
+
         return resolveWithTimeout(new Callable<Tuple<String, String>>() {
             @Override
             public Tuple<String, String> call() {
-                return resolveWithCadence();
+                return resolveWithCadence(Quality.STANDARD);
             }
-        }, "Cadence");
+        }, "Cadence standard fallback");
     }
 
-    private Tuple<String, String> resolveWithCadence() {
-        return normalizePlayUrl(CadenceMusicService.getSongUrl(this));
+    private Tuple<String, String> resolveWithCadence(Quality requestedQuality) {
+        Tuple<String, String> resolved = normalizePlayUrl(CadenceMusicService.getSongUrl(this, requestedQuality));
+        if (resolved != null) {
+            this.playbackQuality = detectCadencePlaybackQuality(resolved.getB(), requestedQuality);
+        }
+        return resolved;
     }
 
     private Tuple<String, String> resolveWithBuiltInNeteaseApi() {
-        // Preserve the user-selected quality first. Album tracks can legitimately
-        // lack a lossless/high-quality URL while still exposing a playable standard
-        // MP3 stream, so retry with the reference API's stable request only when
-        // the preferred response has no playable URL.
+        // The default configuration requests lossless first. If the user deliberately
+        // picks another tier in the module setting, honor that explicit preference; any
+        // unavailable/VIP-gated/failed primary request still falls back to standard MP3.
+        Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
         Tuple<String, String> preferred = resolveNeteasePlayUrl(
-                CloudMusicApi.songUrlV1(this.id, CloudMusic.quality.getQuality().toLowerCase(Locale.ROOT)),
-                "selected quality");
+                CloudMusicApi.songUrlV1(this.id, requestedQuality.getQuality().toLowerCase(Locale.ROOT)),
+                "requested quality");
         if (preferred != null) return preferred;
 
         return resolveNeteasePlayUrl(CloudMusicApi.songUrlStandardMp3(this.id), "standard MP3 fallback");
@@ -303,7 +367,11 @@ public class Music {
                 String responseType = music.get("type").getAsString();
                 if (responseType != null && !responseType.trim().isEmpty()) type = responseType;
             }
-            return normalizePlayUrl(new Tuple<>(url, type));
+            Tuple<String, String> normalized = normalizePlayUrl(new Tuple<>(url, type));
+            if (normalized != null) {
+                this.playbackQuality = detectNeteasePlaybackQuality(music, normalized.getB());
+            }
+            return normalized;
         } catch (Throwable throwable) {
             System.err.println("[Music/NetEase] " + requestDescription + " URL resolver failed for "
                     + getStableKey() + ": " + throwable.getMessage());
@@ -327,6 +395,59 @@ public class Music {
                     + ": " + cause.getMessage());
         }
         return null;
+    }
+
+    private PlaybackQuality detectNeteasePlaybackQuality(JsonObject response, String format) {
+        if (isLosslessFormat(format)) {
+            return PlaybackQuality.LOSSLESS;
+        }
+
+        String level = readString(response, "level").toLowerCase(Locale.ROOT);
+        if ("lossless".equals(level) || "hires".equals(level)
+                || "jyeffect".equals(level) || "jymaster".equals(level)) {
+            return PlaybackQuality.LOSSLESS;
+        }
+
+        long bitrate = readLong(response, "br");
+        if (bitrate >= 256000L || "higher".equals(level) || "exhigh".equals(level)
+                || "sky".equals(level)) {
+            return PlaybackQuality.HQ;
+        }
+        return PlaybackQuality.STANDARD;
+    }
+
+    private PlaybackQuality detectCadencePlaybackQuality(String format, Quality requestedQuality) {
+        if (isLosslessFormat(format)) {
+            return PlaybackQuality.LOSSLESS;
+        }
+        // Cadence does not provide a bitrate for every provider. A lossless request
+        // that returns a lossy container is treated as a real standard fallback.
+        return (requestedQuality == Quality.HIGHER
+                || requestedQuality == Quality.EXHIGH || requestedQuality == Quality.SKY)
+                ? PlaybackQuality.HQ : PlaybackQuality.STANDARD;
+    }
+
+    private static boolean isLosslessFormat(String format) {
+        String normalized = nonNull(format).trim().toLowerCase(Locale.ROOT);
+        return "flac".equals(normalized) || "wav".equals(normalized);
+    }
+
+    private static String readString(JsonObject object, String property) {
+        if (object == null || !object.has(property) || object.get(property).isJsonNull()) return "";
+        try {
+            return nonNull(object.get(property).getAsString());
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    private static long readLong(JsonObject object, String property) {
+        if (object == null || !object.has(property) || object.get(property).isJsonNull()) return 0L;
+        try {
+            return object.get(property).getAsLong();
+        } catch (Throwable ignored) {
+            return 0L;
+        }
     }
 
     private static Tuple<String, String> normalizePlayUrl(Tuple<String, String> result) {

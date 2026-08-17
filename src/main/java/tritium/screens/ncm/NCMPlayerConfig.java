@@ -13,6 +13,7 @@ import java.io.Reader;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 
+
 /** 持久化播放器窗口尺寸。布局使用真实逻辑尺寸，避免额外 GL 缩放造成点击和裁剪错位。 */
 public final class NCMPlayerConfig {
 
@@ -79,7 +80,6 @@ public final class NCMPlayerConfig {
     public static synchronized float resetScale() {
         return setPlayerScale(1.0f);
     }
-
     public static synchronized float setPlayerScale(float scale) {
         load();
         playerScale = normalize(scale);

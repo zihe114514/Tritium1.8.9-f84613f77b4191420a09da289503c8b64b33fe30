@@ -135,6 +135,38 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 safeNoticeValue(message, "网络请求失败"));
     }
 
+    /** Keeps the island visible while a selected track is submitted to a playlist. */
+    public static void showPlaylistTrackAddInProgress(String playlistName) {
+        publishNotice(IslandNoticeType.PLAYLIST_TRACK_ADDING, "加入歌单",
+                "正在加入「" + safeNoticeValue(playlistName, "目标歌单") + "」", true);
+    }
+
+    /** Announces a verified new playlist membership. */
+    public static void showPlaylistTrackAddSuccess(String playlistName) {
+        publishNotice(IslandNoticeType.PLAYLIST_TRACK_ADD_SUCCESS, "已加入歌单",
+                "网易云已确认「" + safeNoticeValue(playlistName, "目标歌单") + "」");
+    }
+
+    /** Announces the separately verified no-op state without claiming a new add succeeded. */
+    public static void showPlaylistTrackAlreadyExists(String playlistName) {
+        publishNotice(IslandNoticeType.PLAYLIST_TRACK_ALREADY_EXISTS, "歌曲已在歌单中",
+                "已确认「" + safeNoticeValue(playlistName, "目标歌单") + "」");
+    }
+
+    /** Announces that the request was not verified by the target playlist's trackIds. */
+    public static void showPlaylistTrackAddFailure(String playlistName, String message) {
+        String value = safeNoticeValue(message, "服务端未确认加入成功");
+        publishNotice(IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR, "加入歌单失败",
+                safeNoticeValue(playlistName, "目标歌单") + " · " + value);
+    }
+
+    /** Shows the stream tier and container resolved for the track that just started. */
+    public static void showPlaybackQuality(String quality, String format) {
+        String safeQuality = safeNoticeValue(quality, "标准");
+        String safeFormat = safeNoticeValue(format, "未知").toUpperCase(java.util.Locale.ROOT);
+        publishNotice(IslandNoticeType.QUALITY, "获取音质：" + safeQuality, "格式: " + safeFormat);
+    }
+
     private static void publishNotice(IslandNoticeType type, String title, String value) {
         publishNotice(type, title, value, false);
     }
@@ -526,18 +558,20 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                                   float alpha, int accentColor, long now) {
         if (alpha <= .01f) return;
         int foreground = hexColor(.94f, .95f, .98f, alpha);
-        if (type == IslandNoticeType.REFRESHING) {
+        if (type == IslandNoticeType.REFRESHING || type == IslandNoticeType.PLAYLIST_TRACK_ADDING) {
             renderSpinner(centerX, centerY, alpha, accentColor, now, false);
             return;
         }
-        if (type == IslandNoticeType.REFRESH_SUCCESS) {
+        if (type == IslandNoticeType.REFRESH_SUCCESS
+                || type == IslandNoticeType.PLAYLIST_TRACK_ADD_SUCCESS
+                || type == IslandNoticeType.PLAYLIST_TRACK_ALREADY_EXISTS) {
             drawRotatedPill(centerX - 1.8, centerY + .8, 3.8, 1.25, 43f,
                     hexColor(.70f, 1f, .77f, alpha));
             drawRotatedPill(centerX + 1.6, centerY - .4, 6.2, 1.25, -47f,
                     hexColor(.70f, 1f, .77f, alpha));
             return;
         }
-        if (type == IslandNoticeType.REFRESH_ERROR) {
+        if (type == IslandNoticeType.REFRESH_ERROR || type == IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR) {
             drawRotatedPill(centerX, centerY, 10.0, 1.25, 45f,
                     hexColor(1f, .48f, .50f, alpha));
             drawRotatedPill(centerX, centerY, 10.0, 1.25, -45f,
@@ -551,6 +585,15 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             roundedRect(centerX - .5, centerY + 4.2, 1.0, 1.8, .5, foreground);
             roundedRect(centerX - 6.0, centerY - .5, 1.8, 1.0, .5, foreground);
             roundedRect(centerX + 4.2, centerY - .5, 1.8, 1.0, .5, foreground);
+            return;
+        }
+        if (type == IslandNoticeType.QUALITY) {
+            // A compact equalizer makes a playback-quality notice distinct from other status states.
+            roundedRect(centerX - 5.1, centerY + 1.5, 2.2, 3.5, 1.1,
+                    RenderSystem.reAlpha(accentColor, alpha));
+            roundedRect(centerX - 1.1, centerY - 1.3, 2.2, 6.3, 1.1, foreground);
+            roundedRect(centerX + 2.9, centerY - 4.5, 2.2, 9.5, 1.1,
+                    RenderSystem.reAlpha(accentColor, alpha));
             return;
         }
 
@@ -615,9 +658,14 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         THEME,
         STYLE,
         SCALE,
+        QUALITY,
         REFRESHING,
         REFRESH_SUCCESS,
-        REFRESH_ERROR
+        REFRESH_ERROR,
+        PLAYLIST_TRACK_ADDING,
+        PLAYLIST_TRACK_ADD_SUCCESS,
+        PLAYLIST_TRACK_ALREADY_EXISTS,
+        PLAYLIST_TRACK_ADD_ERROR
     }
 
     private static long getCompletionHoldMs() {

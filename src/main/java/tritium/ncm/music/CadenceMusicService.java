@@ -160,12 +160,19 @@ public final class CadenceMusicService {
         refreshQQUserPlaylists(true);
     }
 
+    /** Resolves with the current configured tier for legacy callers. */
     public static Tuple<String, String> getSongUrl(Music music) {
+        return getSongUrl(music, CloudMusic.quality);
+    }
+
+    /** Resolves one Cadence stream attempt at an explicit tier without mutating global preferences. */
+    public static Tuple<String, String> getSongUrl(Music music, Quality requestedQuality) {
         if (music == null) return null;
         initialize(OptionsUtil.getCookie());
         try {
             Track track = music.toCadenceTrack();
-            SongUrl result = SERVICE.getSongUrl(track, mapQuality(CloudMusic.quality));
+            Quality effectiveQuality = requestedQuality == null ? Quality.LOSSLESS : requestedQuality;
+            SongUrl result = SERVICE.getSongUrl(track, mapQuality(effectiveQuality));
             if (result == null || !result.getAvailable() || isBlank(result.getUrl())) {
                 return null;
             }

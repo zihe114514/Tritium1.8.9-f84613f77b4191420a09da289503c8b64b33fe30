@@ -41,7 +41,6 @@ import java.util.List;
  * Date: 2025/10/17 21:56
  */
 public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstants {
-
     static double scrollOffset, scrollTarget;
 
     float musicBgAlpha = 1.0f;
@@ -914,7 +913,6 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         });
 
         playPauseButton.fontOffsetY = 0;
-
         prev.setAlpha(alpha);
         prev.setWidth(32);
         prev.setHeight(32);

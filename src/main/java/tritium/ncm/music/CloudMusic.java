@@ -32,6 +32,7 @@ import tritium.screens.ncm.LyricLine;
 import tritium.screens.ncm.LyricParser;
 import tritium.screens.ncm.MusicLyricsPanel;
 import tritium.screens.ncm.NCMScreen;
+import tritium.widget.impl.MusicLyricsWidget;
 import tritium.utils.Location;
 import tritium.utils.Tuple;
 import tritium.utils.json.JsonUtils;
@@ -105,7 +106,7 @@ public class CloudMusic implements SharedConstants {
 
     public static volatile PlayMode playMode = PlayMode.Sequential;
 
-    public static Quality quality = Quality.STANDARD;
+    public static Quality quality = Quality.LOSSLESS;
 
     public static final List<LyricLine> lyrics = new CopyOnWriteArrayList<>();
     public static volatile LyricLine currentLyric = null;
@@ -419,6 +420,33 @@ public class CloudMusic implements SharedConstants {
         }
     }
 
+    /**
+     * Moves the current track by a relative amount and immediately aligns both
+     * lyric renderers with the audio player's real clock. Keeping this in the
+     * playback layer prevents each UI surface from implementing a subtly
+     * different seek path.
+     */
+    public static boolean seekByMillis(float deltaMillis) {
+        AudioPlayer activePlayer = player;
+        if (activePlayer == null || currentlyPlaying == null) {
+            return false;
+        }
+
+        float total = activePlayer.getTotalTimeMillis();
+        if (total <= 0.0f) {
+            return false;
+        }
+
+        float target = Math.max(0.0f, Math.min(total,
+                activePlayer.getCurrentTimeMillis() + deltaMillis));
+        activePlayer.setPlaybackTime(target);
+
+        float actual = activePlayer.getCurrentTimeMillis();
+        MusicLyricsWidget.resetProgress(actual);
+        MusicLyricsPanel.resetProgress(actual);
+        return true;
+    }
+
     private static boolean canPlayNext() {
         if (curIdx + 1 <= playList.size() - 1) {
             return true;
@@ -682,7 +710,12 @@ public class CloudMusic implements SharedConstants {
                 return false;
             }
 
-            return initializeAndPlaySong(song, playUrl, session);
+            boolean started = initializeAndPlaySong(song, playUrl, session);
+            if (started && isSessionUsable(session)) {
+                DownloadDynamicIsland.showPlaybackQuality(
+                        song.getPlaybackQuality().getDisplayName(), playUrl.getB());
+            }
+            return started;
         }
 
         private boolean initializeAndPlaySong(Music song, Tuple<String, String> playUrl, PlaybackSession targetSession) {

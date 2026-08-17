@@ -6,6 +6,7 @@ import tritium.ncm.music.CloudMusic;
 import tritium.ncm.music.MusicPlatform;
 import tritium.ncm.music.dto.Music;
 import tritium.ncm.music.dto.PlayList;
+import tritium.rendering.DownloadDynamicIsland;
 import tritium.rendering.animation.Interpolations;
 import tritium.rendering.rendersystem.RenderSystem;
 import tritium.rendering.ui.container.Panel;
@@ -162,31 +163,36 @@ public class AddToPlaylistOverlay extends NCMPanel {
     }
 
     private void submitToPlaylist(PlayList playlist) {
-        if (submitting || closing || music == null || playlist == null) {
+        if (submitting || music == null || playlist == null) {
             return;
         }
+
+        selectedPlaylist = playlist;
+        final String playlistName = getPlaylistName(playlist);
         // 本弹窗只处理网易云歌曲与网易云目标歌单，避免把跨平台稳定哈希误提交给网易云接口。
         if (!music.isNetease() || playlist.getPlatform() != MusicPlatform.NETEASE) {
-            selectedPlaylist = playlist;
             submitting = false;
             closeAfterMillis = -1L;
             showStatus("仅支持把网易云歌曲加入网易云歌单", FeedbackState.ERROR);
+            DownloadDynamicIsland.showPlaylistTrackAddFailure(playlistName, "仅支持网易云歌曲和网易云歌单");
+            closing = true;
             return;
         }
 
         final long musicId = music.getId();
         if (musicId <= 0L) {
-            selectedPlaylist = playlist;
             submitting = false;
             closeAfterMillis = -1L;
             showStatus("歌曲 ID 无效，无法加入歌单", FeedbackState.ERROR);
+            DownloadDynamicIsland.showPlaylistTrackAddFailure(playlistName, "歌曲 ID 无效");
+            closing = true;
             return;
         }
 
         submitting = true;
         closeAfterMillis = -1L;
-        selectedPlaylist = playlist;
-        showStatus("正在加入「" + getPlaylistName(playlist) + "」…", FeedbackState.PROCESSING);
+        showStatus("正在加入「" + playlistName + "」…", FeedbackState.PROCESSING);
+        DownloadDynamicIsland.showPlaylistTrackAddInProgress(playlistName);
 
         MultiThreadingUtil.runAsync(() -> {
             CloudMusicApi.PlaylistTrackOperationResult result;
@@ -201,25 +207,33 @@ public class AddToPlaylistOverlay extends NCMPanel {
             final CloudMusicApi.PlaylistTrackOperationResult finalResult = result;
             MultiThreadingUtil.runOnMainThread(() -> handleSubmitResult(playlist, finalResult));
         });
+
+        // 选择目标歌单即返回播放器页面；网络请求和结果校验仍在后台继续执行。
+        closing = true;
     }
 
     private void handleSubmitResult(PlayList playlist, CloudMusicApi.PlaylistTrackOperationResult result) {
-        if (closing || playlist != selectedPlaylist) {
+        // 弹窗会在点击后立即关闭，不能把 closing 视为请求过期；仅忽略真正不匹配的请求。
+        if (playlist != selectedPlaylist) {
             return;
         }
 
         submitting = false;
         closeAfterMillis = -1L;
-        if (result.isAlreadyExists()) {
-            showStatus("已确认该歌曲已在「" + getPlaylistName(playlist) + "」中", FeedbackState.ALREADY_EXISTS);
+        String playlistName = getPlaylistName(playlist);
+        if (result.isAlreadyExists() && result.isVerified()) {
+            showStatus("已确认该歌曲已在「" + playlistName + "」中", FeedbackState.ALREADY_EXISTS);
+            DownloadDynamicIsland.showPlaylistTrackAlreadyExists(playlistName);
         } else if (result.isSuccess() && result.isVerified()) {
-            showStatus("网易云已确认加入「" + getPlaylistName(playlist) + "」", FeedbackState.SUCCESS);
+            showStatus("网易云已确认加入「" + playlistName + "」", FeedbackState.SUCCESS);
+            DownloadDynamicIsland.showPlaylistTrackAddSuccess(playlistName);
         } else {
             String message = result.getMessage();
             if (message == null || message.trim().isEmpty()) {
-                message = "服务端未确认加入成功，请点击歌单重试";
+                message = "服务端未确认加入成功，请重试";
             }
             showStatus("加入失败：" + message, FeedbackState.ERROR);
+            DownloadDynamicIsland.showPlaylistTrackAddFailure(playlistName, message);
         }
     }
 

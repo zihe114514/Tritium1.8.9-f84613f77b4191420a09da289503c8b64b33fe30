@@ -38,7 +38,7 @@ public class OpenNCMScreen extends ExtensionModule implements SharedConstants, E
         });
     }
 
-    public ModeValue quality = api.getValueManager().createModes("Music Quality", "Standard", new String[] { "Standard", "Higher", "ExHigh", "LossLess", "HiRes", "JyEffect", "Sky", "JyMaster" });
+    public ModeValue quality = api.getValueManager().createModes("Music Quality", "LossLess", new String[] { "Standard", "Higher", "ExHigh", "LossLess", "HiRes", "JyEffect", "Sky", "JyMaster" });
     public BooleanValue boundaries = api.getValueManager().createBoolean("Show UI Widget Boundary", false);
     public BooleanValue lyricDebug = api.getValueManager().createBoolean("Per-word lyrics debug", false);
 

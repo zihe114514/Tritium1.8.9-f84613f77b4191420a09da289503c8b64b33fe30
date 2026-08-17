@@ -36,6 +36,7 @@ import java.util.function.Supplier;
  */
 public class NavigateBar extends NCMPanel {
 
+
     TextFieldWidget searchField = new TextFieldWidget(FontManager.pf14bold);
     ScrollPanel playlistPanel = new ScrollPanel();
 
@@ -286,8 +287,12 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
         this.playlistPanel.addChild(lblSubscribed);
 
         if (neteaseMode && pl != null) {
-            pl.stream().filter(PlayList::isSubscribed).forEach(playList -> {
-                PlaylistItem item = new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT), playList::getName, () -> NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playList)));
+            List<PlayList> subscribedPlaylists = pl.stream()
+                    .filter(PlayList::isSubscribed)
+                    .collect(java.util.stream.Collectors.toList());
+            subscribedPlaylists.forEach(playList -> {
+                PlaylistItem item = new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        playList::getName, () -> NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playList)));
                 item.setShouldOverrideMouseCursor(true);
                 this.playlistPanel.addChild(item);
             });
@@ -707,7 +712,6 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
             this.iconColorSupplier = iconColorSupplier;
             this.label = label;
             this.onClick = onClick;
-
             this.setBeforeRenderCallback(() -> {
                 // The item is inset by four pixels on both sides. Subtract the insets from
                 // its live width as the player scales so neither background nor text can

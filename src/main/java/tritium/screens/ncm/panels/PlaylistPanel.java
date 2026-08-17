@@ -105,30 +105,37 @@ public class PlaylistPanel extends NCMPanel {
                 return true;
             });
 
-            // ===== 收藏歌单：复用原项目 subscribe 链路（CloudMusicApi.subscribe → /weapi/playlist/subscribe|unsubscribe）=====
-            // 本地状态用 Lombok 生成的 setSubscribed 乐观更新；异步调用原 API，不阻塞主线程。
-            RoundedButtonWidget btnSubscribe = new RoundedButtonWidget(() -> playList.isSubscribed() ? "取消收藏" : "收藏歌单", FontManager.pf16bold);
+            RoundedButtonWidget btnSubscribe = new RoundedButtonWidget(
+                    () -> playList.isSubscribed() ? "取消收藏" : "收藏歌单", FontManager.pf16bold);
             this.addChild(btnSubscribe);
-
             btnSubscribe.setBeforeRenderCallback(() -> {
                 btnSubscribe.setBounds(57, 17);
-                btnSubscribe.setPosition(btnCoverflow.getRelativeX() + btnCoverflow.getWidth() + 8, cover.getRelativeY() + cover.getHeight() - btnSubscribe.getHeight());
+                btnSubscribe.setPosition(btnCoverflow.getRelativeX() + btnCoverflow.getWidth() + 8,
+                        cover.getRelativeY() + cover.getHeight() - btnSubscribe.getHeight());
                 btnSubscribe.setRadius(3);
                 btnSubscribe.setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
                 btnSubscribe.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             });
-
             btnSubscribe.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-
-                if (mouseButton == 0) {
-                    boolean newSub = !playList.isSubscribed();
-                    playList.setSubscribed(newSub);
-                    MultiThreadingUtil.runAsync(() -> playList.subscribe(newSub));
+                if (mouseButton != 0) {
+                    return false;
                 }
-
+                if (!playList.isSubscribed()) {
+                    playList.setSubscribed(true);
+                    MultiThreadingUtil.runAsync(() -> playList.subscribe(true));
+                    return true;
+                }
+                NCMScreen.getInstance().openConfirmation(
+                        "取消收藏歌单？",
+                        "取消后，该歌单将从“我的歌单”中移除。",
+                        "取消收藏",
+                        () -> {
+                            playList.setSubscribed(false);
+                            MultiThreadingUtil.runAsync(() -> playList.subscribe(false));
+                        }
+                );
                 return true;
             });
-
             RoundedRectWidget searchBar = new RoundedRectWidget();
             this.addChild(searchBar);
 

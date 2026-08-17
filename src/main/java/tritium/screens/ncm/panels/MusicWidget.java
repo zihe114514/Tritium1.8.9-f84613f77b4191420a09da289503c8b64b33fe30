@@ -200,8 +200,6 @@ public class MusicWidget extends RoundedRectWidget {
         lblMusicDuration.setClickable(false);
 
         // ===== 收藏：歌曲喜欢/取消喜欢（★/☆）+ 加入歌单（+）=====
-        // 复用原项目 Music.setLike(like) → CloudMusicApi.like(id, like)（/api/radio/like）。
-        // 喜欢状态以 CloudMusic.likeList（登录时载入）为准：本地先改再异步发 API，避免阻塞主线程。
         IconWidget btnLike = new IconWidget("☆", FontManager.pf16bold, 0, 0, 20, 20);
         this.addChild(btnLike);
         btnLike.setShouldOverrideMouseCursor(true);
@@ -210,25 +208,35 @@ public class MusicWidget extends RoundedRectWidget {
         btnLike.setBeforeRenderCallback(() -> {
             boolean liked = CloudMusic.likeList != null && CloudMusic.likeList.contains(music.getId());
             btnLike.setIcon(liked ? "★" : "☆");
-            btnLike.setColor(liked ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT) : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            btnLike.setColor(liked ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
+                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             btnLike.centerVertically();
             btnLike.setPosition(lblMusicDuration.getRelativeX() - 4 - btnLike.getWidth(), btnLike.getRelativeY());
         });
         btnLike.setOnClickCallback((x, y, button) -> {
             if (button != 0 || !music.isNetease())
                 return false;
+
             boolean liked = CloudMusic.likeList != null && CloudMusic.likeList.contains(music.getId());
-            boolean newLiked = !liked;
-            // 乐观更新本地状态，异步调用原 API
-            if (CloudMusic.likeList != null) {
-                if (newLiked) {
-                    if (!CloudMusic.likeList.contains(music.getId()))
-                        CloudMusic.likeList.add(music.getId());
-                } else {
-                    CloudMusic.likeList.remove(music.getId());
+            if (!liked) {
+                if (CloudMusic.likeList != null && !CloudMusic.likeList.contains(music.getId())) {
+                    CloudMusic.likeList.add(music.getId());
                 }
+                MultiThreadingUtil.runAsync(() -> music.setLike(true));
+                return true;
             }
-            MultiThreadingUtil.runAsync(() -> music.setLike(newLiked));
+
+            NCMScreen.getInstance().openConfirmation(
+                    "取消收藏歌曲？",
+                    "取消后，这首歌曲将从“我喜欢的音乐”中移除。",
+                    "取消收藏",
+                    () -> {
+                        if (CloudMusic.likeList != null) {
+                            CloudMusic.likeList.remove(music.getId());
+                        }
+                        MultiThreadingUtil.runAsync(() -> music.setLike(false));
+                    }
+            );
             return true;
         });
 

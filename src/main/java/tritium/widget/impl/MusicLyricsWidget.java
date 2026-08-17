@@ -15,6 +15,7 @@ import tritium.management.FontManager;
 import tritium.ncm.music.CloudMusic;
 import tritium.reflection.Reflection;
 import tritium.rendering.RGBA;
+import tritium.rendering.ScissorClipManager;
 import tritium.rendering.Rect;
 import tritium.rendering.StencilClipManager;
 import tritium.rendering.animation.Interpolations;
@@ -112,10 +113,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     private static final double SECONDARY_LINE_SPACING = 2.0;
     private static final double PRIMARY_TO_SECONDARY_SPACING = 5.0;
     private static final double ROW_SPACING = 10.0;
-    private static final double KARAOKE_GLOW_PRE_ROLL_MS = 110.0;
-    private static final double KARAOKE_GLOW_AFTER_ROLL_MS = 165.0;
     private static final int KARAOKE_FEATHER_STEPS = 10;
-    private static final int KARAOKE_HEAD_STEPS = 12;
 
     /**
      * Seeks must not reuse the animated positions from an unrelated timestamp.
@@ -378,7 +376,10 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     private LyricLayout createLyricLayout(LyricLine line) {
-        KaraokeLayout karaokeLayout = line.words.isEmpty() ? null : createKaraokeLayout(line);
+        // Only real word timestamps may enter the KTV renderer. A plain LRC can carry
+        // word tokens after parsing, but without durations every token resolves at once and
+        // would incorrectly recolour the whole line.
+        KaraokeLayout karaokeLayout = line.hasTimedWords() ? createKaraokeLayout(line) : null;
         String[] primaryLines = karaokeLayout == null
                 ? fitText(getFontRenderer(), line.getLyric()) : karaokeLayout.primaryLines;
         String secondaryLyric = hasSecondaryLyrics() ? getSecondaryLyrics(line) : "";
@@ -539,7 +540,9 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         api.getGLStateManager().scale(scale, scale, 1);
         api.getGLStateManager().translate(-centerX, -centerY, 0);
         try {
-            renderKaraokeAmbientGlow(layout.karaokeLayout, y, effectAlpha);
+            // Keep the unsung lyric strictly on the base colour. The active colour is
+            // painted only by the clipped per-character KTV layers below; applying an
+            // active-colour glow to the complete row makes the whole sentence look sung.
             renderWrappedPrimaryUnscaled(layout.primaryLines, y,
                     getBaseLyricColor((int) (effectAlpha * .70f)));
             renderKaraokeProgress(layout.karaokeLayout, y, songProgress, effectAlpha);
@@ -557,91 +560,114 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     /**
-     * Renders the active KTV layer as a soft, travelling light band instead of replacing
-     * the unsung text with one hard clipping edge. The completed portion stays crisp while
-     * the front edge has several translucent layers and a restrained halo.
-     */
-    /**
-     * Paints the active OSD line one Unicode code point at a time. The word timing
-     * remains the source of truth, while its timeline is distributed over every
-     * character so the fill travels smoothly from left to right like karaoke.
+     * Paints the active OSD lyric from the timed-word clock. The physical fill front
+     * moves through all characters continuously from left to right, karaoke-style.
      */
     private void renderKaraokeProgress(KaraokeLayout layout, double y,
                                        float songProgress, int effectAlpha) {
         int highlightColor = getCurrentLyricColor(effectAlpha);
         for (KaraokeSegment segment : layout.segments) {
             double rawProgress = getRawKaraokeProgress(segment.word, songProgress);
-            double characterTimeline = Math.max(0.0, Math.min(1.0, rawProgress))
-                    * segment.totalCharacterCount;
-
-            String physicalLine = layout.primaryLines[segment.lineIndex];
-            double lineX = calculateAlignmentX(physicalLine, this.alignMode.getValue());
-            double characterX = lineX + segment.offsetX;
-            double segmentY = y + segment.lineIndex * (getFontRenderer().getHeight() + PRIMARY_LINE_SPACING);
-
-            int offset = 0;
-            int characterIndex = 0;
-            while (offset < segment.text.length()) {
-                int next = segment.text.offsetByCodePoints(offset, 1);
-                String character = segment.text.substring(offset, next);
-                double characterWidth = getFontRenderer().getStringWidthD(character);
-                int globalCharacterIndex = segment.characterOffset + characterIndex;
-                double characterProgress = getCharacterKaraokeProgress(characterTimeline, globalCharacterIndex);
-
-                if (characterProgress > .002 && characterWidth > .05) {
-                    if (characterProgress >= .998) {
-                        renderKaraokeLayer(character, characterX, segmentY, 0.0, characterWidth,
-                                highlightColor, .24);
-                    } else {
-                        double front = characterWidth * characterProgress;
-                        double featherWidth = Math.min(
-                                Math.max(2.0, HudConfig.osdKaraokeTransitionWidth),
-                                Math.max(2.0, Math.min(characterWidth, front)));
-                        double featherLeft = Math.max(0.0, front - featherWidth);
-
-                        renderKaraokeLayer(character, characterX, segmentY, 0.0, featherLeft,
-                                highlightColor, .16);
-                        for (int step = 0; step < KARAOKE_FEATHER_STEPS; step++) {
-                            double left = featherLeft + (front - featherLeft) * step / KARAOKE_FEATHER_STEPS;
-                            double right = featherLeft + (front - featherLeft) * (step + 1) / KARAOKE_FEATHER_STEPS;
-                            if (right <= left) {
-                                continue;
-                            }
-                            double behindFront = 1.0 - step / (double) KARAOKE_FEATHER_STEPS;
-                            double opacity = .16 + .84 * smoothStep(behindFront);
-                            renderKaraokeLayer(character, characterX, segmentY, left, right,
-                                    multiplyAlpha(highlightColor, opacity), .07 + .22 * behindFront);
-                        }
-                    }
-                }
-
-                // Keep every already-sung character enlarged. The emphasis does not
-                // fall back when the next character begins, so the scale travels from
-                // left to right together with the KTV colour fill.
-                if (characterProgress > .001) {
-                    renderKaraokeCharacterEmphasis(character, characterX, segmentY,
-                            characterWidth, characterProgress, highlightColor);
-                }
-
-                characterX += characterWidth;
-                offset = next;
-                characterIndex++;
+            if (rawProgress <= .001) {
+                continue;
             }
 
-            // Keep one continuous travelling halo for the word, including wrapped fragments.
-            renderKaraokeTransitionGlow(physicalLine, lineX, segmentY, segment,
-                    rawProgress, songProgress, highlightColor);
+            double lineX = calculateAlignmentX(layout.primaryLines[segment.lineIndex], this.alignMode.getValue());
+            double segmentX = lineX + segment.offsetX;
+            double segmentY = y + segment.lineIndex * (getFontRenderer().getHeight() + PRIMARY_LINE_SPACING);
+
+            /*
+             * The full-screen renderer moves a single physical fill front through the
+             * whole timed word. Reproduce that model in the OSD instead of completing
+             * one glyph and then abruptly starting the next. This is important for a
+             * token such as "我爱你": the front exits "爱" and enters "你" continuously.
+             *
+             * A timed word may be wrapped into several KaraokeSegments. characterOffset
+             * maps each physical fragment back into the original timed word so the sweep
+             * remains continuous even across an OSD line break.
+             */
+            double wordWidth = Math.max(.05, getFontRenderer().getStringWidthD(segment.word.word));
+            double segmentWordOffset = getWordPrefixWidth(segment.word.word, segment.characterOffset);
+            double paintedWidth = clampKaraokeWidth(wordWidth * rawProgress - segmentWordOffset,
+                    0.0, segment.width);
+            renderKaraokeSweep(segment.text, segmentX, segmentY, paintedWidth, segment.width,
+                    highlightColor);
+
+            // The fill is continuous in pixel space. The retained per-character emphasis
+            // uses the same timed-word clock, making the scale wave follow its front.
+            renderKaraokeSegmentEmphasis(segment, segmentX, segmentY, rawProgress, highlightColor);
         }
     }
-    private void renderKaraokeAmbientGlow(KaraokeLayout layout, double y, int effectAlpha) {
-        int ambientColor = getCurrentLyricColor((int) (effectAlpha * .52));
-        for (int lineIndex = 0; lineIndex < layout.primaryLines.length; lineIndex++) {
-            String text = layout.primaryLines[lineIndex];
-            double x = calculateAlignmentX(text, this.alignMode.getValue());
-            double lineY = y + lineIndex * (getFontRenderer().getHeight() + PRIMARY_LINE_SPACING);
-            renderTextGlow(getFontRenderer(), text, x, lineY, ambientColor,
-                    HudConfig.osdKaraokeGlowStrength * .44,
-                    HudConfig.osdKaraokeBloomStrength, HudConfig.currentGlowRadius);
+
+    /**
+     * Paints the sung portion with a soft feather entirely inside the real playback front.
+     * The solid part preserves the completed lyric colour; the front fades smoothly from
+     * left to right, matching the full-screen KTV fill rather than swapping an entire word.
+     */
+    private void renderKaraokeSweep(String text, double x, double y, double paintedWidth,
+                                    double textWidth, int highlightColor) {
+        if (paintedWidth <= .05 || textWidth <= .05) {
+            return;
+        }
+        if (paintedWidth >= textWidth - .05) {
+            renderKaraokeLayer(text, x, y, 0.0, textWidth, highlightColor, .24);
+            return;
+        }
+
+        double featherWidth = Math.min(Math.max(1.5, HudConfig.osdKaraokeTransitionWidth), paintedWidth);
+        double featherLeft = Math.max(0.0, paintedWidth - featherWidth);
+        if (featherLeft > .05) {
+            renderKaraokeLayer(text, x, y, 0.0, featherLeft, highlightColor, .16);
+        }
+
+        for (int step = 0; step < KARAOKE_FEATHER_STEPS; step++) {
+            double left = featherLeft + (paintedWidth - featherLeft) * step / KARAOKE_FEATHER_STEPS;
+            double right = featherLeft + (paintedWidth - featherLeft) * (step + 1) / KARAOKE_FEATHER_STEPS;
+            if (right <= left) {
+                continue;
+            }
+            double distanceBehindFront = 1.0 - step / (double) KARAOKE_FEATHER_STEPS;
+            double opacity = .16 + .84 * smoothStep(distanceBehindFront);
+            renderKaraokeLayer(text, x, y, left, right, multiplyAlpha(highlightColor, opacity),
+                    .07 + .22 * distanceBehindFront);
+        }
+    }
+
+    /** Returns the rendered advance from the start of a timed word to a code-point offset. */
+    private double getWordPrefixWidth(String text, int codePointOffset) {
+        if (text == null || text.isEmpty() || codePointOffset <= 0) {
+            return 0.0;
+        }
+        int codePointCount = text.codePointCount(0, text.length());
+        int safeOffset = Math.min(codePointOffset, codePointCount);
+        int end = text.offsetByCodePoints(0, safeOffset);
+        return getFontRenderer().getStringWidthD(text.substring(0, end));
+    }
+
+    private double clampKaraokeWidth(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private void renderKaraokeSegmentEmphasis(KaraokeSegment segment, double x, double y,
+                                              double rawProgress, int highlightColor) {
+        double characterTimeline = Math.max(0.0, Math.min(1.0, rawProgress))
+                * segment.totalCharacterCount;
+        int offset = 0;
+        int characterIndex = 0;
+        double characterX = x;
+        while (offset < segment.text.length()) {
+            int next = segment.text.offsetByCodePoints(offset, 1);
+            String character = segment.text.substring(offset, next);
+            double characterWidth = getFontRenderer().getStringWidthD(character);
+            int globalCharacterIndex = segment.characterOffset + characterIndex;
+            double characterProgress = getCharacterKaraokeProgress(characterTimeline, globalCharacterIndex);
+            if (characterProgress > .001 && characterWidth > .05) {
+                renderKaraokeCharacterEmphasis(character, characterX, y, characterWidth,
+                        characterProgress, highlightColor);
+            }
+            characterX += characterWidth;
+            offset = next;
+            characterIndex++;
         }
     }
 
@@ -679,67 +705,33 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             api.getGLStateManager().popMatrix();
         }
     }
-    private void renderKaraokeTransitionGlow(String physicalLine, double lineX, double lineY,
-                                              KaraokeSegment segment, double rawProgress,
-                                              float songProgress, int highlightColor) {
-        double wordStart = segment.word.timestamp;
-        double wordEnd = wordStart + Math.max(1L, segment.word.duration);
-        if (songProgress < wordStart - KARAOKE_GLOW_PRE_ROLL_MS
-                || songProgress > wordEnd + KARAOKE_GLOW_AFTER_ROLL_MS) {
-            return;
-        }
-
-        double envelope = 1.0;
-        if (songProgress < wordStart) {
-            envelope = smoothStep((songProgress - (wordStart - KARAOKE_GLOW_PRE_ROLL_MS))
-                    / KARAOKE_GLOW_PRE_ROLL_MS);
-        } else if (songProgress > wordEnd) {
-            envelope = 1.0 - smoothStep((songProgress - wordEnd) / KARAOKE_GLOW_AFTER_ROLL_MS);
-        }
-        if (envelope <= .002) {
-            return;
-        }
-
-        double wordTimeline = Math.max(0.0, Math.min(1.0, rawProgress)) * segment.totalCharacterCount;
-        double segmentProgress = (wordTimeline - segment.characterOffset) / segment.characterCount;
-        segmentProgress = Math.max(0.0, Math.min(1.0, segmentProgress));
-        double center = segment.offsetX + segment.width * segmentProgress;
-        double halfBand = Math.max(4.0, HudConfig.osdKaraokeTransitionWidth);
-        double lineWidth = getFontRenderer().getStringWidthD(physicalLine);
-
-        for (int step = 0; step < KARAOKE_HEAD_STEPS; step++) {
-            double left = center - halfBand + halfBand * 2.0 * step / KARAOKE_HEAD_STEPS;
-            double right = center - halfBand + halfBand * 2.0 * (step + 1) / KARAOKE_HEAD_STEPS;
-            left = Math.max(0.0, left);
-            right = Math.min(lineWidth, right);
-            if (right <= left) {
-                continue;
-            }
-
-            double stripCenter = (left + right) * .5;
-            double distance = Math.abs(stripCenter - center) / halfBand;
-            double intensity = smoothStep(1.0 - Math.min(1.0, distance));
-            double opacity = envelope * (.12 + .68 * intensity);
-            double glowStrength = envelope * (.20 + .48 * intensity);
-            renderKaraokeLayer(physicalLine, lineX, lineY, left, right,
-                    multiplyAlpha(highlightColor, opacity), glowStrength);
-        }
-    }
-
     private void renderKaraokeLayer(String text, double x, double y, double clipLeft,
-                                    double clipRight, int color, double glowStrength) {
+                                     double clipRight, int color, double glowStrength) {
         if (clipRight - clipLeft <= .05) {
             return;
         }
 
-        StencilClipManager.beginClip(() -> Rect.draw(x + clipLeft, y - 1,
-                clipRight - clipLeft, getFontRenderer().getHeight() + 4, -1));
-        renderKaraokeGlow(text, x, y, color, glowStrength);
-        bigFrString(text, x, y, color);
-        StencilClipManager.endClip();
+        /*
+         * Do not use a nested stencil here. The desktop OSD is rendered into Minecraft's
+         * shared HUD framebuffer, where an OptiFine/other-mod pass can leave the stencil
+         * attachment or its test state unavailable. In that case the full highlighted word
+         * reaches the screen and looks like an instant whole-line colour swap.
+         *
+         * The projected scissor follows the current HUD scale matrix and is intersected with
+         * any parent scissor. Therefore it clips the glow and glyph draw to the actual moving
+         * KTV fill width without changing the outer viewport clip or foreign render state.
+         */
+        ScissorClipManager.begin(x + clipLeft, y - 1,
+                clipRight - clipLeft, getFontRenderer().getHeight() + 4);
+        try {
+            renderKaraokeGlow(text, x, y, color, glowStrength);
+            bigFrString(text, x, y, color);
+        } finally {
+            ScissorClipManager.end();
+        }
     }
 
-    /** Soft eight-direction aura shared by the complete lyric and the travelling KTV head. */
+    /** Soft eight-direction aura for an already-clipped KTV fill or its travelling head. */
     private void renderKaraokeGlow(String text, double x, double y, int color, double strength) {
         if (strength <= .001 || RGBA.alpha(color) <= 0) {
             return;
@@ -908,14 +900,25 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         }
         return getContentLeft();
     }
+    /**
+     * The HUD editor owns lyric appearance persistence.  Resolve colours from HudConfig
+     * at paint time so the current-colour picker can never mutate the ordinary lyric
+     * colour through the legacy ClickGUI ColorValue instances.
+     */
     private int getBaseLyricColor(int alpha) {
-        Color baseColor = lyricColor.getValue();
-        return RGBA.color(baseColor.getRed(), baseColor.getGreen(), baseColor.getBlue(), alpha);
+        return getHudConfiguredColor(HudConfig.lyricColorRgb, alpha);
     }
 
+    /** Current colour is reserved exclusively for clipped, timed KTV foreground glyphs. */
     private int getCurrentLyricColor(int alpha) {
-        Color activeColor = currentLyricColor.getValue();
-        return RGBA.color(activeColor.getRed(), activeColor.getGreen(), activeColor.getBlue(), alpha);
+        return getHudConfiguredColor(HudConfig.currentLyricColorRgb, alpha);
+    }
+
+    private int getHudConfiguredColor(int configuredArgb, int requestedAlpha) {
+        int configuredAlpha = (configuredArgb >>> 24) & 0xFF;
+        int combinedAlpha = (int) Math.max(0, Math.min(255,
+                Math.round(Math.max(0, Math.min(255, requestedAlpha)) * configuredAlpha / 255.0)));
+        return RGBA.color(configuredArgb & 0x00FFFFFF, combinedAlpha);
     }
 
     /**

@@ -80,6 +80,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     /** 双平台账号管理（含二维码登录二级页面）的模态覆盖层。 */
     public AccountManagerOverlay accountManagerOverlay = null;
 
+    /** 对取消收藏等破坏性操作的二次确认层。 */
+    public ConfirmationOverlay confirmationOverlay = null;
+
     /**
      * 表示是否需要重新布局, 当用户信息和用户歌单加载完设置为 true,
      * 然后会自动进行重新布局并设为 false
@@ -246,7 +249,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         int dWheel = Mouse.getDWheel();
         // 加入歌单弹窗为模态：滚轮只应作用于弹窗内歌单列表，不能穿透到下方 basePanel/controlsBar。
         // 否则在弹窗内滚动时会同时滚动下层的歌单/歌曲列表。
-        int baseDWheel = (this.addToPlaylistOverlay != null || this.accountManagerOverlay != null) ? 0 : dWheel;
+        int baseDWheel = (this.addToPlaylistOverlay != null || this.accountManagerOverlay != null
+                || this.confirmationOverlay != null) ? 0 : dWheel;
 
         RenderSystem.FIXED_SCALE = true;
 
@@ -375,6 +379,19 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             StencilClipManager.endClip();
         }
 
+        // 二次确认始终位于所有播放器内容之上，并独占鼠标/滚轮输入。
+        if (this.confirmationOverlay != null) {
+            StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            this.confirmationOverlay.setBounds(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight());
+            this.confirmationOverlay.setAlpha(alpha);
+            this.confirmationOverlay.renderWidget(mouseX, mouseY, 0);
+            if (this.confirmationOverlay.shouldClose()) {
+                this.confirmationOverlay = null;
+            }
+            StencilClipManager.endClip();
+        }
+
         roundedOutline(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(),
                 cornerRadius, getPlayerBorderThickness(), new Color(255, 255, 255,
                         Math.max(0, Math.min(255, (int) (alpha * 25)))));
@@ -475,6 +492,12 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.addToPlaylistOverlay.onInit();
     }
 
+    /** Opens a modal confirmation without running the action until the user explicitly confirms. */
+    public void openConfirmation(String title, String message, String confirmText, Runnable onConfirm) {
+        this.confirmationOverlay = new ConfirmationOverlay(title, message, confirmText, onConfirm);
+        this.confirmationOverlay.onInit();
+    }
+
     public void openAccountManager() {
         if (this.accountManagerOverlay != null) this.accountManagerOverlay.dispose();
         this.accountManagerOverlay = new AccountManagerOverlay();
@@ -483,6 +506,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     @Override
     public void keyTyped(char typedChar, int keyCode) {
+
+        if (this.confirmationOverlay != null) {
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.confirmationOverlay.cancel();
+            }
+            return;
+        }
 
         if (this.accountManagerOverlay != null) {
             if (keyCode == Keyboard.KEY_ESCAPE) {
@@ -531,6 +561,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         double yScale = RenderSystem.getHeightNotScaled() / (RenderSystem.getFixedHeight() * .5);
         double mouseX = mX / xScale;
         double mouseY = mY / yScale;
+
+        if (this.confirmationOverlay != null) {
+            this.confirmationOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
 
         if (this.accountManagerOverlay != null) {
             this.accountManagerOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);

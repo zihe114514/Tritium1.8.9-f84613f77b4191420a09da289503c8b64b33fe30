@@ -135,6 +135,7 @@ public class GuiHudEditor extends GuiScreen {
     private boolean draggingSaturationBrightness;
     private boolean draggingHue;
     private boolean lyricSettingsDirty;
+    private boolean resetConfirmationVisible;
 
     @Override
     public void initGui() {
@@ -175,7 +176,7 @@ public class GuiHudEditor extends GuiScreen {
         drawEditorBackdrop(panelX, panelY, panelH);
         DownloadDynamicIsland.renderEditorPreview();
 
-        int wheel = Mouse.getDWheel();
+        int wheel = resetConfirmationVisible ? 0 : Mouse.getDWheel();
         boolean overPanel = isInside(mouseX, mouseY, panelX, panelY, SETTINGS_W, panelH);
         boolean overPicker = editingColor != EditingColor.NONE && isInside(mouseX, mouseY,
                 getPickerX(panelX), getPickerY(panelY), PICKER_W, PICKER_H);
@@ -184,11 +185,13 @@ public class GuiHudEditor extends GuiScreen {
             wheel = 0;
         }
 
-        updateColorPickerWhileDragging(mouseX, mouseY, lyrics, panelX, panelY);
-        updateSliderWhileDragging(mouseX, panelX);
+        if (!resetConfirmationVisible) {
+            updateColorPickerWhileDragging(mouseX, mouseY, lyrics, panelX, panelY);
+            updateSliderWhileDragging(mouseX, panelX);
+        }
 
-        boolean lmb = Mouse.isButtonDown(0);
-        boolean mouseOverSettings = overPanel || overPicker;
+        boolean lmb = !resetConfirmationVisible && Mouse.isButtonDown(0);
+        boolean mouseOverSettings = resetConfirmationVisible || overPanel || overPicker;
 
         // ==== Song information HUD: draw the real card whenever a song is active. ====
         int infoW = (int) (INFO_BASE_W * HudConfig.infoScale);
@@ -236,6 +239,9 @@ public class GuiHudEditor extends GuiScreen {
             Gui.drawRect(cx, 0, cx + 1, sh, 0x558DDCFF);
         }
         super.drawScreen(mouseX, mouseY, partialTicks);
+        if (resetConfirmationVisible) {
+            drawResetConfirmation(fr, mouseX, mouseY);
+        }
     }
     private void drawEditorBackdrop(int panelX, int panelY, int panelH) {
         // The game world is the editor canvas. Only the settings panel gets a local
@@ -638,6 +644,13 @@ public class GuiHudEditor extends GuiScreen {
 
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int button) throws IOException {
+        if (resetConfirmationVisible) {
+            if (button == 0) {
+                handleResetConfirmationClick(mouseX, mouseY);
+            }
+            return;
+        }
+
         if (button != 0) {
             super.mouseClicked(mouseX, mouseY, button);
             return;
@@ -688,11 +701,11 @@ public class GuiHudEditor extends GuiScreen {
             }
 
             if (isInside(mouseX, mouseY, panelX + SETTINGS_W - 96, panelY + 6, 60, 17)) {
-                HudConfig.resetLyricAppearance();
-                HudConfig.resetDynamicIslandAppearance();
-                lyrics.loadHudEditorSettings();
-                lyricSettingsDirty = false;
-                HudConfig.save();
+                resetConfirmationVisible = true;
+                editingColor = EditingColor.NONE;
+                draggingSlider = null;
+                draggingSaturationBrightness = false;
+                draggingHue = false;
                 return;
             }
 
@@ -820,11 +833,71 @@ public class GuiHudEditor extends GuiScreen {
 
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
+        if (resetConfirmationVisible) {
+            if (keyCode == Keyboard.KEY_ESCAPE || keyCode == Keyboard.KEY_RCONTROL) {
+                resetConfirmationVisible = false;
+            }
+            return;
+        }
         if (keyCode == Keyboard.KEY_ESCAPE || keyCode == Keyboard.KEY_RCONTROL) {
             mc.displayGuiScreen(null);
             return;
         }
         super.keyTyped(typedChar, keyCode);
+    }
+
+    private void drawResetConfirmation(FontRenderer fr, int mouseX, int mouseY) {
+        // A translucent dark mask preserves the live game preview without introducing the old white canvas.
+        Gui.drawRect(0, 0, width, height, 0x6D000000);
+        int dialogW = Math.min(310, Math.max(238, width - 32));
+        int dialogH = 126;
+        int dialogX = (width - dialogW) / 2;
+        int dialogY = Math.max(18, (height - dialogH) / 2);
+        drawRoundedRect(dialogX + 3, dialogY + 4, dialogW, dialogH, 12, 0x72000000);
+        drawRoundedRect(dialogX, dialogY, dialogW, dialogH, 12, 0xF01A202A);
+        drawRoundedRect(dialogX + 16, dialogY + 17, 20, 20, 10, 0xFFD96B53);
+        drawCenteredString(fr, "!", dialogX + 26, dialogY + 22, 0xFFFFFFFF);
+        drawString(fr, "恢复默认设置？", dialogX + 47, dialogY + 18, 0xFFF4F7FB);
+        drawString(fr, "歌词与灵动岛外观将恢复为默认值。", dialogX + 17, dialogY + 49, 0xFFABB6C5);
+
+        int cancelW = 74;
+        int confirmW = 106;
+        int buttonY = dialogY + dialogH - 34;
+        int cancelX = dialogX + dialogW - cancelW - confirmW - 18;
+        int confirmX = dialogX + dialogW - confirmW - 10;
+        boolean hoverCancel = isInside(mouseX, mouseY, cancelX, buttonY, cancelW, 23);
+        boolean hoverConfirm = isInside(mouseX, mouseY, confirmX, buttonY, confirmW, 23);
+        drawRoundedRect(cancelX, buttonY, cancelW, 23, 8, hoverCancel ? 0xFF465363 : 0xFF303B49);
+        drawRoundedRect(confirmX, buttonY, confirmW, 23, 8, hoverConfirm ? 0xFFEC665D : 0xFFD94F4D);
+        drawCenteredString(fr, "取消", cancelX + cancelW / 2, buttonY + 7, 0xFFF4F7FB);
+        drawCenteredString(fr, "恢复默认", confirmX + confirmW / 2, buttonY + 7, 0xFFFFFFFF);
+    }
+
+    private void handleResetConfirmationClick(int mouseX, int mouseY) {
+        int dialogW = Math.min(310, Math.max(238, width - 32));
+        int dialogH = 126;
+        int dialogX = (width - dialogW) / 2;
+        int dialogY = Math.max(18, (height - dialogH) / 2);
+        int cancelW = 74;
+        int confirmW = 106;
+        int buttonY = dialogY + dialogH - 34;
+        int cancelX = dialogX + dialogW - cancelW - confirmW - 18;
+        int confirmX = dialogX + dialogW - confirmW - 10;
+
+        if (isInside(mouseX, mouseY, confirmX, buttonY, confirmW, 23)) {
+            applyAppearanceDefaults();
+        }
+        // Cancel button and clicking outside the card both safely dismiss the confirmation.
+        resetConfirmationVisible = false;
+    }
+
+    private void applyAppearanceDefaults() {
+        MusicLyricsWidget lyrics = TritiumMusicExtension.getInstance().musicLyrics;
+        HudConfig.resetLyricAppearance();
+        HudConfig.resetDynamicIslandAppearance();
+        lyrics.loadHudEditorSettings();
+        lyricSettingsDirty = false;
+        HudConfig.save();
     }
 
     private void beginColorEdit(EditingColor type, Color color) {
