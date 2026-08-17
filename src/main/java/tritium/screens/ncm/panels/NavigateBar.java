@@ -39,6 +39,8 @@ public class NavigateBar extends NCMPanel {
 
     TextFieldWidget searchField = new TextFieldWidget(FontManager.pf14bold);
     ScrollPanel playlistPanel = new ScrollPanel();
+    private PlaylistItem homeItem;
+    private final List<PlaylistItem> playlistItems = new CopyOnWriteArrayList<>();
 
     public NavigateBar() {
         this.layout();
@@ -211,6 +213,7 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
         {
             PlaylistItem item = new PlaylistItem("A", () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT), () -> "主页", () -> NCMScreen.getInstance().setCurrentPanel(new HomePanel()));
             item.setSelected(true);
+            this.homeItem = item;
 
             item.setShouldOverrideMouseCursor(true);
 
@@ -247,6 +250,8 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
                             () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                             playList::getName,
                             () -> NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playList)));
+                    item.setPlaylist(playList);
+                    this.playlistItems.add(item);
                     item.setShouldOverrideMouseCursor(true);
                     this.playlistPanel.addChild(item);
                 }
@@ -260,6 +265,8 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
                             () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                             playList::getName,
                             () -> NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playList)));
+                    item.setPlaylist(playList);
+                    this.playlistItems.add(item);
                     item.setShouldOverrideMouseCursor(true);
                     this.playlistPanel.addChild(item);
                 }
@@ -293,6 +300,8 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
             subscribedPlaylists.forEach(playList -> {
                 PlaylistItem item = new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         playList::getName, () -> NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playList)));
+                item.setPlaylist(playList);
+                this.playlistItems.add(item);
                 item.setShouldOverrideMouseCursor(true);
                 this.playlistPanel.addChild(item);
             });
@@ -690,6 +699,31 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
         }
     }
 
+    /** Re-selects the sidebar item that represents the currently visible content panel. */
+    public void selectCurrentPanel(NCMPanel panel) {
+        PlaylistItem selectedItem = null;
+        if (panel instanceof HomePanel) {
+            selectedItem = this.homeItem;
+        } else if (panel instanceof PlaylistPanel) {
+            PlayList activePlaylist = ((PlaylistPanel) panel).playList;
+            if (activePlaylist != null && !activePlaylist.isSearchMode()) {
+                for (PlaylistItem item : this.playlistItems) {
+                    if (activePlaylist.equals(item.getPlaylist())) {
+                        selectedItem = item;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (this.homeItem != null) {
+            this.homeItem.setSelected(this.homeItem == selectedItem);
+        }
+        for (PlaylistItem item : this.playlistItems) {
+            item.setSelected(item == selectedItem);
+        }
+    }
+
     @Override
     public void onInit() {
 
@@ -706,6 +740,10 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
         @Getter
         @Setter
         boolean selected = false;
+
+        @Getter
+        @Setter
+        private PlayList playlist;
 
         public PlaylistItem(String icon, Supplier<Integer> iconColorSupplier, Supplier<String> label, Runnable onClick) {
             this.icon = icon;
