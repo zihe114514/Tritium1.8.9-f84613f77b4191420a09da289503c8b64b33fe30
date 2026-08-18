@@ -152,7 +152,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     /** Updates the transcode progress without publishing a new notice revision. */
     public static void updateTranscodeProgress(double progress) {
-        transcodeProgress = clamp01(progress);
+        transcodeProgress = DynamicIslandMath.clamp01(progress);
     }
 
     /** Shows the verified conversion result for the configured completion hold duration. */
@@ -266,7 +266,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     /** Updates progress and closes the active state after publishing the final 100% value. */
     public static void updateProgress(double progress) {
-        downloadProgress = clamp01(progress);
+        downloadProgress = DynamicIslandMath.clamp01(progress);
         if (progress >= 1.0) {
             downloadCompletedAt = System.currentTimeMillis();
             downloading = false;
@@ -294,9 +294,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     private void renderInternal() {
         long now = System.currentTimeMillis();
-        double rawProgress = clamp01(downloadProgress);
+        double rawProgress = DynamicIslandMath.clamp01(downloadProgress);
         boolean activeDownload = downloading;
-        double sourceTranscodeProgress = clamp01(transcodeProgress);
+        double sourceTranscodeProgress = DynamicIslandMath.clamp01(transcodeProgress);
         long sourceStartedAt = downloadStartedAt;
         long sourceCompletedAt = downloadCompletedAt;
         long sourceNoticeShownAt = noticeShownAt;
@@ -316,11 +316,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             observedNoticeTitle = sourceNoticeTitle;
             observedNoticeValue = sourceNoticeValue;
             animatedNoticeProgress = sourceNoticeType == IslandNoticeType.VOLUME
-                    ? parseNoticePercent(sourceNoticeValue) / 100.0
+                    ? DynamicIslandMath.parseNoticePercent(sourceNoticeValue) / 100.0
                     : sourceNoticeType == IslandNoticeType.TRANSCODING ? sourceTranscodeProgress : 0.0;
             if (activeDownload) {
                 shownAt = sourceStartedAt > 0L ? sourceStartedAt : now;
-            } else if (sourceCompletedAt > 0L && now - sourceCompletedAt < getCompletionHoldMs()) {
+            } else if (sourceCompletedAt > 0L && now - sourceCompletedAt < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds)) {
                 completing = true;
                 completeAt = sourceCompletedAt;
                 animatedProgress = 1.0;
@@ -377,7 +377,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 && lastObservedProgress < .995;
         boolean newlyObservedCompletion = !activeDownload
                 && sourceCompletedAt > completeAt
-                && now - sourceCompletedAt < getCompletionHoldMs();
+                && now - sourceCompletedAt < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds);
         if (!activeDownload && (previousDownloading || completedBetweenFrames || newlyObservedCompletion)) {
             if (rawProgress >= .965) {
                 completing = true;
@@ -400,7 +400,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
 
         double noticeProgressTarget = sourceNoticeType == IslandNoticeType.VOLUME
-                ? parseNoticePercent(sourceNoticeValue) / 100.0
+                ? DynamicIslandMath.parseNoticePercent(sourceNoticeValue) / 100.0
                 : sourceNoticeType == IslandNoticeType.TRANSCODING ? sourceTranscodeProgress : 0.0;
         if (sourceNoticeType == IslandNoticeType.VOLUME
                 || sourceNoticeType == IslandNoticeType.TRANSCODING) {
@@ -410,7 +410,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             animatedNoticeProgress = Interpolations.interpolate(animatedNoticeProgress, 0.0, .24f);
         }
 
-        boolean holdingCompletion = completing && now - completeAt < getCompletionHoldMs();
+        boolean holdingCompletion = completing && now - completeAt < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds);
         boolean activeNotice = sourceNoticeType != IslandNoticeType.NONE
                 && sourceNoticeShownAt > 0L
                 && now >= sourceNoticeShownAt
@@ -445,9 +445,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             return;
         }
 
-        final double easedExpansion = smoothStep(expansion);
-        final float alpha = clamp01f(visibility);
-        final float renderedContentTransition = clamp01f(contentTransition);
+        final double easedExpansion = DynamicIslandMath.smoothStep(expansion);
+        final float alpha = DynamicIslandMath.clamp01f(visibility);
+        final float renderedContentTransition = DynamicIslandMath.clamp01f(contentTransition);
         final String speed = downloadSpeed;
         final boolean renderNotice = noticeMode;
         final IslandNoticeType renderedNoticeType = sourceNoticeType;
@@ -455,8 +455,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         final String renderedNoticeValue = sourceNoticeValue;
         final String renderedOutgoingNoticeTitle = outgoingNoticeTitle;
         final String renderedOutgoingNoticeValue = outgoingNoticeValue;
-        final float renderedNoticeCopyTransition = clamp01f(noticeCopyTransition);
-        final double renderedNoticeProgress = clamp01(animatedNoticeProgress);
+        final float renderedNoticeCopyTransition = DynamicIslandMath.clamp01f(noticeCopyTransition);
+        final double renderedNoticeProgress = DynamicIslandMath.clamp01(animatedNoticeProgress);
         renderIsolated(new Runnable() {
             @Override
             public void run() {
@@ -513,7 +513,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                             String activeNoticeValue, String outgoingNoticeTitle,
                             String outgoingNoticeValue, float noticeCopyBlend,
                             double noticeProgress, boolean activeNoticePersistent) {
-        double configuredScale = clamp(HudConfig.dynamicIslandScale, .60, 1.35);
+        double configuredScale = DynamicIslandMath.clamp(HudConfig.dynamicIslandScale, .60, 1.35);
         double screenWidth = RenderSystem.getWidth();
         DynamicIslandStyle style = getStyle();
         IslandLayout layout = createIslandLayout(style, noticeMode, activeNoticeType, activeNoticeTitle,
@@ -530,15 +530,15 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             animatedExpandedHeight = expandedHeight;
         }
 
-        double width = lerp(compactWidth, expandedWidth, expansionValue);
-        double height = lerp(compactHeight, expandedHeight, expansionValue);
+        double width = DynamicIslandMath.lerp(compactWidth, expandedWidth, expansionValue);
+        double height = DynamicIslandMath.lerp(compactHeight, expandedHeight, expansionValue);
         double centerX = screenWidth * .5;
-        double visibilityEase = smoothStep(alpha);
+        double visibilityEase = DynamicIslandMath.smoothStep(alpha);
         double y = TOP_MARGIN - (height + 11.0) * (1.0 - visibilityEase);
 
         double entryScale = 1.0;
         if (!preview && animationStart > 0L) {
-            double entryProgress = clamp01((now - animationStart) / 420.0);
+            double entryProgress = DynamicIslandMath.clamp01((now - animationStart) / 420.0);
             double cubicOut = 1.0 - Math.pow(1.0 - entryProgress, 3.0);
             double restrainedOvershoot = Math.sin(entryProgress * Math.PI)
                     * (1.0 - entryProgress) * .025;
@@ -554,7 +554,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double radius = systemCard ? Math.min(11.0, height * .25)
                 : (style == DynamicIslandStyle.CARD ? Math.min(12.0, height * .30) : height * .5);
         int accentColor = NCMTheme.getAccentColor();
-        int iconAccentColor = brightenIslandAccent(accentColor, .30f);
+        int iconAccentColor = DynamicIslandMath.brightenAccent(accentColor, .30f);
 
         // Keep the shadow on the island's own rounded silhouette. The prior expanded,
         // left-shifted rectangle looked like a separate dark background canvas.
@@ -568,30 +568,30 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height * .46),
                     Math.max(1.0, radius - 1.0), hexColor(1f, 1f, 1f, alpha * .075f));
             roundedOutline(x, y, width, height, radius, .75,
-                    new Color(255, 255, 255, clamp255(alpha * 62f)));
+                    new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 62f)));
         } else if (style == DynamicIslandStyle.CARD) {
             roundedRect(x, y, width, height, radius, hexColor(.028f, .034f, .046f, alpha * .985f));
             roundedRect(x, y + radius, 2.2, Math.max(1.0, height - radius * 2.0), 1.1,
                     RenderSystem.reAlpha(accentColor, alpha * .90f));
             roundedOutline(x, y, width, height, radius, .65,
-                    new Color(255, 255, 255, clamp255(alpha * 30f)));
+                    new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 30f)));
         } else if (systemCard) {
             // Dedicated content-driven system notification card inspired by the supplied reference project.
             roundedRect(x, y, width, height, radius, hexColor(.025f, .031f, .043f, alpha * .99f));
             roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height - 2.0),
                     Math.max(1.0, radius - 1.0), hexColor(.075f, .088f, .118f, alpha * .32f));
             roundedOutline(x, y, width, height, radius, .80,
-                    new Color(255, 255, 255, clamp255(alpha * 46f)));
+                    new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 46f)));
             double tileSize = Math.min(24.0, Math.max(16.0, height - 16.0));
             roundedRect(x + 8.0, y + (height - tileSize) * .5, tileSize, tileSize,
                     Math.min(7.0, tileSize * .30), RenderSystem.reAlpha(accentColor, alpha * .26f));
             roundedOutline(x + 8.0, y + (height - tileSize) * .5, tileSize, tileSize,
                     Math.min(7.0, tileSize * .30), .65,
-                    new Color(255, 255, 255, clamp255(alpha * 36f)));
+                    new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 36f)));
         } else {
             roundedRect(x, y, width, height, radius, hexColor(.012f, .014f, .020f, alpha * .985f));
             roundedOutline(x, y, width, height, radius, .65,
-                    new Color(255, 255, 255, clamp255(alpha * 20f)));
+                    new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 20f)));
         }
         if (!systemCard) {
             roundedRect(x + radius * .70, y + .8, Math.max(2.0, width - radius * 1.40), .75, .38,
@@ -605,7 +605,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         // Keep the glyph center tied to that tile rather than its wider text gutter.
         double iconInset = systemCard ? 20.0 : (style == DynamicIslandStyle.CARD ? 25.0 : 23.0);
         double iconExpandedX = centerX - expandedWidth * .5 + iconInset;
-        double iconX = lerp(centerX, iconExpandedX, expansionValue);
+        double iconX = DynamicIslandMath.lerp(centerX, iconExpandedX, expansionValue);
         double iconY = y + height * .5;
         double pulse = .5 + .5 * Math.sin(now / 260.0);
         float iconAlpha = alpha * (.87f + (float) pulse * .10f);
@@ -616,7 +616,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         roundedRect(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
                 iconPlate * .5, RenderSystem.reAlpha(accentColor, iconAlpha * .22f));
         roundedOutline(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
-                iconPlate * .5, .85, new Color(255, 255, 255, clamp255(iconAlpha * 76f)));
+                iconPlate * .5, .85, new Color(255, 255, 255, DynamicIslandMath.clamp255(iconAlpha * 76f)));
         if (noticeMode) {
             renderNoticeIcon(activeNoticeType, iconX, iconY, iconAlpha, iconAccentColor, now);
         } else {
@@ -625,7 +625,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
         api.getGLStateManager().popMatrix();
 
-        float textAlpha = alpha * contentAlpha * (float) expansionValue * clamp01f(contentFade);
+        float textAlpha = alpha * contentAlpha * (float) expansionValue * DynamicIslandMath.clamp01f(contentFade);
         if (preview) textAlpha = alpha * (float) expansionValue;
         boolean staticVolumeCopy = noticeMode && activeNoticeType == IslandNoticeType.VOLUME;
         boolean transcodeCopy = noticeMode && activeNoticeType == IslandNoticeType.TRANSCODING;
@@ -637,7 +637,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             double textLeft = x + (systemCard ? 44.0 : (style == DynamicIslandStyle.CARD ? 39.0 : 37.0));
             double textRight = x + width - (systemCard ? 12.0 : 9.0);
             double textCenter = (textLeft + textRight) * .5;
-            double copySlide = (1.0 - clamp01(contentFade)) * CONTENT_CHANGE_SLIDE;
+            double copySlide = (1.0 - DynamicIslandMath.clamp01(contentFade)) * CONTENT_CHANGE_SLIDE;
             double titleY = y + (systemCard ? 9.0 : 5.4) + copySlide;
             double valueY = y + (systemCard ? 23.0 : 16.6) + copySlide;
 
@@ -661,11 +661,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                             availableWidth, layout.textScale,
                             hexColor(1f, 1f, 1f, renderedTextAlpha));
                     String percent = Math.max(0, Math.min(100,
-                            (int) Math.round(clamp01(noticeProgress) * 100.0))) + "%";
+                            (int) Math.round(DynamicIslandMath.clamp01(noticeProgress) * 100.0))) + "%";
                     drawCenteredIslandText(FontManager.pf12bold, percent, textRight - 10.0, transcodeValueY,
                             20.0, layout.textScale,
                             hexColor(.58f, .90f, 1f, renderedTextAlpha));                } else {
-                    double copyBlend = clamp01(noticeCopyBlend);
+                    double copyBlend = DynamicIslandMath.clamp01(noticeCopyBlend);
                     double noticeSlide = CONTENT_CHANGE_SLIDE * .62;
 
                     // A notification refresh keeps the island itself stable. The previous copy exits
@@ -704,19 +704,19 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     double progressRadius = progressHeight * .5;
                     roundedRect(progressX, progressY, progressWidth, progressHeight, progressRadius,
                             hexColor(1f, 1f, 1f, renderedTextAlpha * .12f));
-                    double fillWidth = progressWidth * clamp01(noticeProgress);
+                    double fillWidth = progressWidth * DynamicIslandMath.clamp01(noticeProgress);
                     if (fillWidth > .10) {
                         roundedRectGradientHorizontal(progressX, progressY, fillWidth, progressHeight,
                                 Math.min(progressRadius, fillWidth * .5),
-                                colorWithAlpha(accentColor, renderedTextAlpha * .98f),
-                                new Color(103, 216, 255, clamp255(renderedTextAlpha * 255f)));
+                                DynamicIslandMath.colorWithAlpha(accentColor, renderedTextAlpha * .98f),
+                                new Color(103, 216, 255, DynamicIslandMath.clamp255(renderedTextAlpha * 255f)));
                     }
                 }
             } else {
                 float loadingAlpha = textAlpha * (1f - success);
                 float completeAlpha = textAlpha * success;
                 String status = success > .52f ? "完成" : Math.max(0, Math.min(100,
-                        (int) Math.round(clamp01(progress) * 100.0))) + "%";
+                        (int) Math.round(DynamicIslandMath.clamp01(progress) * 100.0))) + "%";
                 double statusWidth = Math.max(25.0,
                         FontManager.pf12bold.getStringWidthD(status) * layout.textScale + 10.0);
                 double statusX = textRight - statusWidth;
@@ -746,14 +746,14 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 double progressY = y + height - (systemCard ? 7.0 : 3.7);
                 double progressWidth = width - (systemCard ? 16.0 : 18.0);
                 double progressHeight = Math.min(systemCard ? 3.8 : height * .22,
-                        clamp(HudConfig.dynamicIslandProgressHeight, .75, 4.0));
+                        DynamicIslandMath.clamp(HudConfig.dynamicIslandProgressHeight, .75, 4.0));
                 double progressRadius = progressHeight * .5;
                 roundedRect(progressX, progressY, progressWidth, progressHeight, progressRadius,
                         hexColor(1f, 1f, 1f, textAlpha * .10f));
-                double fillWidth = progressWidth * clamp01(progress);
+                double fillWidth = progressWidth * DynamicIslandMath.clamp01(progress);
                 if (fillWidth > .10) {
-                    Color startColor = colorWithAlpha(accentColor, textAlpha * .94f);
-                    Color endColor = new Color(103, 216, 255, clamp255(textAlpha * 255f));
+                    Color startColor = DynamicIslandMath.colorWithAlpha(accentColor, textAlpha * .94f);
+                    Color endColor = new Color(103, 216, 255, DynamicIslandMath.clamp255(textAlpha * 255f));
                     roundedRectGradientHorizontal(progressX, progressY, fillWidth, progressHeight,
                             Math.min(progressRadius, fillWidth * .5), startColor, endColor);
                 }
@@ -767,74 +767,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                                             IslandNoticeType noticeType, String noticeTitleValue,
                                             String noticeBodyValue, String speedValue, boolean preview,
                                             double configuredScale, double screenWidth) {
-        boolean volumeNotice = noticeMode && noticeType == IslandNoticeType.VOLUME;
-        String title;
-        String value;
-        if (noticeMode) {
-            title = safeNoticeValue(noticeTitleValue, "状态");
-            value = safeNoticeValue(noticeBodyValue, "—");
-        } else {
-            String speed = speedValue == null ? "" : speedValue.trim();
-            title = preview ? "灵动岛预览" : "正在加载歌曲";
-            value = preview ? speed : (speed.isEmpty() || "0 b/s".equalsIgnoreCase(speed)
-                    ? "正在连接音频源" : speed);
-        }
-
-        boolean systemCard = style == DynamicIslandStyle.SYSTEM_CARD;
-        double minWidth;
-        double targetHeight;
-        if (style == DynamicIslandStyle.COMPACT) {
-            minWidth = noticeMode ? 118.0 : 146.0;
-            targetHeight = noticeMode ? 30.0 : 32.0;
-        } else if (style == DynamicIslandStyle.CARD) {
-            minWidth = noticeMode ? 146.0 : 170.0;
-            targetHeight = noticeMode ? 38.0 : 42.0;
-        } else if (systemCard) {
-            minWidth = noticeMode ? 154.0 : 176.0;
-            targetHeight = noticeMode ? 46.0 : 52.0;
-        } else if (style == DynamicIslandStyle.GLASS) {
-            minWidth = noticeMode ? 132.0 : 158.0;
-            targetHeight = noticeMode ? 34.0 : 38.0;
-        } else {
-            minWidth = noticeMode ? 126.0 : 152.0;
-            targetHeight = noticeMode ? 34.0 : 38.0;
-        }
-
-        if (volumeNotice) {
-            // Reserve dedicated room for the volume progress track rather than squeezing text.
-            targetHeight += systemCard ? 8.0 : 7.0;
-        }
-
-        double titleWidth = FontManager.pf12.getStringWidthD(title);
-        double valueWidth = FontManager.pf14bold.getStringWidthD(value);
-        double widestText = Math.max(titleWidth, valueWidth);
-        double configuredTextScale = clamp(HudConfig.dynamicIslandTextScale,
-                MIN_AUTO_TEXT_SCALE, MAX_TEXT_SCALE);
-        // Match the text reservation to the wider, more legible left status icon.
-        double sideReserve = systemCard ? 60.0 : (style == DynamicIslandStyle.CARD ? 48.0 : 46.0);
-        if (!noticeMode) {
-            sideReserve += Math.max(31.0, FontManager.pf12bold.getStringWidthD("100%")
-                    * configuredTextScale + 14.0);
-        }
-
-        // The configured width is the preferred resting width, not a hard clipping boundary.
-        // Long messages are allowed to expand smoothly up to the usable screen width; only then
-        // is their type scaled down. This keeps success/error messages intact instead of turning
-        // their tail into an ellipsis at the old 250–320 px limit.
-        double screenMaxWidth = Math.max(COMPACT_WIDTH, (screenWidth - 12.0) / configuredScale);
-        double configuredPreferredWidth = clamp(HudConfig.dynamicIslandMaxWidth, 160.0, 720.0);
-        double desiredWidth = sideReserve + widestText * configuredTextScale;
-        double maxWidth = Math.min(screenMaxWidth, Math.max(configuredPreferredWidth, desiredWidth));
-        double safeMinWidth = Math.min(minWidth, maxWidth);
-        double textScale = configuredTextScale;
-        if (widestText > .01) {
-            double availableAtMax = Math.max(28.0, maxWidth - sideReserve);
-            textScale = Math.min(textScale, Math.max(MIN_AUTO_TEXT_SCALE, availableAtMax / widestText));
-        }
-        double targetWidth = clamp(sideReserve + widestText * textScale, safeMinWidth, maxWidth);
-        return new IslandLayout(title, value, textScale, targetWidth, targetHeight);
+        DynamicIslandLayoutCalculator.LayoutData layout = DynamicIslandLayoutCalculator.calculate(
+                style, noticeMode, noticeMode && noticeType == IslandNoticeType.VOLUME,
+                noticeTitleValue, noticeBodyValue, speedValue, preview, configuredScale, screenWidth,
+                COMPACT_WIDTH, MIN_AUTO_TEXT_SCALE, MAX_TEXT_SCALE);
+        return new IslandLayout(layout.title, layout.value, layout.textScale,
+                layout.targetWidth, layout.targetHeight);
     }
-
     private double animateExpandedDimension(double current, double target, boolean width) {
         if (current <= .0) return target;
         // Expansion reacts a little faster than contraction; this reads as deliberate rather than
@@ -846,7 +785,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private void drawCenteredIslandText(CFontRenderer font, String text, double centerX, double y,
                                          double maxWidth, double textScale, int color) {
         if (font == null || text == null || text.isEmpty()) return;
-        double safeScale = clamp(textScale, MIN_AUTO_TEXT_SCALE, MAX_TEXT_SCALE);
+        double safeScale = DynamicIslandMath.clamp(textScale, MIN_AUTO_TEXT_SCALE, MAX_TEXT_SCALE);
         String trimmed = trimIslandText(font, text, Math.max(18.0, maxWidth / safeScale));
         if (trimmed.isEmpty()) return;
         double textWidth = font.getStringWidthD(trimmed) * safeScale;
@@ -978,11 +917,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     private void renderSuccess(double centerX, double centerY, float alpha) {
         if (alpha <= .01f) return;
-        double scale = .78 + .22 * smoothStep(successMorph);
+        double scale = .78 + .22 * DynamicIslandMath.smoothStep(successMorph);
         api.getGLStateManager().pushMatrix();
         scaleAtPos(centerX, centerY, scale);
         roundedOutline(centerX - 6.2, centerY - 6.2, 12.4, 12.4, 6.2, .75,
-                new Color(91, 240, 129, clamp255(alpha * 220f)));
+                new Color(91, 240, 129, DynamicIslandMath.clamp255(alpha * 220f)));
         drawRotatedPill(centerX - 1.8, centerY + .8, 3.8, 1.25, 43f,
                 hexColor(.70f, 1f, .77f, alpha));
         drawRotatedPill(centerX + 1.6, centerY - .4, 6.2, 1.25, -47f,
@@ -1018,59 +957,5 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         PLAYBACK_ERROR
     }
 
-    private static int parseNoticePercent(String value) {
-        if (value == null) return 0;
-        String digits = value.replaceAll("[^0-9]", "");
-        try {
-            return Math.max(0, Math.min(100, Integer.parseInt(digits)));
-        } catch (NumberFormatException ignored) {
-            return 0;
-        }
-    }
 
-    private static long getCompletionHoldMs() {
-        return Math.round(clamp(HudConfig.dynamicIslandCompletionHoldSeconds, .5, 6.0) * 1000.0);
-    }
-
-    private static double smoothStep(double value) {
-        double clamped = clamp01(value);
-        return clamped * clamped * (3.0 - 2.0 * clamped);
-    }
-
-    private static double lerp(double start, double end, double progress) {
-        return start + (end - start) * progress;
-    }
-
-    private static double clamp01(double value) {
-        return clamp(value, 0.0, 1.0);
-    }
-
-    private static float clamp01f(float value) {
-        return Math.max(0f, Math.min(1f, value));
-    }
-
-    private static double clamp(double value, double min, double max) {
-        return Math.max(min, Math.min(max, value));
-    }
-
-    private static int clamp255(float value) {
-        return Math.max(0, Math.min(255, Math.round(value)));
-    }
-
-    /** Raises low-contrast theme accents toward white only for the small island status glyph. */
-    private static int brightenIslandAccent(int color, float amount) {
-        float safeAmount = clamp01f(amount);
-        int red = (color >> 16) & 0xFF;
-        int green = (color >> 8) & 0xFF;
-        int blue = color & 0xFF;
-        red = Math.round(red + (255 - red) * safeAmount);
-        green = Math.round(green + (255 - green) * safeAmount);
-        blue = Math.round(blue + (255 - blue) * safeAmount);
-        return 0xFF000000 | (red << 16) | (green << 8) | blue;
-    }
-
-    private static Color colorWithAlpha(int color, float alpha) {
-        return new Color((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF,
-                clamp255(clamp01f(alpha) * 255f));
-    }
 }

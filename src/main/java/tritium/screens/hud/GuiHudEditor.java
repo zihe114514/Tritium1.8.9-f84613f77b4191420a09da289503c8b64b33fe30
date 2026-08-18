@@ -110,7 +110,7 @@ public class GuiHudEditor extends GuiScreen {
     public void initGui() {
         Keyboard.enableRepeatEvents(true);
         ensureHexColorInput();
-        settingsScroll = clampScroll(settingsScroll, getSettingsPanelHeight());
+        settingsScroll = getSettingsLayout().clampScroll(settingsScroll, getSettingsLayout().panelHeight);
     }
 
     @Override
@@ -149,7 +149,7 @@ public class GuiHudEditor extends GuiScreen {
             int sh = height;
             int panelX = sw - SETTINGS_W - SETTINGS_MARGIN;
             int panelY = SETTINGS_MARGIN;
-            int panelH = getSettingsPanelHeight();
+            int panelH = getSettingsLayout().panelHeight;
 
             drawEditorBackdrop(panelX, panelY, panelH);
             DownloadDynamicIsland.renderEditorPreview();
@@ -157,9 +157,9 @@ public class GuiHudEditor extends GuiScreen {
             int wheel = resetConfirmationVisible ? 0 : Mouse.getDWheel();
             boolean overPanel = isInside(mouseX, mouseY, panelX, panelY, SETTINGS_W, panelH);
             boolean overPicker = editingColor != EditingColor.NONE && isInside(mouseX, mouseY,
-                    getPickerX(panelX), getPickerY(panelY), PICKER_W, PICKER_H);
+                    getSettingsLayout().pickerX(panelX), getSettingsLayout().pickerY(panelY), PICKER_W, PICKER_H);
             if (wheel != 0 && overPanel) {
-                settingsScroll = clampScroll(settingsScroll + (wheel > 0 ? -24 : 24), panelH);
+                settingsScroll = getSettingsLayout().clampScroll(settingsScroll + (wheel > 0 ? -24 : 24), panelH);
                 wheel = 0;
             }
 
@@ -434,11 +434,11 @@ public class GuiHudEditor extends GuiScreen {
             GL11.glDisable(GL11.GL_SCISSOR_TEST);
         }
 
-        int maxScroll = getMaxSettingsScroll(h);
+        int maxScroll = getSettingsLayout().maxScroll(h);
         if (maxScroll > 0) {
             int trackTop = contentTop + 3;
             int trackH = contentBottom - contentTop - 6;
-            int thumbH = Math.max(22, trackH * (contentBottom - contentTop) / getSettingsContentHeight());
+            int thumbH = Math.max(22, trackH * (contentBottom - contentTop) / getSettingsLayout().contentHeight);
             int thumbY = trackTop + (trackH - thumbH) * settingsScroll / maxScroll;
             drawRoundedRect(x + SETTINGS_W - 6, trackTop, 3, trackH, 2, 0x663A4655);
             drawRoundedRect(x + SETTINGS_W - 7, thumbY, 5, thumbH, 3, 0xFF70839A);
@@ -513,8 +513,8 @@ public class GuiHudEditor extends GuiScreen {
         drawRoundedRect(fillX - 1, trackY - 1, 3, 5, 2, 0xFFBDAFFF);
     }
     private void drawColorPicker(FontRenderer fr, int panelX, int panelY, int mouseX, int mouseY) {
-        int x = getPickerX(panelX);
-        int y = getPickerY(panelY);
+        int x = getSettingsLayout().pickerX(panelX);
+        int y = getSettingsLayout().pickerY(panelY);
         drawSoftCardShadow(x, y, PICKER_W, PICKER_H, 12);
         drawRoundedRect(x, y, PICKER_W, PICKER_H, 12, 0xF51A202A);
         drawRoundedRect(x + 1, y + 1, PICKER_W - 2, 27, 10, 0xFF252E3B);
@@ -675,11 +675,11 @@ public class GuiHudEditor extends GuiScreen {
         MusicLyricsWidget lyrics = MuoniumPlayerExtension.getInstance().musicLyrics;
         int panelX = width - SETTINGS_W - SETTINGS_MARGIN;
         int panelY = SETTINGS_MARGIN;
-        int panelH = getSettingsPanelHeight();
+        int panelH = getSettingsLayout().panelHeight;
 
         if (editingColor != EditingColor.NONE) {
-            int pickerX = getPickerX(panelX);
-            int pickerY = getPickerY(panelY);
+            int pickerX = getSettingsLayout().pickerX(panelX);
+            int pickerY = getSettingsLayout().pickerY(panelY);
             if (isInside(mouseX, mouseY, pickerX + PICKER_W - 24, pickerY + 5, 16, 16)) {
                 editingColor = EditingColor.NONE;
                 if (hexColorInput != null) hexColorInput.setFocused(false);
@@ -741,7 +741,7 @@ public class GuiHudEditor extends GuiScreen {
             int rowY = panelY + SETTINGS_HEADER_H - settingsScroll;
             if (isInside(mouseX, mouseY, panelX + 5, rowY, SETTINGS_W - 10, SECTION_H)) {
                 currentExpanded = !currentExpanded;
-                settingsScroll = clampScroll(settingsScroll, panelH);
+                settingsScroll = getSettingsLayout().clampScroll(settingsScroll, panelH);
                 return;
             }
             rowY += SECTION_H;
@@ -775,7 +775,7 @@ public class GuiHudEditor extends GuiScreen {
 
             if (isInside(mouseX, mouseY, panelX + 5, rowY, SETTINGS_W - 10, SECTION_H)) {
                 normalExpanded = !normalExpanded;
-                settingsScroll = clampScroll(settingsScroll, panelH);
+                settingsScroll = getSettingsLayout().clampScroll(settingsScroll, panelH);
                 return;
             }
             rowY += SECTION_H;
@@ -809,7 +809,7 @@ public class GuiHudEditor extends GuiScreen {
 
             if (isInside(mouseX, mouseY, panelX + 5, rowY, SETTINGS_W - 10, SECTION_H)) {
                 islandExpanded = !islandExpanded;
-                settingsScroll = clampScroll(settingsScroll, panelH);
+                settingsScroll = getSettingsLayout().clampScroll(settingsScroll, panelH);
                 return;
             }
             rowY += SECTION_H;
@@ -1032,8 +1032,8 @@ public class GuiHudEditor extends GuiScreen {
 
     private void applyPickerAt(int mouseX, int mouseY, MusicLyricsWidget lyrics,
                                int panelX, int panelY) {
-        int pickerX = getPickerX(panelX);
-        int pickerY = getPickerY(panelY);
+        int pickerX = getSettingsLayout().pickerX(panelX);
+        int pickerY = getSettingsLayout().pickerY(panelY);
         int svX = pickerX + 12;
         int svY = pickerY + 32;
         int hueY = svY + SV_H + 10;
@@ -1102,37 +1102,12 @@ public class GuiHudEditor extends GuiScreen {
         }
     }
 
-    private int getSettingsPanelHeight() {
-        if (settingsCollapsed) {
-            return COLLAPSED_SETTINGS_H;
-        }
-        return Math.max(132, height - SETTINGS_MARGIN - 42);
+    private HudEditorLayout.Metrics getSettingsLayout() {
+        return HudEditorLayout.calculate(height, settingsCollapsed, currentExpanded, normalExpanded,
+                islandExpanded, SETTINGS_MARGIN, COLLAPSED_SETTINGS_H, SETTINGS_HEADER_H,
+                SECTION_H, COLOR_ROW_H, SLIDER_ROW_H, CURRENT_SLIDERS.length,
+                NORMAL_SLIDERS.length, ISLAND_SLIDERS.length, PICKER_W);
     }
-
-    private int getSettingsContentHeight() {
-        int result = SECTION_H * 3 + 8;
-        if (currentExpanded) result += COLOR_ROW_H * 3 + CURRENT_SLIDERS.length * SLIDER_ROW_H;
-        if (normalExpanded) result += COLOR_ROW_H * 3 + NORMAL_SLIDERS.length * SLIDER_ROW_H;
-        if (islandExpanded) result += COLOR_ROW_H * 2 + ISLAND_SLIDERS.length * SLIDER_ROW_H;
-        return result;
-    }
-
-    private int getMaxSettingsScroll(int panelH) {
-        return Math.max(0, getSettingsContentHeight() - (panelH - SETTINGS_HEADER_H - 2));
-    }
-
-    private int clampScroll(int value, int panelH) {
-        return Math.max(0, Math.min(getMaxSettingsScroll(panelH), value));
-    }
-
-    private int getPickerX(int panelX) {
-        return Math.max(SETTINGS_MARGIN, panelX - PICKER_W - 8);
-    }
-
-    private int getPickerY(int panelY) {
-        return panelY + SETTINGS_HEADER_H;
-    }
-
     private void beginScissor(int x, int y, int w, int h) {
         ScaledResolution scaled = new ScaledResolution(mc);
         int scale = scaled.getScaleFactor();

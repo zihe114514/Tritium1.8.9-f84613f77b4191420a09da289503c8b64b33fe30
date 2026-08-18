@@ -154,26 +154,25 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
      * second, larger lyric viewport.
      */
     private static double getContentScale(float alpha) {
-        return .96 + (Math.max(0.0f, Math.min(1.0f, alpha)) * .04);
+        return LyricsPanelGeometry.contentScale(alpha);
     }
 
     /** Smooths the KTV sweep without decoupling it from the actual audio position. */
     private static double smoothKaraokeProgress(double value) {
-        double clamped = Math.max(0.0, Math.min(1.0, value));
-        return clamped * clamped * (3.0 - 2.0 * clamped);
+        return LyricsPanelGeometry.smoothKaraokeProgress(value);
     }
 
     /** Individual characters ease into the active state in a short cascading wave. */
     private static double getCharacterKaraokeProgress(double wordProgress, int characterIndex) {
-        return smoothKaraokeProgress(wordProgress - characterIndex);
+        return LyricsPanelGeometry.characterKaraokeProgress(wordProgress, characterIndex);
     }
 
     private static double getLyricLineSpacing() {
-        return 20;
+        return LyricsPanelGeometry.lyricLineSpacing();
     }
 
     private static double lyricFraction() {
-        return .25;
+        return LyricsPanelGeometry.lyricAnchorFraction();
     }
 
     /**
@@ -182,14 +181,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
      * the blur kernel inside the live player window at every configured player scale.
      */
     private static LyricViewport createLyricViewport(double posX, double posY, double width, double height) {
-        double border = NCMScreen.getInstance().getPlayerBorderThickness();
-        double horizontalInset = Math.max(8.0, width * .04);
-        double verticalInset = Math.max(border, Math.min(10.0, height * .018));
-        double left = posX + width * .48;
-        double right = Math.max(left, posX + width - horizontalInset);
-        double top = posY + verticalInset;
-        double bottom = Math.max(top, posY + height - verticalInset);
-        return new LyricViewport(left, top, right - left, bottom - top);
+        LyricsPanelGeometry.Viewport viewport = LyricsPanelGeometry.createViewport(posX, posY, width, height,
+                NCMScreen.getInstance().getPlayerBorderThickness());
+        return new LyricViewport(viewport.left, viewport.top, viewport.width, viewport.height);
     }
 
     public static void updateLyricPositionsImmediate(double width) {
@@ -749,7 +743,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     private double getCoverSizeMax(double width, double height) {
-        return Math.min(height * .46, width * .36);
+        return LyricsPanelGeometry.coverSizeMax(width, height);
     }
 
     private double getCoverSizeMin() {
@@ -941,22 +935,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     private String formatDuration(float totalMillis) {
-        float totalSeconds = totalMillis / 1000;
-
-        float hours = totalSeconds / 3600;
-        float minutes = (totalSeconds % 3600) / 60;
-        float seconds = totalSeconds % 60;
-
-        StringBuilder sb = new StringBuilder();
-
-        if ((int) hours > 0) {
-            sb.append(String.format("%02d:", (int) hours));
-        }
-
-        sb.append(String.format("%02d:", (int) minutes));
-        sb.append(String.format("%02d", (int) seconds));
-
-        return sb.toString();
+        return LyricsPanelGeometry.formatDuration(totalMillis);
     }
 
     private void renderBackground(double posX, double posY, double width, double height, float alpha, CloudMusic.PlaybackSnapshot snapshot) {
