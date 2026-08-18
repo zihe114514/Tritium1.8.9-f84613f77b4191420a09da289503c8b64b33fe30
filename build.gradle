@@ -31,7 +31,9 @@ plugins {
 }
 */
 version = "1.0.0"
-group = "com.deuterium.music"
+// Maven/Gradle artifact identity. Runtime compatibility remains anchored to
+// the legacy Forge mod id `deuteriummusic` in MuoniumPlayerMod.
+group = "com.muoniumplayer"
 archivesBaseName = "MuoniumPlayer"
 
 sourceCompatibility = targetCompatibility = '1.8'
@@ -148,22 +150,6 @@ processResources
     from(sourceSets.main.resources.srcDirs) {
         exclude 'mcmod.info'
     }
-}
-
-// S2 冒烟测试：直接驱动原网易云 API 链路（不启动 Minecraft）。
-task smokeTest(type: JavaExec) {
-    dependsOn 'testClasses'
-    classpath = sourceSets.test.runtimeClasspath
-    main = 'com.deuterium.music.NcmApiSmokeTest'
-    jvmArgs '-Dfile.encoding=UTF-8'
-}
-
-// S3 冒烟测试：真实 MP3 下载 → 解码 → AudioPlayer 播放/暂停/Seek/停止（不启动 Minecraft）。
-task audioSmokeTest(type: JavaExec) {
-    dependsOn 'testClasses'
-    classpath = sourceSets.test.runtimeClasspath
-    main = 'com.deuterium.music.AudioPlaybackSmokeTest'
-    jvmArgs '-Dfile.encoding=UTF-8'
 }
 
 // ==== InputFix CoreMod 清单：让本 jar 同时作为 FML CoreMod 加载（中文输入修复）====

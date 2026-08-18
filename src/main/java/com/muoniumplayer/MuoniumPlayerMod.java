@@ -21,18 +21,18 @@ import today.opai.api.features.ExtensionWidget;
 import today.opai.api.impl.OpenAPIImpl;
 import today.opai.api.impl.WindowResolutionImpl;
 import today.opai.api.interfaces.EventHandler;
-import tritium.MuoniumPlayerExtension;
-import tritium.ncm.music.CloudMusic;
-import tritium.rendering.DownloadDynamicIsland;
-import tritium.rendering.Framebuffer;
-import tritium.rendering.animation.Interpolations;
-import tritium.rendering.rendersystem.RenderSystem;
-import tritium.screens.hud.GuiHudEditor;
+import com.muoniumplayer.core.MuoniumPlayerExtension;
+import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.rendering.Framebuffer;
+import com.muoniumplayer.core.rendering.animation.Interpolations;
+import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
+import com.muoniumplayer.core.screens.hud.GuiHudEditor;
 
 /**
  * Forge 1.8.9 Mod 入口。
  *
- * 原项目（Deuterium 客户端扩展）通过 Opai 客户端的 OpenAPI 加载；
+ * 历史客户端扩展通过 Opai 客户端的 OpenAPI 加载；
  * 独立 Mod 化后，本类承担：
  *  1. @Mod 注解让 Forge 识别并加载本 mod；
  *  2. preInit 阶段注入 OpenAPIImpl 单例，并初始化 MuoniumPlayerExtension；
@@ -149,7 +149,7 @@ public class MuoniumPlayerMod {
         // isPressed() 为上升沿触发：按下一次返回 true 一次，按住不重复，无需手动维护上一帧状态。
         if (mc.thePlayer != null && mc.currentScreen == null) {
             if (keyOpenMusic.isPressed()) {
-                MuoniumPlayerExtension.getInstance().tritiumMusic.setEnabled(true);
+                MuoniumPlayerExtension.getInstance().musicPlayerModule.setEnabled(true);
             }
             if (keyEditHud.isPressed()) {
                 mc.displayGuiScreen(new GuiHudEditor());
@@ -247,6 +247,5 @@ public class MuoniumPlayerMod {
         }
     }
 }
-
 
 
