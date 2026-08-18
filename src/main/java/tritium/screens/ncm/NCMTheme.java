@@ -5,18 +5,13 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.Reader;
-import java.io.Writer;
-import java.nio.charset.StandardCharsets;
+import tritium.settings.ConfigPaths;
+import tritium.settings.JsonConfigStorage;
 
 /** 播放器主题：读取主题色时实时生效，切换时使用平滑颜色过渡。 */
 public final class NCMTheme {
 
-    private static final File FILE = new File("tritium_player_theme.json");
+    private static final File FILE = ConfigPaths.THEME;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final long TRANSITION_DURATION_NANOS = 950_000_000L;
 
@@ -33,8 +28,8 @@ public final class NCMTheme {
         if (loaded) return;
         loaded = true;
         if (!FILE.exists()) return;
-        try (Reader reader = new InputStreamReader(new FileInputStream(FILE), StandardCharsets.UTF_8)) {
-            JsonObject object = GSON.fromJson(reader, JsonObject.class);
+        try {
+            JsonObject object = JsonConfigStorage.readObject(FILE, GSON);
             if (object != null && object.has("theme")) {
                 current = ThemePreset.fromId(object.get("theme").getAsString());
             }
@@ -133,9 +128,8 @@ public final class NCMTheme {
         try {
             JsonObject object = new JsonObject();
             object.addProperty("theme", current.getId());
-            try (Writer writer = new OutputStreamWriter(new FileOutputStream(FILE), StandardCharsets.UTF_8)) {
-                writer.write(GSON.toJson(object));
-            }
+            JsonConfigStorage.writeObject(FILE, GSON, object);
+
         } catch (Throwable ignored) {
         }
     }

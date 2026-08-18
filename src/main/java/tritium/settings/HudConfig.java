@@ -5,13 +5,6 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.Reader;
-import java.io.Writer;
-import java.nio.charset.StandardCharsets;
 
 /**
  * The position, scale, and built-in editor appearance settings for the music HUDs.
@@ -25,7 +18,7 @@ public final class HudConfig {
     public static final float SCALE_MIN = 0.5f;
     public static final float SCALE_MAX = 2.0f;
 
-    private static final File FILE = new File("deuteriummusic_hud.json");
+    private static final File FILE = ConfigPaths.HUD;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     /** Song information card: top-left corner. */
@@ -140,8 +133,8 @@ public final class HudConfig {
         if (!FILE.exists()) {
             return;
         }
-        try (Reader r = new InputStreamReader(new FileInputStream(FILE), StandardCharsets.UTF_8)) {
-            JsonObject o = GSON.fromJson(r, JsonObject.class);
+        try {
+            JsonObject o = JsonConfigStorage.readObject(FILE, GSON);
             if (o == null) {
                 return;
             }
@@ -240,9 +233,8 @@ public final class HudConfig {
             o.addProperty("dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds);
             o.addProperty("dynamicIslandStyle", dynamicIslandStyle);
 
-            try (Writer w = new OutputStreamWriter(new FileOutputStream(FILE), StandardCharsets.UTF_8)) {
-                w.write(GSON.toJson(o));
-            }
+            JsonConfigStorage.writeObject(FILE, GSON, o);
+
         } catch (Throwable ignored) {
         }
     }

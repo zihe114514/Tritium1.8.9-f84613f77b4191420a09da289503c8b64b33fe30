@@ -5,14 +5,9 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.Reader;
-import java.io.Writer;
-import java.nio.charset.StandardCharsets;
 import tritium.ncm.music.Quality;
+import tritium.settings.ConfigPaths;
+import tritium.settings.JsonConfigStorage;
 
 
 /** 持久化播放器窗口尺寸。布局使用真实逻辑尺寸，避免额外 GL 缩放造成点击和裁剪错位。 */
@@ -22,7 +17,7 @@ public final class NCMPlayerConfig {
     public static final float MAX_SCALE = 1.00f;
     public static final float SCALE_STEP = 0.05f;
 
-    private static final File FILE = new File("tritium_player_config.json");
+    private static final File FILE = ConfigPaths.PLAYER;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private static float playerScale = 1.0f;
@@ -37,8 +32,8 @@ public final class NCMPlayerConfig {
         loaded = true;
 
         if (!FILE.exists()) return;
-        try (Reader reader = new InputStreamReader(new FileInputStream(FILE), StandardCharsets.UTF_8)) {
-            JsonObject object = GSON.fromJson(reader, JsonObject.class);
+        try {
+            JsonObject object = JsonConfigStorage.readObject(FILE, GSON);
             if (object != null && object.has("playerScale")) {
                 playerScale = normalize(object.get("playerScale").getAsFloat());
             }
@@ -118,9 +113,8 @@ public final class NCMPlayerConfig {
             JsonObject object = new JsonObject();
             object.addProperty("playerScale", playerScale);
             object.addProperty("audioQuality", getAudioQuality().name());
-            try (Writer writer = new OutputStreamWriter(new FileOutputStream(FILE), StandardCharsets.UTF_8)) {
-                writer.write(GSON.toJson(object));
-            }
+            JsonConfigStorage.writeObject(FILE, GSON, object);
+
         } catch (Throwable ignored) {
         }
     }

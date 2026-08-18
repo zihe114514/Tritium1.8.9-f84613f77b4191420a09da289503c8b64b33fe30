@@ -11,7 +11,7 @@ import today.opai.api.interfaces.render.ShaderUtil;
 /**
  * Forge 1.8.9 适配层：对应原项目 today.opai.api.OpenAPI 的只读门面。
  * 原项目通过 Opai 客户端的 OpenAPI 访问客户端能力；此处作为单例，
- * 由 {@code DeuteriumMusicMod} 在初始化时注入具体实现。
+ * 由 {@code MuoniumPlayerMod} 在初始化时注入具体实现。
  */
 public abstract class OpenAPI {
 

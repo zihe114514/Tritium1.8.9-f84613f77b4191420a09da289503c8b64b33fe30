@@ -18,10 +18,10 @@ import top.fpsmaster.music.store.MusicCredentialStore;
 import tritium.ncm.OptionsUtil;
 import tritium.ncm.music.dto.Music;
 import tritium.ncm.music.dto.PlayList;
+import tritium.settings.ConfigPaths;
 import tritium.utils.Tuple;
 
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -36,7 +36,7 @@ public final class CadenceMusicService {
 
     private static final MusicService SERVICE = new MusicService();
     private static final MusicCredentialStore CREDENTIALS = new MusicCredentialStore(
-            Paths.get("config", "tritium", "music_auth.json"));
+            ConfigPaths.MUSIC_AUTH);
     private static final MusicHttp QQ_HTTP = new MusicHttp();
     private static final Object QQ_PLAYLIST_LOCK = new Object();
     private static final long QQ_PLAYLIST_RETRY_DELAY_MS = 15_000L;
