@@ -97,8 +97,10 @@ public class MusicWidget extends RoundedRectWidget {
 
         this.setOnClickCallback((x, y, i) -> {
 
-            if (i == 0)
+            if (i == 0) {
+                CloudMusic.currentPlaylistContext = playList.isSearchMode() ? null : playList;
                 CloudMusic.play(playList.getMusics(), index);
+            }
 
             return true;
         });
@@ -147,7 +149,7 @@ public class MusicWidget extends RoundedRectWidget {
         this.addChild(lblMusicName);
 
         lblMusicName
-                .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
+                .setWidthLimitType(LabelWidget.WidthLimitType.SCROLL)
                 .setBeforeRenderCallback(() -> {
                     lblMusicName.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
                     lblMusicName.centerVertically();
@@ -276,7 +278,7 @@ public class MusicWidget extends RoundedRectWidget {
         this.addChild(lblMusicArtist);
 
         lblMusicArtist
-                .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
+                .setWidthLimitType(LabelWidget.WidthLimitType.SCROLL)
                 .setBeforeRenderCallback(() -> {
                     if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.equals(music))
                         lblMusicArtist.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));

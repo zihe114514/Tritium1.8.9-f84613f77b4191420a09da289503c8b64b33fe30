@@ -23,6 +23,7 @@ import tritium.rendering.ui.widgets.RoundedRectWidget;
 import tritium.screens.ncm.panels.ControlsBar;
 import tritium.screens.ncm.panels.HomePanel;
 import tritium.screens.ncm.panels.NavigateBar;
+import tritium.screens.ncm.panels.PlaylistPanel;
 import tritium.utils.cursor.CursorUtils;
 import tritium.utils.other.multithreading.MultiThreadingUtil;
 
@@ -485,6 +486,16 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         }
     }
 
+    /**
+     * Rebuilds the visible playlist panel after asynchronously loaded metadata
+     * changes its row badges. Other panels are intentionally left untouched so
+     * an account refresh cannot trigger duplicate home/search requests.
+     */
+    public void reloadCurrentPanel() {
+        if (this.currentPanel instanceof PlaylistPanel) {
+            this.currentPanel.onInit();
+        }
+    }
     private void innerSetCurrentPanel(NCMPanel panel, boolean shouldCallInit) {
         this.prevAnimatingPanel = this.currentPanel;
         this.prevAnimatingPanelAlpha = 1.0f;

@@ -223,6 +223,15 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         publishNotice(IslandNoticeType.QUALITY, "获取音质：" + safeQuality, "格式: " + safeFormat);
     }
 
+    /**
+     * Reports a generic MP4 payload detected from the downloaded bytes. The playback pipeline keeps
+     * the header check but intentionally does not transcode this container.
+     */
+    public static void showUnsupportedMp4Container(String sourceName) {
+        publishNotice(IslandNoticeType.PLAYBACK_ERROR, "检测到不兼容 MP4 容器",
+                safeNoticeValue(sourceName, "当前音频") + " · 已跳过并尝试备用音源");
+    }
+
     /** Reports a real playback failure without treating a user-initiated track switch as an error. */
     public static void showPlaybackFailure(String songName, String reason) {
         String safeSong = safeNoticeValue(songName, "当前歌曲");

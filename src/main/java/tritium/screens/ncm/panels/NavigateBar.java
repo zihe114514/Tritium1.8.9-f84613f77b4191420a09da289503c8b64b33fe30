@@ -41,9 +41,10 @@ import java.util.function.Supplier;
  */
 public class NavigateBar extends NCMPanel {
 
-
     TextFieldWidget searchField = new TextFieldWidget(FontManager.pf14bold);
-    /** NetEase cloud search supports both tracks and playlists; QQ Cadence currently exposes tracks only. */
+    /**
+     * NetEase cloud search supports both tracks and playlists; QQ Cadence currently exposes tracks only.
+     */
     private boolean playlistSearchMode;
     ScrollPanel playlistPanel = new ScrollPanel();
     private PlaylistItem homeItem;
@@ -99,13 +100,13 @@ public class NavigateBar extends NCMPanel {
 
         searchBar
 //            .setShouldSetMouseCursor(true)
-            .setBeforeRenderCallback(() -> {
-                searchBar.setAlpha(1f);
-                searchBar.setColor(NCMScreen.getColor(NCMScreen.ColorType.BORDER));
-                searchBar.setMargin(8);
-                searchBar.setHeight(16);
-                searchBar.setRadius(3.5);
-            });
+                .setBeforeRenderCallback(() -> {
+                    searchBar.setAlpha(1f);
+                    searchBar.setColor(NCMScreen.getColor(NCMScreen.ColorType.BORDER));
+                    searchBar.setMargin(8);
+                    searchBar.setHeight(16);
+                    searchBar.setRadius(3.5);
+                });
 
         RoundedRectWidget searchBarBg = new RoundedRectWidget();
         searchBar.addChild(searchBarBg);
@@ -232,7 +233,7 @@ public class NavigateBar extends NCMPanel {
             sourceTrack.setAlpha(.72f);
         });
 
-SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
+        SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
         SourceButton qqSource = createSourceButton(MusicPlatform.QQ);
         sourceSwitcher.addChild(neteaseSource);
         sourceSwitcher.addChild(qqSource);
@@ -268,6 +269,30 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
             this.playlistPanel.addChild(item);
         }
 
+        boolean qqMode = CadenceMusicService.getCurrentPlatform() == MusicPlatform.QQ;
+        boolean neteaseMode = !qqMode;
+        if (neteaseMode) {
+            LabelWidget lblDiscovery = new LabelWidget("网易云发现", FontManager.pf14bold);
+            lblDiscovery.setClickable(false);
+            lblDiscovery.setBeforeRenderCallback(() -> {
+                lblDiscovery.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+                lblDiscovery.setPosition(6, lblDiscovery.getRelativeY());
+            });
+            this.playlistPanel.addChild(lblDiscovery);
+
+            this.playlistPanel.addChild(new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                    () -> "热搜", () -> NCMScreen.getInstance().setCurrentPanel(
+                    new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.HOT_SEARCH))));
+            this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                    () -> "排行榜", () -> NCMScreen.getInstance().setCurrentPanel(
+                    new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.TOP_LISTS))));
+            this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                    () -> "我的数字专辑", () -> NCMScreen.getInstance().setCurrentPanel(
+                    new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.DIGITAL_ALBUMS))));
+            this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                    () -> "最近播放", () -> NCMScreen.getInstance().setCurrentPanel(
+                    new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.RECENT_SONGS))));
+        }
         LabelWidget lblPlaylists = new LabelWidget("我的歌单", FontManager.pf14bold);
         lblPlaylists.setBeforeRenderCallback(() -> {
             lblPlaylists.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
@@ -276,8 +301,6 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
 
         this.playlistPanel.addChild(lblPlaylists);
 
-        boolean qqMode = CadenceMusicService.getCurrentPlatform() == MusicPlatform.QQ;
-        boolean neteaseMode = !qqMode;
         // QQ 账号歌单由 Cadence 异步加载；网易云继续使用现有 CloudMusic 缓存。
         List<PlayList> pl = qqMode
                 ? CadenceMusicService.getQQUserPlaylistsSnapshot()
@@ -441,6 +464,10 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
                         btnRefresh.setSpinning(false);
                         if (result.isSuccess()) {
                             NCMScreen.getInstance().markDirty();
+                            // The cloud-song ID set is loaded asynchronously during
+                            // the refresh. Rebuild the visible playlist rows so the
+                            // newly available "网盘" badge is created immediately.
+                            NCMScreen.getInstance().reloadCurrentPanel();
                             DownloadDynamicIsland.showPlaylistRefreshSuccess(
                                     result.getPlaylistCount(), result.getElapsedMillis());
                         } else {
@@ -586,13 +613,16 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
             });
         }
     }
+
     private enum SidebarActionIcon {
         THEME,
         SCALE,
         REFRESH
     }
 
-    /** Compact vector icon button that stays legible at every player scale. */
+    /**
+     * Compact vector icon button that stays legible at every player scale.
+     */
     private static final class SidebarActionButton extends RoundedRectWidget {
         private final SidebarActionIcon icon;
         private float hoverAnimation;
@@ -747,7 +777,9 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
         }
     }
 
-    /** Re-selects the sidebar item that represents the currently visible content panel. */
+    /**
+     * Re-selects the sidebar item that represents the currently visible content panel.
+     */
     public void selectCurrentPanel(NCMPanel panel) {
         PlaylistItem selectedItem = null;
         if (panel instanceof HomePanel) {
@@ -857,7 +889,10 @@ SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
         }
 
     }
-    /** Executes the documented NetEase cloud-search playlist endpoint (type 1000). */
+
+    /**
+     * Executes the documented NetEase cloud-search playlist endpoint (type 1000).
+     */
     private List<PlayList> searchNeteasePlaylists(String keyword) {
         List<PlayList> results = new ArrayList<>();
         try {

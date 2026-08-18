@@ -7,6 +7,7 @@ import tritium.ncm.music.CloudMusic;
 import tritium.screens.ncm.NCMPlayerConfig;
 import tritium.rendering.DownloadDynamicIsland;
 import tritium.ncm.music.Quality;
+import tritium.ncm.music.dto.PlayList;
 import tritium.rendering.ui.widgets.*;
 import tritium.screens.ncm.MusicLyricsPanel;
 import tritium.screens.ncm.NCMPanel;
@@ -139,6 +140,34 @@ public class ControlsBar extends NCMPanel {
                     return true;
                 });
 
+        // Heart mode is a bottom-player control rather than a playlist-header text button.
+        // It remains visible but muted when the current queue did not originate from a NetEase playlist.
+        IconWidget intelligenceMode = new IconWidget("♥", FontManager.pf20bold, 0, 0, 20, 20);
+        this.addChild(intelligenceMode);
+        intelligenceMode.setShouldOverrideMouseCursor(true);
+        intelligenceMode.setBeforeRenderCallback(() -> {
+            PlayList context = CloudMusic.currentPlaylistContext;
+            boolean available = context != null && context.getPlatform() == tritium.ncm.music.MusicPlatform.NETEASE
+                    && context.getId() > 0 && CloudMusic.currentlyPlaying != null
+                    && CloudMusic.currentlyPlaying.isNetease();
+            intelligenceMode.setClickable(available);
+            intelligenceMode.setBounds(20, 20);
+            intelligenceMode.setPosition(playMode.getRelativeX() + playMode.getWidth() + 14, playMode.getRelativeY());
+            intelligenceMode.setAlpha(ControlsBar.this.getAlpha() * (available ? 1.0f : .30f));
+            intelligenceMode.setColor(available && intelligenceMode.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT_HOVER)
+                    : (available ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
+                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT)));
+        });
+        intelligenceMode.setOnClickCallback((x, y, mouseButton) -> {
+            if (mouseButton != 0) return false;
+            PlayList context = CloudMusic.currentPlaylistContext;
+            if (context != null && CloudMusic.currentlyPlaying != null) {
+                NeteaseDiscoveryPanel.openIntelligence(context, CloudMusic.currentlyPlaying);
+                return true;
+            }
+            return false;
+        });
         RoundedRectWidget progressBarBg = new RoundedRectWidget() {
 
             boolean prevMouse = false;

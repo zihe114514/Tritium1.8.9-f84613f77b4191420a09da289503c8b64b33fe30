@@ -42,20 +42,28 @@ public class HomePanel extends NCMPanel {
     /** A fixed result set is used by the in-player playlist search without touching homepage caches. */
     private final List<PlayList> fixedPlaylists;
     private final String fixedRecommendationTitle;
+    private final Map<Long, Runnable> fixedPlaylistActions;
 
     public HomePanel() {
-        this(null, null);
+        this(null, null, Collections.emptyMap());
     }
 
     /**
-     * Builds a read-only playlist-card page, currently used for NetEase playlist-search results.
+     * Builds a read-only playlist-card page, currently used by NetEase discovery/search pages.
      * The result owns no global cache, so returning home always resumes the normal recommendation page.
      */
     public HomePanel(List<PlayList> playlists, String recommendationTitle) {
+        this(playlists, recommendationTitle, Collections.emptyMap());
+    }
+
+    /** Allows discovery cards such as digital albums to keep the playlist-card appearance while
+     * opening their provider-specific detail action instead of treating an album as a playlist. */
+    public HomePanel(List<PlayList> playlists, String recommendationTitle, Map<Long, Runnable> cardActions) {
         super();
         this.platform = CadenceMusicService.getCurrentPlatform();
         this.fixedPlaylists = playlists == null ? null : new ArrayList<>(playlists);
         this.fixedRecommendationTitle = recommendationTitle;
+        this.fixedPlaylistActions = cardActions == null ? Collections.emptyMap() : new LinkedHashMap<>(cardActions);
     }
 
     private static final int NETEASE_HOME_TARGET = 240;
@@ -332,20 +340,26 @@ public class HomePanel extends NCMPanel {
         this.addChild(lblRecommendations);
 
         // Headings are intentionally added after the clipped grid so they always remain on top.
-        displayedPlayLists.forEach(pl -> scrollPanel.addChild(new PlaylistWidget(pl).setShouldOverrideMouseCursor(true)));
+        displayedPlayLists.forEach(pl -> scrollPanel.addChild(new PlaylistWidget(pl, fixedPlaylistActions.get(pl.getId())).setShouldOverrideMouseCursor(true)));
 
     }
     private static class PlaylistWidget extends AbstractWidget<PlaylistWidget> {
 
         @Getter
         private final PlayList playList;
+        private final Runnable customAction;
 
         double emphasizeAnim = 0;
 
         boolean coverLoaded = false;
 
         public PlaylistWidget(PlayList playList) {
+            this(playList, null);
+        }
+
+        public PlaylistWidget(PlayList playList, Runnable customAction) {
             this.playList = playList;
+            this.customAction = customAction;
 
             double size = 100;
             double emphasizeAnimMax = 5;
@@ -390,7 +404,8 @@ public class HomePanel extends NCMPanel {
             this.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
 
                 if (mouseButton == 0) {
-                    NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playList));
+                    if (customAction != null) customAction.run();
+                    else NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playList));
                 }
 
                 return true;

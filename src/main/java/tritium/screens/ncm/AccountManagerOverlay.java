@@ -3,7 +3,9 @@ package tritium.screens.ncm;
 import top.fpsmaster.music.QrCode;
 import top.fpsmaster.music.QrLoginState;
 import tritium.management.FontManager;
+import com.google.gson.JsonObject;
 import tritium.ncm.OptionsUtil;
+import tritium.ncm.api.CloudMusicApi;
 import tritium.ncm.music.CadenceMusicService;
 import tritium.ncm.music.CloudMusic;
 import tritium.ncm.music.MusicPlatform;
@@ -16,6 +18,7 @@ import tritium.rendering.ui.widgets.RectWidget;
 import tritium.rendering.ui.widgets.RoundedButtonWidget;
 import tritium.rendering.ui.widgets.RoundedImageWidget;
 import tritium.rendering.ui.widgets.RoundedRectWidget;
+import tritium.rendering.ui.widgets.TextFieldWidget;
 import tritium.utils.Location;
 import tritium.utils.other.multithreading.MultiThreadingUtil;
 
@@ -212,11 +215,151 @@ public class AccountManagerOverlay extends NCMPanel {
             primary.setTextColor(0xFFFFFF);
         });
 
+        if (platform == MusicPlatform.NETEASE && !CadenceMusicService.isLoggedIn(platform)) {
+            RoundedButtonWidget cookieLogin = new RoundedButtonWidget("Cookie 登录", FontManager.pf12bold);
+            dialog.addChild(cookieLogin);
+            cookieLogin.setRadius(6);
+            cookieLogin.setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                showCookieLogin();
+                return true;
+            });
+            cookieLogin.setBeforeRenderCallback(() -> {
+                cookieLogin.setBounds(Math.max(1, dialog.getWidth() - 32), 26);
+                cookieLogin.setPosition(16, dialog.getHeight() - 80);
+                cookieLogin.setColor(cookieLogin.isHovering()
+                        ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                        : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+                cookieLogin.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            });
+        }
         if (!CadenceMusicService.isLoggedIn(platform)) {
             startQrLogin(platform, token);
         }
     }
 
+    /** Cookie import validates against login-status before replacing the existing local session. */
+    private void showCookieLogin() {
+        final long token = pageGeneration.incrementAndGet();
+        detailPlatform = MusicPlatform.NETEASE;
+        requestRunning = false;
+        statusText = "粘贴网易云 Cookie 后进行验证";
+        statusColor = 0xAEB5C4;
+        getChildren().clear();
+        Panel dialog = createDialog(440, 260);
+
+        RoundedButtonWidget back = new RoundedButtonWidget("‹ 返回", FontManager.pf12bold);
+        dialog.addChild(back);
+        back.setRadius(5);
+        back.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            showDetail(MusicPlatform.NETEASE);
+            return true;
+        });
+        back.setBeforeRenderCallback(() -> {
+            back.setBounds(64, 22);
+            back.setPosition(14, 12);
+            back.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            back.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+        });
+
+        addTitle(dialog, "Cookie 登录", "仅本地保存；校验失败不会覆盖当前登录状态");
+
+        RoundedRectWidget fieldSurface = new RoundedRectWidget();
+        dialog.addChild(fieldSurface);
+        fieldSurface.setClickable(false);
+        fieldSurface.setRadius(6);
+        fieldSurface.setBeforeRenderCallback(() -> {
+            fieldSurface.setBounds(Math.max(1, dialog.getWidth() - 32), 32);
+            fieldSurface.setPosition(16, 83);
+            fieldSurface.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+        });
+
+        TextFieldWidget cookieField = new TextFieldWidget(FontManager.pf12);
+        dialog.addChild(cookieField);
+        cookieField.getTextField().setMaxStringLength(4096);
+        cookieField.getTextField().isPassword = true;
+        cookieField.setPlaceholder("粘贴 MUSIC_U、MUSIC_A 或完整 Cookie 字符串");
+        cookieField.drawUnderline(false);
+        cookieField.setBeforeRenderCallback(() -> {
+            cookieField.setBounds(Math.max(1, fieldSurface.getWidth() - 12), Math.max(1, fieldSurface.getHeight() - 8));
+            cookieField.setPosition(fieldSurface.getRelativeX() + 6, fieldSurface.getRelativeY() + 4);
+            cookieField.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            cookieField.setDisabledTextColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        });
+
+        LabelWidget status = new LabelWidget(() -> statusText, FontManager.pf12bold);
+        dialog.addChild(status);
+        status.setClickable(false);
+        status.setBeforeRenderCallback(() -> {
+            status.setColor(statusColor);
+            status.setMaxWidth(dialog.getWidth() - 32);
+            status.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            status.setPosition(16, 128);
+        });
+
+        RoundedButtonWidget confirm = new RoundedButtonWidget(() -> requestRunning ? "正在校验…" : "验证并登录", FontManager.pf12bold);
+        dialog.addChild(confirm);
+        confirm.setRadius(7);
+        confirm.setOnClickCallback((x, y, button) -> {
+            if (button != 0 || requestRunning) return false;
+            final String cookie = cookieField.getText() == null ? "" : cookieField.getText().trim();
+            if (cookie.isEmpty()) {
+                statusText = "请先粘贴 Cookie";
+                statusColor = 0xF1767D;
+                return true;
+            }
+            requestRunning = true;
+            statusText = "正在验证 Cookie…";
+            statusColor = 0xAEB5C4;
+            MultiThreadingUtil.runAsync(() -> {
+                try {
+                    JsonObject result = CloudMusicApi.loginStatusWithCookie(cookie).toJsonObject();
+                    if (!hasProfile(result)) {
+                        throw new IllegalStateException("Cookie 无效、已过期或缺少登录凭据");
+                    }
+                    // The validation request above uses a per-request Cookie and therefore has not
+                    // touched OptionsUtil.  Commit to the active session only after it succeeds.
+                    CloudMusic.loadNCM(cookie);
+                    if (CloudMusic.profile == null) {
+                        throw new IllegalStateException("登录资料加载失败");
+                    }
+                    statusText = "Cookie 登录成功";
+                    statusColor = 0x53C68C;
+                    MultiThreadingUtil.runOnMainThread(() -> {
+                        requestRunning = false;
+                        if (isCurrent(MusicPlatform.NETEASE, token)) {
+                            NCMScreen.getInstance().markDirty();
+                            showDetail(MusicPlatform.NETEASE);
+                        }
+                    });
+                } catch (Throwable throwable) {
+                    MultiThreadingUtil.runOnMainThread(() -> {
+                        requestRunning = false;
+                        if (!isCurrent(MusicPlatform.NETEASE, token)) return;
+                        statusText = "Cookie 登录失败：" + safeMessage(throwable);
+                        statusColor = 0xF1767D;
+                    });
+                }
+            });
+            return true;
+        });
+        confirm.setBeforeRenderCallback(() -> {
+            confirm.setBounds(Math.max(1, dialog.getWidth() - 32), 30);
+            confirm.setPosition(16, dialog.getHeight() - 48);
+            confirm.setColor(confirm.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+            confirm.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+        });
+    }
+
+    private static boolean hasProfile(JsonObject result) {
+        if (result == null) return false;
+        if (result.has("profile") && result.get("profile").isJsonObject()) return true;
+        return result.has("data") && result.get("data").isJsonObject()
+                && result.getAsJsonObject("data").has("profile")
+                && result.getAsJsonObject("data").get("profile").isJsonObject();
+    }
     private Panel createDialog(double preferredWidth, double preferredHeight) {
         RectWidget mask = new RectWidget();
         addChild(mask);

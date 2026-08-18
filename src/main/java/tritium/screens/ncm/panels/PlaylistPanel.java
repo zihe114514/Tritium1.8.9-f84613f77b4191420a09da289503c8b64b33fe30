@@ -47,6 +47,11 @@ public class PlaylistPanel extends NCMPanel {
 
     @Override
     public void onInit() {
+        // onInit is also used when account metadata (including cloud-drive IDs)
+        // arrives asynchronously. Make it idempotent so a refresh replaces the
+        // old rows instead of stacking a second copy over the first one.
+        this.getChildren().clear();
+        this.musicsLoading = true;
 
         RoundedButtonWidget btnBack = new RoundedButtonWidget("返回", FontManager.pf12bold);
         this.addChild(btnBack);
@@ -96,7 +101,10 @@ public class PlaylistPanel extends NCMPanel {
             btnPlay.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
 
                 if (mouseButton == 0) {
-                    playList.loadMusicsWithCallback(musics -> CloudMusic.play(musics, 0));
+                    playList.loadMusicsWithCallback(musics -> {
+                        CloudMusic.currentPlaylistContext = playList.isSearchMode() ? null : playList;
+                        CloudMusic.play(musics, 0);
+                    });
                 }
 
                 return true;

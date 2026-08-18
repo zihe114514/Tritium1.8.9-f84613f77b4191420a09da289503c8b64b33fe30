@@ -21,9 +21,10 @@ import java.util.List;
 
 /**
  * Decodes the AAC streams that are commonly returned as ADTS (.aac) or
- * ISO-BMFF/M4A (.m4a) or generic MP4 (.mp4) into a standard 16-bit PCM WAV cache. The active JSyn
- * loader already handles WAV reliably, so this adapter keeps the playback
- * implementation independent from filename extensions and native codecs.
+ * ISO-BMFF/M4A (.m4a) into a standard 16-bit PCM WAV cache. Generic MP4
+ * payloads are intentionally excluded: they can be video, DRM-protected or
+ * use an unsupported audio codec, and are rejected by the playback pipeline
+ * before this decoder is invoked.
  */
 final class AacAudioDecoder {
     private static final int WAV_HEADER_SIZE = 44;
@@ -44,7 +45,7 @@ final class AacAudioDecoder {
         if (input == null || !input.isFile()) {
             throw new IOException("AAC input file does not exist");
         }
-        if (!"aac".equals(container) && !"m4a".equals(container) && !"mp4".equals(container)) {
+        if (!"aac".equals(container) && !"m4a".equals(container)) {
             throw new IOException("Unsupported AAC container: " + container);
         }
 
@@ -103,8 +104,8 @@ final class AacAudioDecoder {
     }
 
     /**
-     * Transcodes the first decodable AAC audio track from either an M4A or generic ISO-BMFF/MP4 file.
-     * Video-only, DRM-protected and non-AAC files fail closed so the caller can request a standard MP3 fallback.
+     * Transcodes the first decodable AAC audio track from an M4A file.
+     * DRM-protected and non-AAC files fail closed so the caller can request a standard MP3 fallback.
      */
     private static void decodeIsoBaseMedia(File input, PcmWaveWriter writer,
                                            ProgressListener progressListener) throws IOException, AACException {

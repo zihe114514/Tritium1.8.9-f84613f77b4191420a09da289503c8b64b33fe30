@@ -188,7 +188,7 @@ public class Music {
     }
 
     public boolean isCloudSong() {
-        return cloudSong;
+        return cloudSong || (isNetease() && CloudMusic.isUserCloudSong(id));
     }
 
     public String getHighestQualityLabel() {
@@ -594,6 +594,8 @@ public class Music {
         if ("mpeg".equals(type) || "mpeg3".equals(type) || "x-mp3".equals(type)) type = "mp3";
         if ("x-flac".equals(type)) type = "flac";
         if ("x-wav".equals(type) || "wave".equals(type)) type = "wav";
+        if ("adts".equals(type) || "x-aac".equals(type)) type = "aac";
+        if ("mp4a".equals(type) || "m4a".equals(type)) type = "m4a";
 
         if (!isSupportedFormat(type)) {
             type = inferFormat(url);
@@ -602,7 +604,10 @@ public class Music {
     }
 
     private static boolean isSupportedFormat(String type) {
-        return "mp3".equals(type) || "flac".equals(type) || "wav".equals(type);
+        // Downloaded bytes are still verified by CloudMusic before playback. AAC/M4A reaches
+        // the existing decoder; generic MP4 reaches the file-header rejection/notification path.
+        return "mp3".equals(type) || "flac".equals(type) || "wav".equals(type)
+                || "aac".equals(type) || "m4a".equals(type) || "mp4".equals(type);
     }
 
     private static String inferFormat(String url) {

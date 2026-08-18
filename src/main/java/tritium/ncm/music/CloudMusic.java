@@ -62,8 +62,10 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -96,11 +98,15 @@ public class CloudMusic implements SharedConstants {
     public static List<Music> playList = new ArrayList<>();
     public static int curIdx = 0;
     public static volatile Music currentlyPlaying;
+    /** The real NetEase playlist that started the current queue; null for searches/temporary lists. */
+    public static volatile PlayList currentPlaylistContext;
     public static Thread playThread;
 
     public static volatile User profile;
     public static volatile List<PlayList> playLists;
     public static volatile List<Long> likeList;
+    /** IDs from /api/v1/cloud/get, used to mark the same songs wherever they appear in lists. */
+    private static volatile Set<Long> userCloudSongIds = Collections.emptySet();
 
     /** Prevents duplicate account refresh requests while the previous one is still running. */
     private static final AtomicBoolean NETEASE_REFRESHING = new AtomicBoolean(false);
@@ -168,7 +174,13 @@ public class CloudMusic implements SharedConstants {
         System.out.printf("[NCM] Loaded %s playlists\n", playLists.size());
 
         likeList = likeList();
+        Set<Long> loadedCloudSongIds = loadUserCloudSongIds();
+        if (loadedCloudSongIds != null) {
+            userCloudSongIds = loadedCloudSongIds;
+            System.out.printf("[NCM] Loaded %s cloud-drive song markers%n", userCloudSongIds.size());
+        }
         NCMScreen.getInstance().markDirty();
+        MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().reloadCurrentPanel());
     }
 
     private static List<PlayList> loadUserPlaylists() {
@@ -227,10 +239,14 @@ public class CloudMusic implements SharedConstants {
 
             List<PlayList> refreshedPlaylists = loadUserPlaylistsStrict(refreshedProfile);
             List<Long> refreshedLikeList = loadLikeList(refreshedProfile);
+            Set<Long> refreshedCloudSongIds = loadUserCloudSongIds();
 
             profile = refreshedProfile;
             playLists = refreshedPlaylists;
             likeList = refreshedLikeList;
+            if (refreshedCloudSongIds != null) {
+                userCloudSongIds = refreshedCloudSongIds;
+            }
             return NeteaseRefreshResult.success(System.currentTimeMillis() - startedAt,
                     refreshedPlaylists.size(), refreshedLikeList.size());
         } catch (Throwable throwable) {
@@ -259,6 +275,91 @@ public class CloudMusic implements SharedConstants {
             throw new IllegalStateException("歌单数量异常");
         }
         return userPlaylists;
+    }
+
+    /** Returns whether a NetEase song is present in the authenticated user's cloud drive. */
+    public static boolean isUserCloudSong(long songId) {
+        return songId > 0L && userCloudSongIds.contains(songId);
+    }
+
+    /**
+     * Loads cloud-drive IDs separately from playlist details. Normal playlist responses do not
+     * reliably contain a cloud marker, even when the current account uploaded the same song.
+     */
+    private static Set<Long> loadUserCloudSongIds() {
+        final int pageSize = 200;
+        final int maximumPages = 100;
+        Set<Long> result = new HashSet<>();
+        try {
+            for (int page = 0; page < maximumPages; page++) {
+                JsonObject response = CloudMusicApi.userCloudSongs(pageSize, page * pageSize).toJsonObject();
+                JsonArray entries = extractCloudEntries(response);
+                if (entries == null || entries.size() == 0) {
+                    break;
+                }
+                for (JsonElement element : entries) {
+                    if (element != null && element.isJsonObject()) {
+                        long songId = extractCloudSongId(element.getAsJsonObject());
+                        if (songId > 0L) {
+                            result.add(songId);
+                        }
+                    }
+                }
+                boolean hasMore = response.has("hasMore") && !response.get("hasMore").isJsonNull()
+                        && response.get("hasMore").getAsBoolean();
+                if (!hasMore && entries.size() < pageSize) {
+                    break;
+                }
+            }
+            return Collections.unmodifiableSet(result);
+        } catch (Throwable throwable) {
+            System.err.println("[NCM] Cloud-drive marker load failed: " + throwable.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * The official endpoint normally returns data as an array. Keep the parser
+     * tolerant of proxy/API wrappers that put the array under data.songs or
+     * data.data; otherwise a successful response would silently produce no
+     * badges at all.
+     */
+    private static JsonArray extractCloudEntries(JsonObject response) {
+        if (response == null) return null;
+        JsonElement data = response.get("data");
+        if (data != null && data.isJsonArray()) return data.getAsJsonArray();
+        if (data != null && data.isJsonObject()) {
+            JsonObject dataObject = data.getAsJsonObject();
+            JsonElement songs = dataObject.get("songs");
+            if (songs != null && songs.isJsonArray()) return songs.getAsJsonArray();
+            JsonElement nestedData = dataObject.get("data");
+            if (nestedData != null && nestedData.isJsonArray()) return nestedData.getAsJsonArray();
+        }
+        JsonElement songs = response.get("songs");
+        return songs != null && songs.isJsonArray() ? songs.getAsJsonArray() : null;
+    }
+    private static long extractCloudSongId(JsonObject cloudEntry) {
+        JsonObject simpleSong = cloudEntry.has("simpleSong") && cloudEntry.get("simpleSong").isJsonObject()
+                ? cloudEntry.getAsJsonObject("simpleSong") : null;
+        long id = readCloudSongId(simpleSong, "id");
+        if (id > 0L) return id;
+        JsonObject song = cloudEntry.has("song") && cloudEntry.get("song").isJsonObject()
+                ? cloudEntry.getAsJsonObject("song") : null;
+        id = readCloudSongId(song, "id");
+        if (id > 0L) return id;
+        id = readCloudSongId(cloudEntry, "songId");
+        return id > 0L ? id : readCloudSongId(cloudEntry, "id");
+    }
+
+    private static long readCloudSongId(JsonObject object, String property) {
+        if (object == null || !object.has(property) || object.get(property).isJsonNull()) {
+            return 0L;
+        }
+        try {
+            return object.get(property).getAsLong();
+        } catch (Throwable ignored) {
+            return 0L;
+        }
     }
 
     @lombok.Getter
@@ -784,7 +885,11 @@ public class CloudMusic implements SharedConstants {
                 musicFile = getMusicFile(playUrl, song);
             } catch (Exception e) {
                 if (!isPlaybackCancelled() && isSessionUsable(targetSession)) {
-                    handlePlayerInitializationError(song, e);
+                    if (e instanceof UnsupportedMp4ContainerException) {
+                        System.err.println("[NCM] " + e.getMessage());
+                    } else {
+                        handlePlayerInitializationError(song, e);
+                    }
                 }
                 return false;
             }
@@ -809,7 +914,8 @@ public class CloudMusic implements SharedConstants {
             if (!isSessionUsable(targetSession)) return false;
 
             // 歌词异步加载绑定本 Session（两阶段提交），歌词可先到或后到。
-            loadLyric(song, targetSession);
+            // 网盘歌曲额外携带本地缓存文件，用于优先读取音频标签中的内嵌 LRC/YRC。
+            loadLyric(song, targetSession, musicFile);
             if (!startPlayback(song, playUrl, musicFile, targetSession)) return false;
             targetSession.audioActive = true;
             return true;
@@ -1024,15 +1130,22 @@ public class CloudMusic implements SharedConstants {
         }
 
         /**
-         * JSyn can directly stream MP3, FLAC and WAV. AAC-in-ADTS and AAC-in-ISO-BMFF (M4A/MP4) are decoded
-         * once into a validated WAV sidecar so extensions can never route compressed AAC bytes
-         * into the wrong loader.
+         * JSyn can directly stream MP3, FLAC and WAV. AAC/ADTS and explicitly audio-branded M4A
+         * streams are decoded once into a validated WAV sidecar. Generic MP4 payloads are detected
+         * from their file header but never transcoded: they can be video-only, DRM-protected or
+         * otherwise unsuitable for this player, so the caller can use its existing NetEase MP3
+         * fallback instead.
          */
         private File resolvePlayableAudioFile(File sourceFile) {
             String container = detectAudioContainer(sourceFile);
             if (!isSupportedAudioContainer(container)) {
                 throw new IllegalStateException("Cached audio has an unsupported or invalid container: "
                         + sourceFile.getName());
+            }
+            if (isMp4Container(container)) {
+                discardLegacyDecodedWav(sourceFile);
+                DownloadDynamicIsland.showUnsupportedMp4Container(sourceFile.getName());
+                throw new UnsupportedMp4ContainerException(sourceFile.getName());
             }
             if (!requiresAacDecode(container)) {
                 return sourceFile;
@@ -1065,17 +1178,21 @@ public class CloudMusic implements SharedConstants {
                 if (decodedFile.exists()) {
                     decodedFile.delete();
                 }
-                // A generic MP4/M4A that cannot yield PCM is a deterministic bad cache entry
-                // (video-only, DRM or an unsupported codec). Do not retry the same bytes forever.
                 if (sourceFile.exists() && !sourceFile.delete()) {
-                    System.err.println("[NCM] Unable to remove undecodable audio cache: " + sourceFile.getName());
+                    System.err.println("[NCM] Unable to remove undecodable AAC cache: " + sourceFile.getName());
                 }
-                throw new IllegalStateException("Unable to decode " + container.toUpperCase()
-                        + " audio into a playable WAV cache", exception);
+                throw new IllegalStateException("Unable to decode AAC audio into a playable WAV cache", exception);
             }
             DownloadDynamicIsland.finishTranscode(sourceFile.getName(), decodedFile.getName(),
                     System.currentTimeMillis() - transcodeStartedAt);
             return decodedFile;
+        }
+
+        private void discardLegacyDecodedWav(File sourceFile) {
+            File decodedFile = getDecodedWavCacheFile(sourceFile);
+            if (decodedFile.exists() && !decodedFile.delete()) {
+                System.err.println("[NCM] Unable to remove legacy MP4 decoded cache: " + decodedFile.getName());
+            }
         }
         private File getDecodedWavCacheFile(File sourceFile) {
             String name = sourceFile.getName();
@@ -1353,7 +1470,17 @@ public class CloudMusic implements SharedConstants {
     }
 
     private static boolean requiresAacDecode(String container) {
-        return "aac".equals(container) || "m4a".equals(container) || "mp4".equals(container);
+        return "aac".equals(container) || "m4a".equals(container);
+    }
+
+    private static boolean isMp4Container(String container) {
+        return "mp4".equals(container);
+    }
+
+    private static final class UnsupportedMp4ContainerException extends IllegalStateException {
+        private UnsupportedMp4ContainerException(String sourceName) {
+            super("Detected unsupported MP4 container from file header: " + sourceName);
+        }
     }
 
     /**
@@ -1955,25 +2082,77 @@ public class CloudMusic implements SharedConstants {
     }
 
     public static void loadLyric(Music music, PlaybackSession session) {
+        loadLyric(music, session, null);
+    }
+
+    private static void loadLyric(Music music, PlaybackSession session, File playbackFile) {
         final long songId = music.getId();
         final String trackKey = music.getStableKey();
+        final File embeddedLyricFile = music.isCloudSong() ? resolveEmbeddedLyricFile(playbackFile) : null;
 
         MultiThreadingUtil.runAsync(() -> {
             JsonObject rawJson = new JsonObject();
             List<LyricLine> parsed = Collections.emptyList();
+            boolean cloudLyricsLoaded = false;
+
+            // 云盘歌曲的歌词不一定能通过普通 lyricNew(songId) 查询到。
+            // api-enhanced 提供了专用的 /cloud/lyric/get 接口，使用当前账号 UID
+            // 与云盘歌曲 ID 获取文件元数据中的 LYRICS 歌词。只有解析出有效时间轴
+            // 才提交结果，失败时继续走内嵌标签、Cadence 和原有回退链。
+            if (music.isCloudSong() && profile != null && profile.getId() > 0L) {
+                try {
+                    JsonObject cloudJson = normalizeCloudLyricResponse(
+                            CloudMusicApi.cloudLyricGet(profile.getId(), songId).toJsonObject());
+                    List<LyricLine> cloudLyrics = LyricParser.parse(cloudJson);
+                    if (!cloudLyrics.isEmpty()) {
+                        rawJson = cloudJson;
+                        parsed = cloudLyrics;
+                        cloudLyricsLoaded = true;
+                        System.out.println("[Music] Loaded cloud-drive lyrics for " + trackKey);
+                    }
+                } catch (Throwable throwable) {
+                    System.err.println("[Music] Cloud-drive lyric API failed for " + trackKey + ": "
+                            + throwable.getMessage());
+                }
+            }
+
+            // 私人网盘曲目不一定存在网易云可查询的 lyric id。音频文件中的 USLT、Vorbis
+            // comments 或 M4A ©lyr 是这类曲目最接近原文件的歌词来源，优先采用其中有效的
+            // 时间轴；无法读取或不是时间歌词时才继续原有的在线回退链。
+            if (!cloudLyricsLoaded && embeddedLyricFile != null) {
+                try {
+                    String embeddedText = EmbeddedLyricsReader.read(embeddedLyricFile);
+                    if (!embeddedText.isEmpty()) {
+                        JsonObject embeddedJson = createEmbeddedLyricJson(embeddedText);
+                        List<LyricLine> embedded = LyricParser.parse(embeddedJson);
+                        if (!embedded.isEmpty()) {
+                            rawJson = embeddedJson;
+                            parsed = embedded;
+                            cloudLyricsLoaded = true;
+                            System.out.println("[Music] Loaded embedded lyrics for cloud song " + trackKey
+                                    + " from " + embeddedLyricFile.getName());
+                        }
+                    }
+                } catch (Throwable throwable) {
+                    System.err.println("[Music] Embedded lyric read failed for " + trackKey + ": "
+                            + throwable.getMessage());
+                }
+            }
 
             // 首选 Cadence 统一模型，但普通 LRC 不再按字数伪造逐字时间轴。
-            try {
-                top.fpsmaster.music.Lyric cadenceLyric = CadenceMusicService.getLyric(music);
-                if (cadenceLyric != null) {
-                    parsed = LyricParser.fromCadence(cadenceLyric, music.getDuration(), false);
+            if (parsed.isEmpty()) {
+                try {
+                    top.fpsmaster.music.Lyric cadenceLyric = CadenceMusicService.getLyric(music);
+                    if (cadenceLyric != null) {
+                        parsed = LyricParser.fromCadence(cadenceLyric, music.getDuration(), false);
+                    }
+                } catch (Throwable throwable) {
+                    System.err.println("[Music/Cadence] Unified lyric conversion failed for " + trackKey + ": " + throwable.getMessage());
                 }
-            } catch (Throwable throwable) {
-                System.err.println("[Music/Cadence] Unified lyric conversion failed for " + trackKey + ": " + throwable.getMessage());
             }
 
             // Cadence 只拿到普通 LRC 时也继续询问网易云 lyricNew，优先采用其中真实的 YRC 逐字时间轴。
-            if (music.isNetease() && !LyricParser.hasRealWordTiming(parsed)) {
+            if (music.isNetease() && !cloudLyricsLoaded && !LyricParser.hasRealWordTiming(parsed)) {
                 try {
                     String string = CloudMusicApi.lyricNew(songId).toString();
                     string = string.replaceAll("[ - ]", " ");
@@ -1986,7 +2165,7 @@ public class CloudMusic implements SharedConstants {
             }
 
             // 内置修正 YRC 是最后的真实逐字兜底；读取失败时保留前面已经得到的普通歌词。
-            if (music.isNetease() && !LyricParser.hasRealWordTiming(parsed)) {
+            if (music.isNetease() && !cloudLyricsLoaded && !LyricParser.hasRealWordTiming(parsed)) {
                 InputStream stream = CloudMusic.class.getResourceAsStream("/tritium/yrc/" + songId + ".yrc");
                 if (stream != null) {
                     try {
@@ -2018,6 +2197,61 @@ public class CloudMusic implements SharedConstants {
             session.pendingLyrics = committedLyrics;
             MultiThreadingUtil.runOnMainThread(() -> applyLyricTimeline(session, committedJson, committedLyrics));
         });
+    }
+
+    private static JsonObject createEmbeddedLyricJson(String lyricText) {
+        JsonObject root = new JsonObject();
+        JsonObject lrc = new JsonObject();
+        lrc.addProperty("lyric", lyricText);
+        root.add("lrc", lrc);
+        return root;
+    }
+
+    /**
+     * Accepts both the direct NetEase lyric response and wrappers used by
+     * enhanced API deployments (for example {data:{...}} or {result:{...}}).
+     */
+    private static JsonObject normalizeCloudLyricResponse(JsonObject response) {
+        if (response == null) return new JsonObject();
+        if (hasLyricPayload(response)) return response;
+
+        JsonElement data = response.get("data");
+        if (data != null && data.isJsonObject() && hasLyricPayload(data.getAsJsonObject())) {
+            return data.getAsJsonObject();
+        }
+
+        JsonElement result = response.get("result");
+        if (result != null && result.isJsonObject() && hasLyricPayload(result.getAsJsonObject())) {
+            return result.getAsJsonObject();
+        }
+        return response;
+    }
+
+    private static boolean hasLyricPayload(JsonObject object) {
+        return object.has("lrc") || object.has("yrc") || object.has("ytlrc")
+                || object.has("tlyric") || object.has("romalrc");
+    }
+
+    /** Resolves the original tagged cache file when AAC/M4A playback uses a decoded WAV sidecar. */
+    private static File resolveEmbeddedLyricFile(File playbackFile) {
+        if (playbackFile == null || !playbackFile.isFile()) {
+            return null;
+        }
+        String name = playbackFile.getName();
+        final String decodedSuffix = ".decoded.wav";
+        if (!name.endsWith(decodedSuffix)) {
+            return playbackFile;
+        }
+
+        String baseName = name.substring(0, name.length() - decodedSuffix.length());
+        String[] sourceExtensions = {"m4a", "aac", "mp3", "flac"};
+        for (String extension : sourceExtensions) {
+            File source = new File(playbackFile.getParentFile(), baseName + "." + extension);
+            if (source.isFile()) {
+                return source;
+            }
+        }
+        return playbackFile;
     }
 
     public static String qrCodeLogin() {

@@ -79,6 +79,28 @@ public class CloudMusicApi {
 
     }
 
+    /**
+     * Fetches lyrics embedded in a NetEase cloud-drive entry.
+     * The enhanced API exposes this as /cloud/lyric/get and expects eapi
+     * parameters named userId/songId (uid/sid are the public query names).
+     */
+    public static RequestUtil.RequestAnswer cloudLyricGet(long userId, long songId) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("userId", userId);
+        data.put("songId", songId);
+        data.put("lv", -1);
+        data.put("kv", -1);
+        return RequestUtil.createRequest("/api/cloud/lyric/get", data, OptionsUtil.createOptions("eapi"));
+    }
+
+    /** Returns the logged-in user's NetEase cloud-drive entries. */
+    public RequestUtil.RequestAnswer userCloudSongs(int limit, int offset) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("limit", Math.max(1, Math.min(200, limit)));
+        data.put("offset", Math.max(0, offset));
+        return RequestUtil.createRequest("/api/v1/cloud/get", data, OptionsUtil.createOptions("weapi"));
+    }
+
     public enum SearchType {
 
         Single(1),
@@ -100,6 +122,90 @@ public class CloudMusicApi {
             this.id = id;
         }
 
+    }
+
+    public RequestUtil.RequestAnswer searchHotDetail() {
+        return RequestUtil.createRequest("/api/hotsearchlist/get", new HashMap<>(), OptionsUtil.createOptions("weapi"));
+    }
+
+    public RequestUtil.RequestAnswer topLists() {
+        return RequestUtil.createRequest("/api/toplist", new HashMap<>(), OptionsUtil.createOptions());
+    }
+
+    /**
+     * Stable top-list summary route documented by both supplied API sources.
+     */
+    public RequestUtil.RequestAnswer topListDetail() {
+        return RequestUtil.createRequest("/api/toplist/detail", new HashMap<>(), OptionsUtil.createOptions("weapi"));
+    }
+
+    public RequestUtil.RequestAnswer topListDetailV2() {
+        return RequestUtil.createRequest("/api/toplist/detail/v2", new HashMap<>(), OptionsUtil.createOptions("weapi"));
+    }
+
+    public RequestUtil.RequestAnswer topArtists(int areaType) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("type", Math.max(1, Math.min(4, areaType)));
+        data.put("limit", 100);
+        data.put("offset", 0);
+        data.put("total", true);
+        return RequestUtil.createRequest("/api/toplist/artist", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    public RequestUtil.RequestAnswer digitalAlbumPurchased(int limit, int offset) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("limit", Math.max(1, Math.min(100, limit)));
+        data.put("offset", Math.max(0, offset));
+        data.put("total", true);
+        return RequestUtil.createRequest("/api/digitalAlbum/purchased", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    public RequestUtil.RequestAnswer album(long albumId) {
+        return RequestUtil.createRequest("/api/v1/album/" + albumId, new HashMap<>(), OptionsUtil.createOptions("weapi"));
+    }
+
+    public RequestUtil.RequestAnswer albumPrivilege(long albumId) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("id", albumId);
+        return RequestUtil.createRequest("/api/album/privilege", data, OptionsUtil.createOptions());
+    }
+
+    public RequestUtil.RequestAnswer intelligenceList(long songId, long playlistId, long startSongId, int count) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("songId", songId);
+        data.put("type", "fromPlayOne");
+        data.put("playlistId", playlistId);
+        data.put("startMusicId", startSongId <= 0 ? songId : startSongId);
+        data.put("count", Math.max(1, Math.min(100, count)));
+        return RequestUtil.createRequest("/api/playmode/intelligence/list", data, OptionsUtil.createOptions());
+    }
+
+    public RequestUtil.RequestAnswer eventList(int pageSize, long lastTime) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("pagesize", Math.max(1, Math.min(50, pageSize)));
+        data.put("lasttime", lastTime <= 0 ? -1 : lastTime);
+        return RequestUtil.createRequest("/api/v1/event/get", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    public RequestUtil.RequestAnswer recentSongs(int limit) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("limit", Math.max(1, Math.min(100, limit)));
+        return RequestUtil.createRequest("/api/play-record/song/list", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    /**
+     * Validates an imported Cookie without mutating the active account state.  The caller only
+     * persists it after the response proves that a NetEase profile is available.
+     */
+    public RequestUtil.RequestAnswer loginStatusWithCookie(String cookie) {
+        RequestUtil.RequestOptions options = RequestUtil.RequestOptions.builder()
+                .crypto("weapi")
+                .cookie(cookie == null ? "" : cookie.trim())
+                .ua("")
+                .proxy("")
+                .encryptedResponse(null)
+                .build();
+        return RequestUtil.createRequest("/api/w/nuser/account/get", new HashMap<>(), options);
     }
 
     public RequestUtil.RequestAnswer likeList(long uid) {
@@ -319,6 +425,7 @@ public class CloudMusicApi {
         result.add("privileges", orderedPrivileges);
         return RequestUtil.RequestAnswer.of(result, v6Detail.getStatus(), v6Detail.getCookies());
     }
+
     private static void copyPrivilegeField(JsonObject privilege, JsonObject song, String field) {
         if (privilege.has(field) && !privilege.get(field).isJsonNull()) {
             song.add(field, privilege.get(field));
@@ -339,8 +446,8 @@ public class CloudMusicApi {
      * 这里不能再把失败包装成 200，否则 UI 会把权限、登录或网络错误错误地提示为成功。</p>
      *
      * @param operation {@code add} 或 {@code del}
-     * @param trackId 歌单 Id
-     * @param musics 用英文逗号分割的音乐 Id
+     * @param trackId   歌单 Id
+     * @param musics    用英文逗号分割的音乐 Id
      */
     public RequestUtil.RequestAnswer playlistTracks(String operation, long trackId, String musics) {
         String[] split = musics.split(",");
@@ -585,7 +692,9 @@ public class CloudMusicApi {
     public static class PlaylistTrackOperationResult {
         private final boolean success;
         private final boolean alreadyExists;
-        /** True only when /api/v6/playlist/detail confirmed the final trackIds state. */
+        /**
+         * True only when /api/v6/playlist/detail confirmed the final trackIds state.
+         */
         private final boolean verified;
         private final int httpStatus;
         private final int apiCode;
@@ -619,6 +728,7 @@ public class CloudMusicApi {
     /**
      * 收藏/取消收藏歌单（原项目无此接口，需新增；复用 weapi 加密与 OptionsUtil 链路）。
      * 网易云歌单收藏接口：POST /weapi/playlist/subscribe 或 /weapi/playlist/unsubscribe，data={id}。
+     *
      * @param id  歌单 Id
      * @param sub true=收藏，false=取消收藏
      */
