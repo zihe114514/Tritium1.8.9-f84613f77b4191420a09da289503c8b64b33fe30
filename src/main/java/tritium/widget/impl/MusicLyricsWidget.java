@@ -25,7 +25,6 @@ import tritium.settings.ClientSettings;
 import tritium.settings.HudConfig;
 import tritium.utils.Tuple;
 import tritium.utils.WidgetWrapper;
-import tritium.utils.math.Mth;
 
 import java.awt.Color;
 import java.util.ArrayList;
@@ -801,15 +800,12 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     private double smoothStep(double value) {
-        double clamped = Math.max(0.0, Math.min(1.0, value));
-        return clamped * clamped * (3.0 - 2.0 * clamped);
+        return KaraokeAnimationMath.smoothStep(value);
     }
 
     private double getCharacterKaraokeProgress(double characterTimeline, int characterIndex) {
-        double raw = Math.max(0.0, Math.min(1.0, characterTimeline - characterIndex));
-        double eased = smoothStep(raw);
-        double smoothing = Math.max(0.0, Math.min(1.0, HudConfig.osdKaraokeSmoothing));
-        return raw + (eased - raw) * smoothing;
+        return KaraokeAnimationMath.characterProgress(characterTimeline, characterIndex,
+                HudConfig.osdKaraokeSmoothing);
     }
 
     private double getRawKaraokeProgress(LyricLine.Word word, float songProgress) {
@@ -817,7 +813,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     private double getKaraokeProgress(LyricLine.Word word, float songProgress) {
-        return smoothStep(Mth.limit(getRawKaraokeProgress(word, songProgress), 0.0, 1.0));
+        return KaraokeAnimationMath.wordProgress(word, songProgress);
     }
 
     private void renderWrappedPrimary(String[] lines, double y, int color, boolean isCurrent,
