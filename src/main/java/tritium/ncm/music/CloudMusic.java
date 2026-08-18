@@ -16,7 +16,7 @@ import repackage.org.kc7bfi.jflac.metadata.StreamInfo;
 import repackage.org.kc7bfi.jflac.util.ByteData;
 import repackage.org.kc7bfi.jflac.util.WavWriter;
 import today.opai.api.enums.EnumChatColor;
-import tritium.TritiumMusicExtension;
+import tritium.MuoniumPlayerExtension;
 import tritium.interfaces.SharedConstants;
 import tritium.ncm.OptionsUtil;
 import tritium.ncm.api.CloudMusicApi;
@@ -539,7 +539,7 @@ public class CloudMusic implements SharedConstants {
      */
     public static float getVolume() {
         try {
-            return clampVolume(TritiumMusicExtension.getInstance().musicInfo.volume.getValue().floatValue());
+            return clampVolume(MuoniumPlayerExtension.getInstance().musicInfo.volume.getValue().floatValue());
         } catch (RuntimeException ignored) {
             AudioPlayer activePlayer = player;
             return activePlayer == null ? 0.10f : clampVolume(activePlayer.getVolume());
@@ -560,7 +560,7 @@ public class CloudMusic implements SharedConstants {
         }
 
         try {
-            TritiumMusicExtension.getInstance().musicInfo.volume.setValue((double) safeVolume);
+            MuoniumPlayerExtension.getInstance().musicInfo.volume.setValue((double) safeVolume);
         } catch (RuntimeException ignored) {
             // The active player still receives the new value below if the module is not ready.
         }
@@ -927,7 +927,7 @@ public class CloudMusic implements SharedConstants {
         }
 
         private boolean initializeAndPlaySong(Music song, Tuple<String, String> playUrl, PlaybackSession targetSession) {
-            TritiumMusicExtension.getInstance().musicInfo.downloading = false;
+            MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
             DownloadDynamicIsland.cancelDownload();
 
             File musicFile;
@@ -1322,7 +1322,7 @@ public class CloudMusic implements SharedConstants {
             AudioPlayer player = CloudMusic.player;
             if (player == null) {
                 player = new AudioPlayer(musicFile);
-                player.setVolume(TritiumMusicExtension.getInstance().musicInfo.volume.getValue().floatValue());
+                player.setVolume(MuoniumPlayerExtension.getInstance().musicInfo.volume.getValue().floatValue());
                 CloudMusic.player = player;
             } else {
                 player.setAudio(musicFile);
@@ -1486,7 +1486,7 @@ public class CloudMusic implements SharedConstants {
                     ww.writeHeader(info);
                 } catch (IOException e) {
                     e.printStackTrace();
-                    TritiumMusicExtension.getInstance().musicInfo.downloading = false;
+                    MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
                     DownloadDynamicIsland.cancelDownload();
                     destFile.delete();
                 }
@@ -1498,7 +1498,7 @@ public class CloudMusic implements SharedConstants {
                     ww.writePCM(pcm);
                 } catch (IOException e) {
                     e.printStackTrace();
-                    TritiumMusicExtension.getInstance().musicInfo.downloading = false;
+                    MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
                     DownloadDynamicIsland.cancelDownload();
                     destFile.delete();
                 }
@@ -1722,9 +1722,9 @@ public class CloudMusic implements SharedConstants {
     @SneakyThrows
     private static void downloadMusic(String playUrl, File music) {
 
-        TritiumMusicExtension.getInstance().musicInfo.downloading = true;
-        TritiumMusicExtension.getInstance().musicInfo.downloadProgress = 0;
-        TritiumMusicExtension.getInstance().musicInfo.downloadSpeed = "0 b/s";
+        MuoniumPlayerExtension.getInstance().musicInfo.downloading = true;
+        MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = 0;
+        MuoniumPlayerExtension.getInstance().musicInfo.downloadSpeed = "0 b/s";
         DownloadDynamicIsland.beginDownload();
 
         try {
@@ -1734,11 +1734,11 @@ public class CloudMusic implements SharedConstants {
 
                 @Override
                 public void onProgress(double progress) {
-                    TritiumMusicExtension.getInstance().musicInfo.downloadProgress = progress;
+                    MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = progress;
                     DownloadDynamicIsland.updateProgress(progress);
 
                     if (progress >= 1) {
-                        TritiumMusicExtension.getInstance().musicInfo.downloading = false;
+                        MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
                     }
                 }
 
@@ -1780,7 +1780,7 @@ public class CloudMusic implements SharedConstants {
                         int diff = (bytesRead - lastBytesRead) * (1000 / checkDelay);
 
                         String speed = this.getSize(diff) + "/s";
-                        TritiumMusicExtension.getInstance().musicInfo.downloadSpeed = speed;
+                        MuoniumPlayerExtension.getInstance().musicInfo.downloadSpeed = speed;
                         DownloadDynamicIsland.updateSpeed(speed);
 
                         lastBytesRead = bytesRead;
@@ -1794,14 +1794,14 @@ public class CloudMusic implements SharedConstants {
             writeTo(stream, os);
 
             os.close();
-            TritiumMusicExtension.getInstance().musicInfo.downloadProgress = 1.0;
-            TritiumMusicExtension.getInstance().musicInfo.downloading = false;
+            MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = 1.0;
+            MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
             DownloadDynamicIsland.finishDownload();
 
         } catch (Throwable t) {
             t.printStackTrace();
 
-            TritiumMusicExtension.getInstance().musicInfo.downloading = false;
+            MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
             DownloadDynamicIsland.cancelDownload();
 
             music.delete();
@@ -2111,7 +2111,7 @@ public class CloudMusic implements SharedConstants {
     }
 
     private static String getTranslationOrRomanizationText(LyricLine lyricLine) {
-        boolean showRoman = TritiumMusicExtension.getInstance().musicLyrics.showRoman.getValue();
+        boolean showRoman = MuoniumPlayerExtension.getInstance().musicLyrics.showRoman.getValue();
 
         if (!showRoman) {
             return StringUtils.returnEmptyStringIfNull(lyricLine.getTranslationText());
@@ -2125,7 +2125,7 @@ public class CloudMusic implements SharedConstants {
     }
 
     private static String getRomanizationTextIfEnabled(LyricLine lyricLine) {
-        if (TritiumMusicExtension.getInstance().musicLyrics.showRoman.getValue()) {
+        if (MuoniumPlayerExtension.getInstance().musicLyrics.showRoman.getValue()) {
             return StringUtils.returnEmptyStringIfNull(lyricLine.getRomanizationText());
         }
         return "";
@@ -2133,7 +2133,7 @@ public class CloudMusic implements SharedConstants {
 
     public static boolean hasSecondaryLyrics() {
         boolean hasAvailableLyrics = hasTransLyrics || hasRomanization;
-        boolean showTranslationEnabled = TritiumMusicExtension.getInstance().musicLyrics.showTranslation.getValue();
+        boolean showTranslationEnabled = MuoniumPlayerExtension.getInstance().musicLyrics.showTranslation.getValue();
         return hasAvailableLyrics && showTranslationEnabled;
     }
 

@@ -8,7 +8,7 @@ import net.minecraft.client.gui.ScaledResolution;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
-import tritium.TritiumMusicExtension;
+import tritium.MuoniumPlayerExtension;
 import tritium.ncm.music.CloudMusic;
 import tritium.rendering.shader.Shaders;
 import tritium.rendering.DownloadDynamicIsland;
@@ -179,8 +179,8 @@ public class GuiHudEditor extends GuiScreen {
             // renders on top of the game because doesGuiPauseGame() is false; drawing the
             // vanilla background here would replace that frame with an opaque gradient.
 
-            MusicInfoWidget info = TritiumMusicExtension.getInstance().musicInfo;
-            MusicLyricsWidget lyrics = TritiumMusicExtension.getInstance().musicLyrics;
+            MusicInfoWidget info = MuoniumPlayerExtension.getInstance().musicInfo;
+            MusicLyricsWidget lyrics = MuoniumPlayerExtension.getInstance().musicLyrics;
             FontRenderer fr = fontRendererObj;
             int sw = width;
             int sh = height;
@@ -709,7 +709,7 @@ public class GuiHudEditor extends GuiScreen {
             return;
         }
 
-        MusicLyricsWidget lyrics = TritiumMusicExtension.getInstance().musicLyrics;
+        MusicLyricsWidget lyrics = MuoniumPlayerExtension.getInstance().musicLyrics;
         int panelX = width - SETTINGS_W - SETTINGS_MARGIN;
         int panelY = SETTINGS_MARGIN;
         int panelH = getSettingsPanelHeight();
@@ -894,7 +894,7 @@ public class GuiHudEditor extends GuiScreen {
         int togW = 14;
         int togH = 14;
         int tog1X = resetX + resetW + 16;
-        MusicInfoWidget info = TritiumMusicExtension.getInstance().musicInfo;
+        MusicInfoWidget info = MuoniumPlayerExtension.getInstance().musicInfo;
         if (isInside(mouseX, mouseY, tog1X, barY + 6, togW, togH)) {
             info.setEnabled(!info.isEnabled());
         }
@@ -939,7 +939,7 @@ public class GuiHudEditor extends GuiScreen {
                 return;
             }
             if (hexColorInput.textboxKeyTyped(typedChar, keyCode)) {
-                applyHexColorInput(TritiumMusicExtension.getInstance().musicLyrics);
+                applyHexColorInput(MuoniumPlayerExtension.getInstance().musicLyrics);
             }
             return;
         }
@@ -996,7 +996,7 @@ public class GuiHudEditor extends GuiScreen {
     }
 
     private void applyAppearanceDefaults() {
-        MusicLyricsWidget lyrics = TritiumMusicExtension.getInstance().musicLyrics;
+        MusicLyricsWidget lyrics = MuoniumPlayerExtension.getInstance().musicLyrics;
         HudConfig.resetLyricAppearance();
         HudConfig.resetDynamicIslandAppearance();
         lyrics.loadHudEditorSettings();

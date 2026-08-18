@@ -3,7 +3,7 @@ package tritium.screens.ncm;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
-import tritium.TritiumMusicExtension;
+import tritium.MuoniumPlayerExtension;
 import tritium.interfaces.SharedConstants;
 import tritium.interfaces.SharedRenderingConstants;
 import tritium.management.FontManager;

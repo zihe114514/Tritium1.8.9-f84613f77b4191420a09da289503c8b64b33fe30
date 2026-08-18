@@ -6,7 +6,7 @@ import lombok.SneakyThrows;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 import org.lwjgl.opengl.GL14;
-import tritium.TritiumMusicExtension;
+import tritium.MuoniumPlayerExtension;
 import tritium.rendering.TextureUtil;
 import tritium.utils.Location;
 import tritium.utils.other.multithreading.MultiThreadingUtil;
@@ -85,7 +85,7 @@ public class DynamicTexture extends AbstractTexture {
 
     public void allocateTexture(int textureWidth, int textureHeight) {
 
-        if (!TritiumMusicExtension.isCallingFromMainThread()) {
+        if (!MuoniumPlayerExtension.isCallingFromMainThread()) {
             MultiThreadingUtil.runOnMainThreadBlocking(() -> {
                 this.allocateTextureImpl(0, textureWidth, textureHeight);
                 return null;
@@ -123,7 +123,7 @@ public class DynamicTexture extends AbstractTexture {
     @SneakyThrows
     public void updateDynamicTexture() {
 
-        if (!TritiumMusicExtension.isCallingFromMainThread()) {
+        if (!MuoniumPlayerExtension.isCallingFromMainThread()) {
             MultiThreadingUtil.runOnMainThreadBlocking(() -> {
                 this.updateDynamicTexture();
                 return null;
