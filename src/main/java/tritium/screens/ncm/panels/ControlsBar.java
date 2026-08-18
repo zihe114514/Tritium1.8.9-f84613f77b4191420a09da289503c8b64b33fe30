@@ -4,6 +4,7 @@ import org.lwjgl.input.Mouse;
 import tritium.management.FontManager;
 import tritium.ncm.music.AudioPlayer;
 import tritium.ncm.music.CloudMusic;
+import tritium.ncm.music.PersonalFmManager;
 import tritium.screens.ncm.NCMPlayerConfig;
 import tritium.rendering.DownloadDynamicIsland;
 import tritium.ncm.music.Quality;
@@ -125,20 +126,47 @@ public class ControlsBar extends NCMPanel {
         playMode
                 .setBeforeRenderCallback(() -> {
                     CloudMusic.PlayMode mode = CloudMusic.playMode;
+                    boolean personalFm = CloudMusic.isPersonalFmActive();
                     playMode
                             .center()
-                            .setIcon(mode.getIcon())
+                            .setIcon(personalFm ? "F" : mode.getIcon())
                             .setPosition(next.getRelativeX() + next.getWidth() + 10, next.getRelativeY())
-                            .setColor(mode == CloudMusic.PlayMode.Sequential
+                            .setClickable(!personalFm)
+                            .setAlpha(ControlsBar.this.getAlpha() * (personalFm ? .35f : 1.0f))
+                            .setColor(personalFm || mode == CloudMusic.PlayMode.Sequential
                                     ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)
                                     : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
                 })
                 .setOnClickCallback((x, y, mouseButton) -> {
                     if (mouseButton == 0) {
-                        CloudMusic.cyclePlayMode();
+                        if (!CloudMusic.isPersonalFmActive()) CloudMusic.cyclePlayMode();
                     }
                     return true;
                 });
+
+        // Explicit personal-FM action. It is hidden entirely outside the FM session,
+        // so normal playlists never expose nor invoke the radio-trash endpoint.
+        RoundedButtonWidget fmSkip = new RoundedButtonWidget("换一首", FontManager.pf12bold);
+        this.addChild(fmSkip);
+        fmSkip.setShouldOverrideMouseCursor(true);
+        fmSkip.setBeforeRenderCallback(() -> {
+            boolean active = CloudMusic.isPersonalFmActive();
+            fmSkip.setHidden(!active);
+            fmSkip.setClickable(active && !PersonalFmManager.isLoading());
+            fmSkip.setBounds(44, 17);
+            fmSkip.setPosition(playMode.getRelativeX() + playMode.getWidth() + 10, playMode.getRelativeY() + 1);
+            fmSkip.setRadius(4);
+            fmSkip.setAlpha(ControlsBar.this.getAlpha() * (PersonalFmManager.isLoading() ? .50f : 1.0f));
+            fmSkip.setColor(fmSkip.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+            fmSkip.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+        });
+        fmSkip.setOnClickCallback((x, y, mouseButton) -> {
+            if (mouseButton != 0 || !CloudMusic.isPersonalFmActive()) return mouseButton == 0;
+            PersonalFmManager.skipCurrentAndRequestNext();
+            return true;
+        });
+
 
         // Heart mode is a bottom-player control rather than a playlist-header text button.
         // It remains visible but muted when the current queue did not originate from a NetEase playlist.
@@ -147,7 +175,8 @@ public class ControlsBar extends NCMPanel {
         intelligenceMode.setShouldOverrideMouseCursor(true);
         intelligenceMode.setBeforeRenderCallback(() -> {
             PlayList context = CloudMusic.currentPlaylistContext;
-            boolean available = context != null && context.getPlatform() == tritium.ncm.music.MusicPlatform.NETEASE
+            intelligenceMode.setHidden(CloudMusic.isPersonalFmActive());
+            boolean available = !CloudMusic.isPersonalFmActive() && context != null && context.getPlatform() == tritium.ncm.music.MusicPlatform.NETEASE
                     && context.getId() > 0 && CloudMusic.currentlyPlaying != null
                     && CloudMusic.currentlyPlaying.isNetease();
             intelligenceMode.setClickable(available);

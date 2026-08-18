@@ -124,6 +124,29 @@ public class CloudMusicApi {
 
     }
 
+    /** Fetches a small batch of recommendations for the logged-in personal FM. */
+    public RequestUtil.RequestAnswer personalFm() {
+        return RequestUtil.createRequest("/api/v1/radio/get", new HashMap<>(), OptionsUtil.createOptions("weapi"));
+    }
+
+    /** Fetches a small batch for a selected personal FM mode. */
+    public RequestUtil.RequestAnswer personalFmMode(String mode, String submode, int limit) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("mode", mode == null || mode.trim().isEmpty() ? "DEFAULT" : mode.trim());
+        if (submode != null && !submode.trim().isEmpty()) data.put("submode", submode.trim());
+        data.put("limit", Math.max(1, Math.min(3, limit)));
+        return RequestUtil.createRequest("/api/v1/radio/get", data, OptionsUtil.createOptions());
+    }
+
+    /** Marks a personal FM track as skipped after an explicit user action. */
+    public RequestUtil.RequestAnswer personalFmTrash(long songId) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("songId", songId);
+        data.put("alg", "RT");
+        data.put("time", 25);
+        return RequestUtil.createRequest("/api/radio/trash/add", data, OptionsUtil.createOptions("weapi"));
+    }
+
     public RequestUtil.RequestAnswer searchHotDetail() {
         return RequestUtil.createRequest("/api/hotsearchlist/get", new HashMap<>(), OptionsUtil.createOptions("weapi"));
     }

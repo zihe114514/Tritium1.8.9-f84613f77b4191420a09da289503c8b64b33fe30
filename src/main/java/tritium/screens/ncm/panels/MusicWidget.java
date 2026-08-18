@@ -99,7 +99,8 @@ public class MusicWidget extends RoundedRectWidget {
 
             if (i == 0) {
                 CloudMusic.currentPlaylistContext = playList.isSearchMode() ? null : playList;
-                CloudMusic.play(playList.getMusics(), index);
+                if (playList.isPersonalFm()) CloudMusic.playFm(playList.getMusics(), index);
+                else CloudMusic.play(playList.getMusics(), index);
             }
 
             return true;
@@ -274,7 +275,9 @@ public class MusicWidget extends RoundedRectWidget {
             });
         }
 
-        LabelWidget lblMusicArtist = new LabelWidget(music.getArtistsName() + " - " + music.getAlbum().getName(), FontManager.pf14);
+        String albumName = music.getAlbum() == null || music.getAlbum().getName() == null
+                ? "未知专辑" : music.getAlbum().getName();
+        LabelWidget lblMusicArtist = new LabelWidget(music.getArtistsName() + " - " + albumName, FontManager.pf14);
         this.addChild(lblMusicArtist);
 
         lblMusicArtist

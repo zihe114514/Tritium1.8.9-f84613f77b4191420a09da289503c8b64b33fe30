@@ -112,6 +112,9 @@ public class CloudMusic implements SharedConstants {
     private static final AtomicBoolean NETEASE_REFRESHING = new AtomicBoolean(false);
 
     public static volatile PlayMode playMode = PlayMode.Sequential;
+    /** Whether the current queue belongs to the isolated personal FM session. */
+    private static volatile boolean personalFmActive;
+    private static volatile PlayMode playModeBeforePersonalFm = PlayMode.Sequential;
 
     public static Quality quality = Quality.LOSSLESS;
 
@@ -415,6 +418,8 @@ public class CloudMusic implements SharedConstants {
      * 列表循环保留给旧数据/兼容逻辑，不再作为主播放器的可见模式。
      */
     public static synchronized PlayMode cyclePlayMode() {
+        // Personal FM owns its queue order; ordinary modes do not mutate it.
+        if (personalFmActive) return playMode;
         switch (playMode) {
             case Sequential:
             case LoopInList:
@@ -483,6 +488,7 @@ public class CloudMusic implements SharedConstants {
     public static volatile boolean dontAdd = false;
 
     public static void prev() {
+        if (personalFmActive && curIdx <= 0) return;
         updatePlayCountIfNeeded();
 
         if (!canPlayPrevious()) {
@@ -510,6 +516,10 @@ public class CloudMusic implements SharedConstants {
     }
 
     public static void next() {
+        if (personalFmActive && curIdx + 1 >= playList.size()) {
+            PersonalFmManager.requestNextBatchAsync();
+            return;
+        }
         if (!canPlayNext()) {
             return;
         }
@@ -648,26 +658,58 @@ public class CloudMusic implements SharedConstants {
      */
     @SneakyThrows
     public static void play(List<Music> songs, int startIdx) {
+        exitPersonalFmSession();
+        startPlaybackList(songs, startIdx);
+    }
+
+    /** Starts a small personal FM batch without applying ordinary playlist modes. */
+    @SneakyThrows
+    public static void playFm(List<Music> songs, int startIdx) {
         if (songs == null || songs.isEmpty()) {
-            System.err.println("[NCM] Ignoring playback request for an empty playlist.");
+            System.err.println("[NCM] Ignoring empty personal FM batch.");
+            return;
+        }
+        enterPersonalFmSession();
+        startPlaybackList(songs, startIdx);
+    }
+
+    @SneakyThrows
+    private static void startPlaybackList(List<Music> songs, int startIdx) {
+        if (songs == null || songs.isEmpty()) {
+            System.err.println("[NCM] Ignoring empty playlist.");
             return;
         }
 
-        // 深拷贝一份以避免打乱的时候影响传进来的列表的顺序
+        // 深拷贝一份以避免打乱时影响来源列表；FM 会话始终保持接口返回顺序。
         List<Music> safeSongList = new ArrayList<>(songs);
-
         stopExistingPlayThread();
 
-        if (playMode == PlayMode.Random) {
-            // 打乱列表以及开始索引
+        if (!personalFmActive && playMode == PlayMode.Random) {
             startIdx = handleRandomPlayMode(safeSongList, startIdx);
         }
 
         startIdx = normalizeStartIndex(startIdx);
-        loadMusicCover(safeSongList.get(0));
-
+        loadMusicCover(safeSongList.get(Math.min(startIdx, safeSongList.size() - 1)));
         playList = safeSongList;
         startNewPlayThread(safeSongList, startIdx);
+    }
+
+    public static boolean isPersonalFmActive() {
+        return personalFmActive;
+    }
+
+    public static synchronized void enterPersonalFmSession() {
+        if (!personalFmActive) {
+            playModeBeforePersonalFm = playMode;
+            personalFmActive = true;
+            playMode = PlayMode.Sequential;
+        }
+    }
+
+    public static synchronized void exitPersonalFmSession() {
+        if (!personalFmActive) return;
+        personalFmActive = false;
+        playMode = playModeBeforePersonalFm;
     }
 
     /**
@@ -789,6 +831,10 @@ public class CloudMusic implements SharedConstants {
                 }
                 handlePlaybackCompletion();
                 updateCurrentIndex();
+                if (personalFmActive && curIdx >= playList.size()) {
+                    PersonalFmManager.requestNextBatchAsync();
+                    break;
+                }
             }
         }
 
@@ -797,6 +843,10 @@ public class CloudMusic implements SharedConstants {
                 return true;
             }
 
+            if (personalFmActive && consecutiveLoadFailures >= playList.size()) {
+                PersonalFmManager.requestNextBatchAsync();
+                return true;
+            }
             if (consecutiveLoadFailures < playList.size()) {
                 return false;
             }
@@ -1289,6 +1339,12 @@ public class CloudMusic implements SharedConstants {
         }
 
         private void updateCurIdx() {
+            if (personalFmActive) {
+                // FM batches are sequential and never loop, reshuffle, or repeat.
+                if (dontAdd) dontAdd = false;
+                else curIdx++;
+                return;
+            }
             if (playMode == PlayMode.LoopSingle) {
                 // 单曲循环只影响自然播放结束；用户手动上一首/下一首仍可正常切歌。
                 if (dontAdd) {

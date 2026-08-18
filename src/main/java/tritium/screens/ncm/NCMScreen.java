@@ -24,6 +24,7 @@ import tritium.screens.ncm.panels.ControlsBar;
 import tritium.screens.ncm.panels.HomePanel;
 import tritium.screens.ncm.panels.NavigateBar;
 import tritium.screens.ncm.panels.PlaylistPanel;
+import tritium.screens.ncm.panels.PersonalFmPanel;
 import tritium.utils.cursor.CursorUtils;
 import tritium.utils.other.multithreading.MultiThreadingUtil;
 
@@ -492,7 +493,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
      * an account refresh cannot trigger duplicate home/search requests.
      */
     public void reloadCurrentPanel() {
-        if (this.currentPanel instanceof PlaylistPanel) {
+        if (this.currentPanel instanceof PlaylistPanel || this.currentPanel instanceof PersonalFmPanel) {
             this.currentPanel.onInit();
         }
     }

@@ -60,6 +60,8 @@ public class PlayList {
     private transient MusicPlatform platform = MusicPlatform.NETEASE;
     /** QQ 的 dissid/tid 原始字符串，避免把跨平台标识强行压缩成网易云 long id。 */
     private transient String platformPlaylistId;
+    /** True for the temporary queue owned by the personal FM session. */
+    private transient boolean personalFm;
     public transient volatile boolean musicsQueried = false, musicsLoaded = false;
 
     public final Location getCoverLocation() {

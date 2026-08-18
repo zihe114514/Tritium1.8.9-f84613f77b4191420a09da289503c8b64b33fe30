@@ -292,6 +292,8 @@ public class NavigateBar extends NCMPanel {
             this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                     () -> "最近播放", () -> NCMScreen.getInstance().setCurrentPanel(
                     new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.RECENT_SONGS))));
+            this.playlistPanel.addChild(new PlaylistItem("F", () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                    () -> "私人 FM", () -> NCMScreen.getInstance().setCurrentPanel(new PersonalFmPanel())));
         }
         LabelWidget lblPlaylists = new LabelWidget("我的歌单", FontManager.pf14bold);
         lblPlaylists.setBeforeRenderCallback(() -> {
