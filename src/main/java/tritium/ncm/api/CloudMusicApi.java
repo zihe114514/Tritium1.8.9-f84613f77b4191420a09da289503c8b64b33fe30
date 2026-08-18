@@ -193,15 +193,6 @@ public class CloudMusicApi {
         return RequestUtil.createRequest("/api/album/privilege", data, OptionsUtil.createOptions());
     }
 
-    public RequestUtil.RequestAnswer intelligenceList(long songId, long playlistId, long startSongId, int count) {
-        Map<String, Object> data = new HashMap<>();
-        data.put("songId", songId);
-        data.put("type", "fromPlayOne");
-        data.put("playlistId", playlistId);
-        data.put("startMusicId", startSongId <= 0 ? songId : startSongId);
-        data.put("count", Math.max(1, Math.min(100, count)));
-        return RequestUtil.createRequest("/api/playmode/intelligence/list", data, OptionsUtil.createOptions());
-    }
 
     public RequestUtil.RequestAnswer eventList(int pageSize, long lastTime) {
         Map<String, Object> data = new HashMap<>();

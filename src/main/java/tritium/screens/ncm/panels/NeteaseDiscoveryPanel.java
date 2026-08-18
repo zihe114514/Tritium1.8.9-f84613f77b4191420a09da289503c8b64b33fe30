@@ -326,18 +326,6 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playlist));
     }
 
-    public static void openIntelligence(PlayList sourcePlaylist, Music sourceSong) {
-        if (sourcePlaylist == null || sourcePlaylist.getId() <= 0 || sourceSong == null) return;
-        MultiThreadingUtil.runAsync(() -> {
-            try {
-                JsonObject root = CloudMusicApi.intelligenceList(sourceSong.getId(), sourcePlaylist.getId(), sourceSong.getId(), 50)
-                        .toJsonObject();
-                List<Music> songs = parseSongs(firstSongArray(root, "data"));
-                MultiThreadingUtil.runOnMainThread(() -> openSongs("心动模式", songs));
-            } catch (Throwable ignored) {
-            }
-        });
-    }
 
     private static List<Music> parseSongsFromRecentResponse(JsonObject root) {
         List<Music> result = new ArrayList<>();

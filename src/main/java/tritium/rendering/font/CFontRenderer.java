@@ -492,20 +492,29 @@ public class CFontRenderer implements Closeable, SharedConstants {
     }
 
     public String trim(String text, double width) {
-        String name = text;
+        String name = text == null ? "" : text;
+
+        // A zero/negative content area can legitimately occur while responsive UI controls
+        // collapse.  There is no valid substring to draw in that case.
+        if (width <= 0.0 || name.isEmpty()) {
+            return "";
+        }
 
         if (this.getStringWidthD(name) > width) {
-            int idx = name.length() - 1;
-            while (true) {
+            int idx = name.length();
+            while (idx > 0) {
                 String substring = name.substring(0, idx);
 
                 if (this.getStringWidthD(substring + "...") <= width) {
-                    name = substring + "...";
-                    break;
+                    return substring + "...";
                 }
 
                 idx--;
             }
+
+            // Even an ellipsis cannot fit; keep the renderer safe and draw nothing rather
+            // than letting the substring index become negative.
+            return "";
         }
 
         return name;

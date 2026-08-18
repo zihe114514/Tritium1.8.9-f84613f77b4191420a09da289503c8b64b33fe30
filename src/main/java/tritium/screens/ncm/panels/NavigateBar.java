@@ -287,9 +287,6 @@ public class NavigateBar extends NCMPanel {
                     () -> "排行榜", () -> NCMScreen.getInstance().setCurrentPanel(
                     new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.TOP_LISTS))));
             this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                    () -> "我的数字专辑", () -> NCMScreen.getInstance().setCurrentPanel(
-                    new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.DIGITAL_ALBUMS))));
-            this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                     () -> "最近播放", () -> NCMScreen.getInstance().setCurrentPanel(
                     new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.RECENT_SONGS))));
             this.playlistPanel.addChild(new PlaylistItem("F", () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),

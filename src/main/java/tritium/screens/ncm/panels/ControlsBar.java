@@ -8,7 +8,6 @@ import tritium.ncm.music.PersonalFmManager;
 import tritium.screens.ncm.NCMPlayerConfig;
 import tritium.rendering.DownloadDynamicIsland;
 import tritium.ncm.music.Quality;
-import tritium.ncm.music.dto.PlayList;
 import tritium.rendering.ui.widgets.*;
 import tritium.screens.ncm.MusicLyricsPanel;
 import tritium.screens.ncm.NCMPanel;
@@ -168,35 +167,7 @@ public class ControlsBar extends NCMPanel {
         });
 
 
-        // Heart mode is a bottom-player control rather than a playlist-header text button.
-        // It remains visible but muted when the current queue did not originate from a NetEase playlist.
-        IconWidget intelligenceMode = new IconWidget("♥", FontManager.pf20bold, 0, 0, 20, 20);
-        this.addChild(intelligenceMode);
-        intelligenceMode.setShouldOverrideMouseCursor(true);
-        intelligenceMode.setBeforeRenderCallback(() -> {
-            PlayList context = CloudMusic.currentPlaylistContext;
-            intelligenceMode.setHidden(CloudMusic.isPersonalFmActive());
-            boolean available = !CloudMusic.isPersonalFmActive() && context != null && context.getPlatform() == tritium.ncm.music.MusicPlatform.NETEASE
-                    && context.getId() > 0 && CloudMusic.currentlyPlaying != null
-                    && CloudMusic.currentlyPlaying.isNetease();
-            intelligenceMode.setClickable(available);
-            intelligenceMode.setBounds(20, 20);
-            intelligenceMode.setPosition(playMode.getRelativeX() + playMode.getWidth() + 14, playMode.getRelativeY());
-            intelligenceMode.setAlpha(ControlsBar.this.getAlpha() * (available ? 1.0f : .30f));
-            intelligenceMode.setColor(available && intelligenceMode.isHovering()
-                    ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT_HOVER)
-                    : (available ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
-                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT)));
-        });
-        intelligenceMode.setOnClickCallback((x, y, mouseButton) -> {
-            if (mouseButton != 0) return false;
-            PlayList context = CloudMusic.currentPlaylistContext;
-            if (context != null && CloudMusic.currentlyPlaying != null) {
-                NeteaseDiscoveryPanel.openIntelligence(context, CloudMusic.currentlyPlaying);
-                return true;
-            }
-            return false;
-        });
+
         RoundedRectWidget progressBarBg = new RoundedRectWidget() {
 
             boolean prevMouse = false;
@@ -340,7 +311,7 @@ public class ControlsBar extends NCMPanel {
                                 lblMusicArtist.getRelativeY() + lblMusicArtist.getHeight() * .5 + 2
                         ));
 
-        // Bottom-right compact volume strip. It delegates all visual and input behavior to the
+        // Right-aligned compact volume strip. It delegates all visual and input behavior to the
         // full-screen control implementation, so both surfaces remain visually synchronized.
         final VolumeControl compactVolumeControl = new VolumeControl();
         RoundedRectWidget compactVolumeWidget = new RoundedRectWidget() {
@@ -360,57 +331,142 @@ public class ControlsBar extends NCMPanel {
                     compactVolumeWidget
                             .setBounds(controlWidth, 20.0)
                             .setPosition(compactVolumeWidget.getParentWidth() - controlWidth - 8.0,
-                                    Math.max(1.0, compactVolumeWidget.getParentHeight() - 22.0))
+                                    Math.max(1.0, (compactVolumeWidget.getParentHeight() - 20.0) * .5))
                             .setAlpha(ControlsBar.this.getAlpha());
                 });
 
-        // Compact quality switch: each primary click moves to the next provider tier.  The
-        // button stays a single row and deliberately has no expanding menu or transition.
+        // Compact quality selector.  The available provider tiers are exposed in an upward
+        // pop-up so a user can select a known target instead of repeatedly cycling the button.
+        // Keeping all controls as direct children of ControlsBar also makes the pop-up render
+        // above the compact volume control and prevents it from being clipped by the selector.
         final Quality[] selectableQualities = Quality.values();
         final double qualityButtonHeight = 20.0;
+        final double qualityOptionHeight = 18.0;
+        final double qualityMenuPadding = 3.0;
+        final boolean[] qualityMenuOpen = {false};
+        final RoundedRectWidget[] qualityMenuBackground = new RoundedRectWidget[1];
+        final RoundedRectWidget[] qualityOptions = new RoundedRectWidget[selectableQualities.length];
         RoundedRectWidget qualitySelector = new RoundedRectWidget();
         this.addChild(qualitySelector);
         qualitySelector
                 .setClickable(true)
                 .setShouldOverrideMouseCursor(true)
                 .setBeforeRenderCallback(() -> {
-                    double selectorWidth = 94.0;
-                    double volumeWidth = Math.max(74.0, Math.min(122.0, qualitySelector.getParentWidth() * .18));
+                    // Dedicated footer slot: immediately left of the volume control, with a
+                    // fixed visual gap matching the player layout.  Do not let a transient
+                    // layout value hide this primary action.
+                    double parentWidth = qualitySelector.getParentWidth();
+                    double volumeWidth = Math.max(74.0, Math.min(122.0, parentWidth * .18));
+                    double volumeX = compactVolumeWidget.getRelativeX();
+                    if (volumeX <= 0.0 || volumeX >= parentWidth) {
+                        volumeX = parentWidth - volumeWidth - 8.0;
+                    }
+                    double selectorGap = Math.min(38.0, Math.max(14.0, parentWidth * .045));
+                    String selectorLabel = "音质 · " + formatQuality(CloudMusic.quality) + (qualityMenuOpen[0] ? " ︿" : " ﹀");
+                    double desiredWidth = FontManager.pf12bold.getStringWidthD(selectorLabel) + 14.0;
+                    double selectorWidth = Math.max(72.0, Math.min(112.0, desiredWidth));
+                    double selectorX = volumeX - selectorGap - selectorWidth;
+
+                    // On a very narrow player, shrink only enough to remain inside the footer;
+                    // the label itself trims safely instead of the whole quality action vanishing.
+                    if (selectorX < 6.0) {
+                        selectorWidth = Math.max(34.0, volumeX - selectorGap - 6.0);
+                        selectorX = Math.max(6.0, volumeX - selectorGap - selectorWidth);
+                    }
+
                     qualitySelector
+                            .setHidden(false)
+                            .setClickable(true)
                             .setBounds(selectorWidth, qualityButtonHeight)
                             .setRadius(5.0)
                             .setColor(qualitySelector.isHovering()
                                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND))
                             .setAlpha(ControlsBar.this.getAlpha() * .94f)
-                            .setPosition(Math.max(6.0, qualitySelector.getParentWidth() - volumeWidth - selectorWidth - 14.0),
-                                    Math.max(1.0, qualitySelector.getParentHeight() - qualityButtonHeight - 2.0));
+                            .setPosition(selectorX,
+                                    Math.max(1.0, (qualitySelector.getParentHeight() - qualityButtonHeight) * .5));
                 })
                 .setOnClickCallback((relativeX, relativeY, mouseButton) -> {
-                    if (mouseButton != 0) {
-                        return true;
-                    }
-                    Quality current = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
-                    int currentIndex = 0;
-                    for (int index = 0; index < selectableQualities.length; index++) {
-                        if (selectableQualities[index] == current) {
-                            currentIndex = index;
-                            break;
+                    if (mouseButton == 0) {
+                        boolean open = !qualityMenuOpen[0];
+                        qualityMenuOpen[0] = open;
+                        qualityMenuBackground[0].setHidden(!open);
+                        for (RoundedRectWidget qualityOption : qualityOptions) {
+                            qualityOption.setHidden(!open);
                         }
                     }
-                    Quality selected = selectableQualities[(currentIndex + 1) % selectableQualities.length];
-                    CloudMusic.quality = selected;
-                    NCMPlayerConfig.setAudioQuality(selected);
-                    DownloadDynamicIsland.showPlaybackQuality("已切换 " + formatQuality(selected), "下次播放生效");
                     return true;
                 });
 
-        LabelWidget qualityText = new LabelWidget(() -> "音质 · " + formatQuality(CloudMusic.quality), FontManager.pf12bold);
+        LabelWidget qualityText = new LabelWidget(() -> "音质 · " + formatQuality(CloudMusic.quality) + (qualityMenuOpen[0] ? " ︿" : " ﹀"), FontManager.pf12bold);
         qualitySelector.addChild(qualityText);
         qualityText.setClickable(false);
         qualityText.setBeforeRenderCallback(() -> qualityText
                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
+                .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
+                .setMaxWidth(Math.max(0.0, qualitySelector.getWidth() - 14.0))
                 .setPosition(7.0, Math.max(2.0, (qualityButtonHeight - qualityText.getHeight()) * .5)));
+
+        // The menu is declared after the selector, therefore it is rendered and hit-tested on
+        // top of the bottom bar.  It grows upward so it never covers the compact controls.
+        qualityMenuBackground[0] = new RoundedRectWidget();
+        this.addChild(qualityMenuBackground[0]);
+        qualityMenuBackground[0]
+                .setClickable(false)
+                .setHidden(true)
+                .setBeforeRenderCallback(() -> {
+                    double menuHeight = selectableQualities.length * qualityOptionHeight + qualityMenuPadding * 2.0;
+                    qualityMenuBackground[0]
+                            .setBounds(qualitySelector.getWidth(), menuHeight)
+                            .setPosition(qualitySelector.getRelativeX(), qualitySelector.getRelativeY() - menuHeight - 4.0)
+                            .setRadius(6.0)
+                            .setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND))
+                            .setAlpha(ControlsBar.this.getAlpha() * .98f);
+                });
+
+        for (int index = 0; index < selectableQualities.length; index++) {
+            final Quality option = selectableQualities[index];
+            final int optionIndex = index;
+            qualityOptions[index] = new RoundedRectWidget();
+            RoundedRectWidget qualityOption = qualityOptions[index];
+            this.addChild(qualityOption);
+            qualityOption
+                    .setShouldOverrideMouseCursor(true)
+                    .setHidden(true)
+                    .setBeforeRenderCallback(() -> {
+                        boolean selected = option == (CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality);
+                        qualityOption
+                                .setBounds(Math.max(0.0, qualitySelector.getWidth() - qualityMenuPadding * 2.0), qualityOptionHeight)
+                                .setPosition(qualitySelector.getRelativeX() + qualityMenuPadding,
+                                        qualityMenuBackground[0].getRelativeY() + qualityMenuPadding + optionIndex * qualityOptionHeight)
+                                .setRadius(4.0)
+                                .setColor(qualityOption.isHovering()
+                                        ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                                        : (selected ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT) : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)))
+                                .setAlpha(ControlsBar.this.getAlpha() * (selected ? .72f : .98f));
+                    })
+                    .setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+                        if (mouseButton != 0) return true;
+                        CloudMusic.quality = option;
+                        NCMPlayerConfig.setAudioQuality(option);
+                        qualityMenuOpen[0] = false;
+                        qualityMenuBackground[0].setHidden(true);
+                        for (RoundedRectWidget menuOption : qualityOptions) {
+                            menuOption.setHidden(true);
+                        }
+                        DownloadDynamicIsland.showPlaybackQuality("已切换 " + formatQuality(option), "下次播放生效");
+                        return true;
+                    });
+
+            LabelWidget optionText = new LabelWidget(() -> option == (CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality)
+                    ? "✓  " + formatQuality(option)
+                    : "   " + formatQuality(option), FontManager.pf12bold);
+            qualityOption.addChild(optionText);
+            optionText.setClickable(false);
+            optionText.setBeforeRenderCallback(() -> optionText
+                    .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
+                    .setPosition(5.0, Math.max(1.0, (qualityOptionHeight - optionText.getHeight()) * .5)));
+        }
     }
 
     private static String formatQuality(Quality quality) {
