@@ -4,17 +4,9 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
-import lombok.Cleanup;
 import lombok.Getter;
 import lombok.SneakyThrows;
-import org.apache.commons.io.IOUtils;
 import repackage.com.jsyn.exceptions.ChannelMismatchException;
-import repackage.javazoom.jl.converter.Converter;
-import repackage.org.kc7bfi.jflac.FLACDecoder;
-import repackage.org.kc7bfi.jflac.PCMProcessor;
-import repackage.org.kc7bfi.jflac.metadata.StreamInfo;
-import repackage.org.kc7bfi.jflac.util.ByteData;
-import repackage.org.kc7bfi.jflac.util.WavWriter;
 import today.opai.api.enums.EnumChatColor;
 import tritium.MuoniumPlayerExtension;
 import tritium.interfaces.SharedConstants;
@@ -24,8 +16,6 @@ import tritium.ncm.music.dto.Music;
 import tritium.ncm.music.dto.PlayList;
 import tritium.ncm.music.dto.User;
 import tritium.rendering.DownloadDynamicIsland;
-import tritium.rendering.GaussianKernel;
-import tritium.rendering.TextureManager;
 import tritium.rendering.texture.DynamicTexture;
 import tritium.rendering.texture.Textures;
 import tritium.screens.ncm.LyricLine;
@@ -33,7 +23,6 @@ import tritium.screens.ncm.LyricParser;
 import tritium.screens.ncm.MusicLyricsPanel;
 import tritium.screens.ncm.NCMScreen;
 import tritium.widget.impl.MusicLyricsWidget;
-import tritium.utils.Location;
 import tritium.utils.Tuple;
 import tritium.utils.json.JsonUtils;
 import tritium.utils.network.HttpUtils;
@@ -41,15 +30,9 @@ import tritium.utils.other.StringUtils;
 import tritium.utils.other.WrappedInputStream;
 import tritium.utils.other.multithreading.MultiThreadingUtil;
 
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
-import java.awt.image.ConvolveOp;
-import java.awt.image.Kernel;
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -72,7 +55,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * @author IzumiiKonata
  * @since 6/16/2023 9:34 AM
- *
+ * <p>
  * S3 适配：仅保留音频状态机 + 播放线程 + 下载/解码链（play/pause/seek/next/prev/stop/loop/shuffle）。
  * 歌词（LyricLine/LyricParser/MusicLyricsPanel）、封面（TextureManager/Textures/GaussianKernel）、
  * 登录二维码（QRCodeGenerator/NCMScreen）等 UI/渲染/歌词依赖分别归入 S4/S5/S6，
@@ -87,7 +70,9 @@ public class CloudMusic implements SharedConstants {
     // 不要依赖 Thread.interrupt 判断歌词任务是否过期；结果提交前校验 generation + songId。
     public static final AtomicLong generation = new AtomicLong(0);
 
-    /** 当前播放会话（volatile：播放线程写、主线程读，保证跨线程可见性）。 */
+    /**
+     * 当前播放会话（volatile：播放线程写、主线程读，保证跨线程可见性）。
+     */
     public static volatile PlaybackSession currentSession = null;
 
     public static volatile AudioPlayer player;
@@ -97,21 +82,29 @@ public class CloudMusic implements SharedConstants {
     public static List<Music> playList = new ArrayList<>();
     public static int curIdx = 0;
     public static volatile Music currentlyPlaying;
-    /** The real NetEase playlist that started the current queue; null for searches/temporary lists. */
+    /**
+     * The real NetEase playlist that started the current queue; null for searches/temporary lists.
+     */
     public static volatile PlayList currentPlaylistContext;
     public static Thread playThread;
 
     public static volatile User profile;
     public static volatile List<PlayList> playLists;
     public static volatile List<Long> likeList;
-    /** IDs from /api/v1/cloud/get, used to mark the same songs wherever they appear in lists. */
+    /**
+     * IDs from /api/v1/cloud/get, used to mark the same songs wherever they appear in lists.
+     */
     private static volatile Set<Long> userCloudSongIds = Collections.emptySet();
 
-    /** Prevents duplicate account refresh requests while the previous one is still running. */
+    /**
+     * Prevents duplicate account refresh requests while the previous one is still running.
+     */
     private static final AtomicBoolean NETEASE_REFRESHING = new AtomicBoolean(false);
 
     public static volatile PlayMode playMode = PlayMode.Sequential;
-    /** Whether the current queue belongs to the isolated personal FM session. */
+    /**
+     * Whether the current queue belongs to the isolated personal FM session.
+     */
     private static volatile boolean personalFmActive;
     private static volatile PlayMode playModeBeforePersonalFm = PlayMode.Sequential;
 
@@ -160,7 +153,7 @@ public class CloudMusic implements SharedConstants {
     public static void loadNCM(String cookie) {
         OptionsUtil.setCookie(cookie);
         // 获取用户信息
-        profile = getUserProfile();
+        profile = NeteaseAccountRepository.getUserProfile();
 
         if (profile == null) {
             return;
@@ -172,11 +165,11 @@ public class CloudMusic implements SharedConstants {
             onStop();
         }
 
-        CloudMusic.playLists = loadUserPlaylists();
+        CloudMusic.playLists = NeteaseAccountRepository.loadUserPlaylists(profile);
         System.out.printf("[NCM] Loaded %s playlists\n", playLists.size());
 
-        likeList = likeList();
-        Set<Long> loadedCloudSongIds = loadUserCloudSongIds();
+        likeList = NeteaseAccountRepository.loadLikeList(profile);
+        Set<Long> loadedCloudSongIds = NeteaseAccountRepository.loadCloudSongIds();
         if (loadedCloudSongIds != null) {
             userCloudSongIds = loadedCloudSongIds;
             System.out.printf("[NCM] Loaded %s cloud-drive song markers%n", userCloudSongIds.size());
@@ -185,33 +178,9 @@ public class CloudMusic implements SharedConstants {
         MultiThreadingUtil.runOnMainThread(() -> NCMScreen.getInstance().reloadCurrentPanel());
     }
 
-    private static List<PlayList> loadUserPlaylists() {
-        List<PlayList> userPlaylists = new ArrayList<>();
-        int page = 0;
-
-        while (true) {
-            List<PlayList> pagePlaylists = fetchPlaylistsPage(page);
-
-            if (pagePlaylists.isEmpty()) {
-                break;
-            }
-
-            userPlaylists.addAll(pagePlaylists);
-            page++;
-        }
-
-        return userPlaylists;
-    }
-
-    private static List<PlayList> fetchPlaylistsPage(int page) {
-        try {
-            return profile.playLists(page, 30);
-        } catch (Exception e) {
-            return new ArrayList<>();
-        }
-    }
-
-    /** Attempts to claim the single网易云刷新 slot. */
+    /**
+     * Attempts to claim the single网易云刷新 slot.
+     */
     public static boolean beginNeteaseRefresh() {
         return NETEASE_REFRESHING.compareAndSet(false, true);
     }
@@ -234,14 +203,14 @@ public class CloudMusic implements SharedConstants {
 
         try {
             OptionsUtil.setCookie(cookie);
-            User refreshedProfile = getUserProfile();
+            User refreshedProfile = NeteaseAccountRepository.getUserProfile();
             if (refreshedProfile == null) {
                 return NeteaseRefreshResult.failure(System.currentTimeMillis() - startedAt, "登录状态已失效");
             }
 
-            List<PlayList> refreshedPlaylists = loadUserPlaylistsStrict(refreshedProfile);
-            List<Long> refreshedLikeList = loadLikeList(refreshedProfile);
-            Set<Long> refreshedCloudSongIds = loadUserCloudSongIds();
+            List<PlayList> refreshedPlaylists = NeteaseAccountRepository.loadUserPlaylistsStrict(refreshedProfile);
+            List<Long> refreshedLikeList = NeteaseAccountRepository.loadLikeList(refreshedProfile);
+            Set<Long> refreshedCloudSongIds = NeteaseAccountRepository.loadCloudSongIds();
 
             profile = refreshedProfile;
             playLists = refreshedPlaylists;
@@ -261,107 +230,11 @@ public class CloudMusic implements SharedConstants {
         }
     }
 
-    private static List<PlayList> loadUserPlaylistsStrict(User user) {
-        List<PlayList> userPlaylists = new ArrayList<>();
-        int page = 0;
-        // A sane upper bound prevents a malformed API response from creating an endless loop.
-        while (page < 1000) {
-            List<PlayList> pagePlaylists = user.playLists(page, 30);
-            if (pagePlaylists == null || pagePlaylists.isEmpty()) {
-                break;
-            }
-            userPlaylists.addAll(pagePlaylists);
-            page++;
-        }
-        if (page >= 1000) {
-            throw new IllegalStateException("歌单数量异常");
-        }
-        return userPlaylists;
-    }
-
-    /** Returns whether a NetEase song is present in the authenticated user's cloud drive. */
+    /**
+     * Returns whether a NetEase song is present in the authenticated user's cloud drive.
+     */
     public static boolean isUserCloudSong(long songId) {
         return songId > 0L && userCloudSongIds.contains(songId);
-    }
-
-    /**
-     * Loads cloud-drive IDs separately from playlist details. Normal playlist responses do not
-     * reliably contain a cloud marker, even when the current account uploaded the same song.
-     */
-    private static Set<Long> loadUserCloudSongIds() {
-        final int pageSize = 200;
-        final int maximumPages = 100;
-        Set<Long> result = new HashSet<>();
-        try {
-            for (int page = 0; page < maximumPages; page++) {
-                JsonObject response = CloudMusicApi.userCloudSongs(pageSize, page * pageSize).toJsonObject();
-                JsonArray entries = extractCloudEntries(response);
-                if (entries == null || entries.size() == 0) {
-                    break;
-                }
-                for (JsonElement element : entries) {
-                    if (element != null && element.isJsonObject()) {
-                        long songId = extractCloudSongId(element.getAsJsonObject());
-                        if (songId > 0L) {
-                            result.add(songId);
-                        }
-                    }
-                }
-                boolean hasMore = response.has("hasMore") && !response.get("hasMore").isJsonNull()
-                        && response.get("hasMore").getAsBoolean();
-                if (!hasMore && entries.size() < pageSize) {
-                    break;
-                }
-            }
-            return Collections.unmodifiableSet(result);
-        } catch (Throwable throwable) {
-            System.err.println("[NCM] Cloud-drive marker load failed: " + throwable.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * The official endpoint normally returns data as an array. Keep the parser
-     * tolerant of proxy/API wrappers that put the array under data.songs or
-     * data.data; otherwise a successful response would silently produce no
-     * badges at all.
-     */
-    private static JsonArray extractCloudEntries(JsonObject response) {
-        if (response == null) return null;
-        JsonElement data = response.get("data");
-        if (data != null && data.isJsonArray()) return data.getAsJsonArray();
-        if (data != null && data.isJsonObject()) {
-            JsonObject dataObject = data.getAsJsonObject();
-            JsonElement songs = dataObject.get("songs");
-            if (songs != null && songs.isJsonArray()) return songs.getAsJsonArray();
-            JsonElement nestedData = dataObject.get("data");
-            if (nestedData != null && nestedData.isJsonArray()) return nestedData.getAsJsonArray();
-        }
-        JsonElement songs = response.get("songs");
-        return songs != null && songs.isJsonArray() ? songs.getAsJsonArray() : null;
-    }
-    private static long extractCloudSongId(JsonObject cloudEntry) {
-        JsonObject simpleSong = cloudEntry.has("simpleSong") && cloudEntry.get("simpleSong").isJsonObject()
-                ? cloudEntry.getAsJsonObject("simpleSong") : null;
-        long id = readCloudSongId(simpleSong, "id");
-        if (id > 0L) return id;
-        JsonObject song = cloudEntry.has("song") && cloudEntry.get("song").isJsonObject()
-                ? cloudEntry.getAsJsonObject("song") : null;
-        id = readCloudSongId(song, "id");
-        if (id > 0L) return id;
-        id = readCloudSongId(cloudEntry, "songId");
-        return id > 0L ? id : readCloudSongId(cloudEntry, "id");
-    }
-
-    private static long readCloudSongId(JsonObject object, String property) {
-        if (object == null || !object.has(property) || object.get(property).isJsonNull()) {
-            return 0L;
-        }
-        try {
-            return object.get(property).getAsLong();
-        } catch (Throwable ignored) {
-            return 0L;
-        }
     }
 
     @lombok.Getter
@@ -575,7 +448,9 @@ public class CloudMusic implements SharedConstants {
         return true;
     }
 
-    /** Adjusts volume by a normalized delta and reports the resulting percentage. */
+    /**
+     * Adjusts volume by a normalized delta and reports the resulting percentage.
+     */
     public static boolean adjustVolume(float delta) {
         return setVolume(getVolume() + delta, true);
     }
@@ -586,6 +461,7 @@ public class CloudMusic implements SharedConstants {
         }
         return Math.max(0.0f, Math.min(1.0f, volume));
     }
+
     /**
      * Moves the current track by a relative amount and immediately aligns both
      * lyric renderers with the audio player's real clock. Keeping this in the
@@ -652,7 +528,8 @@ public class CloudMusic implements SharedConstants {
 
     /**
      * 播放给定的列表中的所有歌曲
-     * @param songs 歌曲列表
+     *
+     * @param songs    歌曲列表
      * @param startIdx 第一首播放的索引
      */
     @SneakyThrows
@@ -661,7 +538,9 @@ public class CloudMusic implements SharedConstants {
         startPlaybackList(songs, startIdx);
     }
 
-    /** Starts a small personal FM batch without applying ordinary playlist modes. */
+    /**
+     * Starts a small personal FM batch without applying ordinary playlist modes.
+     */
     @SneakyThrows
     public static void playFm(List<Music> songs, int startIdx) {
         if (songs == null || songs.isEmpty()) {
@@ -1126,6 +1005,7 @@ public class CloudMusic implements SharedConstants {
                 throw primaryFailure;
             }
         }
+
         /**
          * The format advertised by a CDN URL is not always the actual container returned by the
          * server. In particular, some lossless Netease URLs have been observed to return FLAC
@@ -1243,6 +1123,7 @@ public class CloudMusic implements SharedConstants {
                 System.err.println("[NCM] Unable to remove legacy MP4 decoded cache: " + decodedFile.getName());
             }
         }
+
         private void removeOtherQualityCaches(File musicCacheDir, String stableKey, String currentQuality) {
             MultiThreadingUtil.runAsync(() -> {
                 File[] cacheFiles = musicCacheDir.listFiles();
@@ -1332,132 +1213,11 @@ public class CloudMusic implements SharedConstants {
     }
 
     public static void loadMusicCover(Music music, boolean forceReload) {
-        Location musicCover = music.getCoverLocation();
-        Location musicCoverSmall = music.getSmallCoverLocation();
-        Location musicCoverBlur = music.getBlurredCoverLocation();
-        TextureManager textureManager = TextureManager.getInstance();
-
-        if (shouldLoadCover(textureManager, musicCover, forceReload)) {
-            loadMainCoverAsync(music, musicCover, musicCoverBlur);
-        }
-
-        if (shouldLoadCover(textureManager, musicCoverSmall, forceReload)) {
-            loadSmallCoverAsync(music, musicCoverSmall);
-        }
+        MusicCoverService.loadMusicCover(music, forceReload);
     }
-
-    private static boolean shouldLoadCover(TextureManager textureManager, Location coverLocation, boolean forceReload) {
-        return textureManager.getTexture(coverLocation) == null || forceReload;
-    }
-
-    private static void loadMainCoverAsync(Music music, Location musicCover, Location musicCoverBlur) {
-        MultiThreadingUtil.runAsync(() -> {
-            try {
-                @Cleanup
-                InputStream coverStream = HttpUtils.downloadStream(music.getCoverUrl(320), 5);
-                byte[] imageData = IOUtils.toByteArray(coverStream);
-
-                BufferedImage coverImage = DynamicTexture.readImage(new ByteArrayInputStream(imageData));
-
-                if (coverImage != null) {
-                    loadCoverTextures(coverImage, musicCover, musicCoverBlur);
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        });
-    }
-
-    private static void loadCoverTextures(BufferedImage coverImage, Location musicCover, Location musicCoverBlur) {
-        Textures.loadTexture(musicCover, coverImage);
-
-        MultiThreadingUtil.runAsync(() -> {
-            BufferedImage inputImage = new BufferedImage(coverImage.getWidth(), coverImage.getHeight(), BufferedImage.TYPE_INT_ARGB);
-            inputImage.setRGB(0, 0, coverImage.getWidth(), coverImage.getHeight(),
-                    coverImage.getRGB(0, 0, coverImage.getWidth(), coverImage.getHeight(), null, 0, coverImage.getWidth()),
-                    0, coverImage.getWidth());
-
-            // 创建高斯模糊之后的歌曲封面, 目前仅在播放器的歌词界面使用
-            BufferedImage blurredImage = gaussianBlur(inputImage, 31);
-            Textures.loadTexture(musicCoverBlur, blurredImage);
-        });
-    }
-
-    private static void loadSmallCoverAsync(Music music, Location musicCoverSmall) {
-        MultiThreadingUtil.runAsync(() -> {
-            InputStream smallCoverStream = HttpUtils.downloadStream(music.getCoverUrl(128), 5);
-            BufferedImage smallCoverImage = DynamicTexture.readImage(smallCoverStream);
-            Textures.loadTexture(musicCoverSmall, smallCoverImage);
-        });
-    }
-
-    private static final Kernel GAUSSIAN_KERNEL = new Kernel(41, 41, GaussianKernel.generate(41));
 
     public static BufferedImage gaussianBlur(BufferedImage imgIn, int blur) {
-        Map<RenderingHints.Key, Object> map = new HashMap<>();
-        map.put(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-        map.put(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        map.put(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
-        RenderingHints hints = new RenderingHints(map);
-
-        ConvolveOp op = new ConvolveOp(GAUSSIAN_KERNEL, ConvolveOp.EDGE_NO_OP, hints);
-
-        BufferedImage filtered = op.filter(imgIn, null);
-
-        BufferedImage output = new BufferedImage(filtered.getWidth(), filtered.getHeight(), filtered.getType());
-        Graphics2D graphics = (Graphics2D) output.getGraphics();
-        graphics.setRenderingHints(map);
-        graphics.drawImage(filtered, -blur, -blur, filtered.getWidth() + blur * 2, filtered.getHeight() + blur * 2, null);
-
-        return output;
-    }
-
-    @SneakyThrows
-    private static File convertFlacToWav(File flacIn, File destFile) {
-
-        @Cleanup
-        FileOutputStream os = new FileOutputStream(destFile);
-
-        WavWriter ww = new WavWriter(os);
-
-        FLACDecoder fd = new FLACDecoder(Files.newInputStream(flacIn.toPath()));
-        fd.addPCMProcessor(new PCMProcessor() {
-            @Override
-            public void processStreamInfo(StreamInfo info) {
-                try {
-                    ww.writeHeader(info);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
-                    DownloadDynamicIsland.cancelDownload();
-                    destFile.delete();
-                }
-            }
-
-            @Override
-            public void processPCM(ByteData pcm) {
-                try {
-                    ww.writePCM(pcm);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
-                    DownloadDynamicIsland.cancelDownload();
-                    destFile.delete();
-                }
-            }
-        });
-        fd.decode();
-
-        return destFile;
-    }
-
-    @SneakyThrows
-    private static File convertMp3ToWav(File mp3In, File destFile) {
-
-        Converter converter = new Converter();
-        converter.convert(Files.newInputStream(mp3In.toPath()), destFile.getAbsolutePath(), null, null);
-
-        return destFile;
+        return MusicCoverService.gaussianBlur(imgIn, blur);
     }
 
     private static final class UnsupportedMp4ContainerException extends IllegalStateException {
@@ -1466,103 +1226,12 @@ public class CloudMusic implements SharedConstants {
         }
     }
 
-    @SneakyThrows
     private static void downloadMusic(String playUrl, File music) {
-
-        MuoniumPlayerExtension.getInstance().musicInfo.downloading = true;
-        MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = 0;
-        MuoniumPlayerExtension.getInstance().musicInfo.downloadSpeed = "0 b/s";
-        DownloadDynamicIsland.beginDownload();
-
-        try {
-            InputStream stream = new WrappedInputStream(HttpUtils.get(playUrl, null), new WrappedInputStream.ProgressListener() {
-
-                tritium.utils.timing.Timer timer = new tritium.utils.timing.Timer();
-
-                @Override
-                public void onProgress(double progress) {
-                    MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = progress;
-                    DownloadDynamicIsland.updateProgress(progress);
-
-                    if (progress >= 1) {
-                        MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
-                    }
-                }
-
-                final long kilo = 1024;
-                final long mega = kilo * kilo;
-                final long giga = mega * kilo;
-                final long tera = giga * kilo;
-
-                String getSize(long size) {
-                    String s;
-                    double kb = (double) size / kilo;
-                    double mb = kb / kilo;
-                    double gb = mb / kilo;
-                    double tb = gb / kilo;
-                    if (size < kilo) {
-                        s = size + " Bytes";
-                    } else if (size < mega) {
-                        s = String.format("%.2f", kb) + " KB";
-                    } else if (size < giga) {
-                        s = String.format("%.2f", mb) + " MB";
-                    } else if (size < tera) {
-                        s = String.format("%.2f", gb) + " GB";
-                    } else {
-                        s = String.format("%.2f", tb) + " TB";
-                    }
-                    return s;
-                }
-
-                int lastBytesRead = 0;
-
-                @Override
-                public void bytesRead(int bytesRead) {
-
-                    int checkDelay = 500;
-
-                    if (timer.isDelayed(checkDelay)) {
-                        timer.reset();
-
-                        int diff = (bytesRead - lastBytesRead) * (1000 / checkDelay);
-
-                        String speed = this.getSize(diff) + "/s";
-                        MuoniumPlayerExtension.getInstance().musicInfo.downloadSpeed = speed;
-                        DownloadDynamicIsland.updateSpeed(speed);
-
-                        lastBytesRead = bytesRead;
-                    }
-
-                }
-            });
-
-            OutputStream os = Files.newOutputStream(music.toPath(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
-
-            writeTo(stream, os);
-
-            os.close();
-            MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = 1.0;
-            MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
-            DownloadDynamicIsland.finishDownload();
-
-        } catch (Throwable t) {
-            t.printStackTrace();
-
-            MuoniumPlayerExtension.getInstance().musicInfo.downloading = false;
-            DownloadDynamicIsland.cancelDownload();
-
-            music.delete();
-        }
+        MusicDownloadService.downloadMusic(playUrl, music);
     }
 
-    @SneakyThrows
     public static void writeTo(InputStream src, OutputStream dest) {
-        byte[] buffer = new byte[1024];
-        int len;
-        while ((len = src.read(buffer)) != -1) {
-            dest.write(buffer, 0, len);
-        }
-        dest.flush();
+        MusicDownloadService.writeTo(src, dest);
     }
 
     public static void initLyrics(JsonObject rawLyricData, Music music, List<LyricLine> parsedLyrics) {
@@ -1579,10 +1248,12 @@ public class CloudMusic implements SharedConstants {
         }
 
         synchronized (lyrics) {
-            updateLyricsList(parsedLyrics == null ? Collections.emptyList() : parsedLyrics);
+            LyricTimelineSupport.PreparedTimeline timeline = LyricTimelineSupport.prepare(
+                    parsedLyrics == null ? Collections.<LyricLine>emptyList() : parsedLyrics);
+            lyrics.clear();
+            lyrics.addAll(timeline.lines);
             currentLyric = lyrics.get(0);
-            haveNoWords = lyricsHaveNoWords();
-            addLongBreaks();
+            haveNoWords = timeline.haveNoWords;
         }
 
         MusicLyricsPanel.updateLyricPositionsImmediate(NCMScreen.getInstance().getPanelWidth() * MusicLyricsPanel.getLyricWidthFactor());
@@ -1650,15 +1321,6 @@ public class CloudMusic implements SharedConstants {
         hasRomanization = false;
     }
 
-    private static void updateLyricsList(List<LyricLine> parsedLyrics) {
-        lyrics.clear();
-        lyrics.addAll(parsedLyrics);
-
-        if (lyrics.isEmpty()) {
-            lyrics.add(new LyricLine(0L, "暂无歌词"));
-        }
-    }
-
     private static void detectTranslations(JsonObject lyric) {
         if (hasLyricsType(lyric, "tlyric") || hasLyricsType(lyric, "ytlrc")) hasTransLyrics = true;
         if (hasLyricsType(lyric, "romalrc") || hasLyricsType(lyric, "yromalrc")) hasRomanization = true;
@@ -1673,76 +1335,8 @@ public class CloudMusic implements SharedConstants {
     }
 
     /**
-     * 为歌词添加长间隔时的 "● ● ●"
-     */
-    private static void addLongBreaks() {
-        final long longBreaksDuration = 3000L;
-
-        if (haveNoWords) {
-            // 如果不为逐字歌词的话只在开头添加长间隔
-            addInitialBreakIfNeeded(longBreaksDuration);
-            return;
-        }
-
-        addBreaksBetweenLyrics(longBreaksDuration);
-    }
-
-    /**
-     * 歌词是否不为逐字歌词
-     * @return true 表示不为逐字歌词
-     */
-    private static boolean lyricsHaveNoWords() {
-        return lyrics.stream().allMatch(l -> l.words.isEmpty());
-    }
-
-    private static void addInitialBreakIfNeeded(long duration) {
-        long firstTimestamp = lyrics.get(0).getTimestamp();
-        if (firstTimestamp >= duration) {
-            addBreakLine(0L, firstTimestamp);
-        }
-    }
-
-    private static void addBreaksBetweenLyrics(long duration) {
-        long lastTimestamp = 0L;
-        List<LyricLine> breaksToAdd = new ArrayList<>();
-
-        for (LyricLine line : lyrics) {
-            long lineDuration = line.duration;
-            long gap = line.getTimestamp() - lastTimestamp;
-
-            if (gap >= duration) {
-                breaksToAdd.add(createBreakLine(lastTimestamp, gap));
-            }
-
-            lastTimestamp = line.getTimestamp() + lineDuration;
-        }
-
-        addAndSortBreaks(breaksToAdd);
-    }
-
-    private static LyricLine createBreakLine(long timestamp, long duration) {
-        LyricLine line = new LyricLine(timestamp, "● ● ●");
-        line.isBreakLine = true;
-        line.words.add(new LyricLine.Word("● ● ●", timestamp, duration));
-        return line;
-    }
-
-    private static void addBreakLine(long timestamp, long duration) {
-        lyrics.add(createBreakLine(timestamp, duration));
-        lyrics.sort(Comparator.comparingLong(LyricLine::getTimestamp));
-    }
-
-    private static void addAndSortBreaks(List<LyricLine> breaks) {
-        lyrics.addAll(breaks);
-        lyrics.sort(Comparator.comparingLong(LyricLine::getTimestamp));
-    }
-
-    private static long getLyricDuration(LyricLine line) {
-        return line.duration;
-    }
-
-    /**
      * 更新当前歌词行
+     *
      * @param songProgress 歌曲进度 (ms)
      */
     public static void updateCurrentLyric(float songProgress) {
@@ -1754,41 +1348,8 @@ public class CloudMusic implements SharedConstants {
         }
     }
 
-    static final float JUMP_TO_NEXT_MILLIS = 300.0f;
-
-    static boolean canJumpToNextEarly(double songProgress, LyricLine lyric) {
-        if (lyric == null || lyric.words.isEmpty())
-            return false;
-
-        if (lyric.duration < JUMP_TO_NEXT_MILLIS)
-            return false;
-
-        return true;
-    }
-
     public static LyricLine findCurrentLyric(double songProgress) {
-        for (int i = 0; i < lyrics.size(); i++) {
-            LyricLine lyric = lyrics.get(i);
-            LyricLine prev = i > 0 ? lyrics.get(i - 1) : null;
-
-            if (!haveNoWords
-                    && !lyric.isBreakLine
-                    && lyric.getTimestamp() > songProgress
-                    && lyric.getTimestamp() - songProgress <= JUMP_TO_NEXT_MILLIS
-                    && canJumpToNextEarly(songProgress, prev)) {
-                return lyric;
-            }
-
-            if (lyric.getTimestamp() > songProgress) {
-                // 只基于当前 Timeline 计算，禁止回退到旧 Session 的 currentLyric（避免跨歌污染）
-                return i > 0 ? lyrics.get(i - 1) : lyrics.get(0);
-            }
-
-            if (i == lyrics.size() - 1) {
-                return lyric;
-            }
-        }
-        return lyrics.isEmpty() ? null : lyrics.get(0);
+        return LyricTimelineSupport.findCurrentLyric(lyrics, haveNoWords, songProgress);
     }
 
     public static void resetLyricPositionUpdate() {
@@ -1891,103 +1452,14 @@ public class CloudMusic implements SharedConstants {
     private static void loadLyric(Music music, PlaybackSession session, File playbackFile) {
         final long songId = music.getId();
         final String trackKey = music.getStableKey();
-        final File embeddedLyricFile = music.isCloudSong() ? resolveEmbeddedLyricFile(playbackFile) : null;
+        final File embeddedLyricFile = music.isCloudSong()
+                ? LyricLoadService.resolveEmbeddedLyricFile(playbackFile) : null;
 
         MultiThreadingUtil.runAsync(() -> {
-            JsonObject rawJson = new JsonObject();
-            List<LyricLine> parsed = Collections.emptyList();
-            boolean cloudLyricsLoaded = false;
-
-            // 云盘歌曲的歌词不一定能通过普通 lyricNew(songId) 查询到。
-            // api-enhanced 提供了专用的 /cloud/lyric/get 接口，使用当前账号 UID
-            // 与云盘歌曲 ID 获取文件元数据中的 LYRICS 歌词。只有解析出有效时间轴
-            // 才提交结果，失败时继续走内嵌标签、Cadence 和原有回退链。
-            if (music.isCloudSong() && profile != null && profile.getId() > 0L) {
-                try {
-                    JsonObject cloudJson = normalizeCloudLyricResponse(
-                            CloudMusicApi.cloudLyricGet(profile.getId(), songId).toJsonObject());
-                    List<LyricLine> cloudLyrics = LyricParser.parse(cloudJson);
-                    if (!cloudLyrics.isEmpty()) {
-                        rawJson = cloudJson;
-                        parsed = cloudLyrics;
-                        cloudLyricsLoaded = true;
-                        System.out.println("[Music] Loaded cloud-drive lyrics for " + trackKey);
-                    }
-                } catch (Throwable throwable) {
-                    System.err.println("[Music] Cloud-drive lyric API failed for " + trackKey + ": "
-                            + throwable.getMessage());
-                }
-            }
-
-            // 私人网盘曲目不一定存在网易云可查询的 lyric id。音频文件中的 USLT、Vorbis
-            // comments 或 M4A ©lyr 是这类曲目最接近原文件的歌词来源，优先采用其中有效的
-            // 时间轴；无法读取或不是时间歌词时才继续原有的在线回退链。
-            if (!cloudLyricsLoaded && embeddedLyricFile != null) {
-                try {
-                    String embeddedText = EmbeddedLyricsReader.read(embeddedLyricFile);
-                    if (!embeddedText.isEmpty()) {
-                        JsonObject embeddedJson = createEmbeddedLyricJson(embeddedText);
-                        List<LyricLine> embedded = LyricParser.parse(embeddedJson);
-                        if (!embedded.isEmpty()) {
-                            rawJson = embeddedJson;
-                            parsed = embedded;
-                            cloudLyricsLoaded = true;
-                            System.out.println("[Music] Loaded embedded lyrics for cloud song " + trackKey
-                                    + " from " + embeddedLyricFile.getName());
-                        }
-                    }
-                } catch (Throwable throwable) {
-                    System.err.println("[Music] Embedded lyric read failed for " + trackKey + ": "
-                            + throwable.getMessage());
-                }
-            }
-
-            // 首选 Cadence 统一模型，但普通 LRC 不再按字数伪造逐字时间轴。
-            if (parsed.isEmpty()) {
-                try {
-                    top.fpsmaster.music.Lyric cadenceLyric = CadenceMusicService.getLyric(music);
-                    if (cadenceLyric != null) {
-                        parsed = LyricParser.fromCadence(cadenceLyric, music.getDuration(), false);
-                    }
-                } catch (Throwable throwable) {
-                    System.err.println("[Music/Cadence] Unified lyric conversion failed for " + trackKey + ": " + throwable.getMessage());
-                }
-            }
-
-            // Cadence 只拿到普通 LRC 时也继续询问网易云 lyricNew，优先采用其中真实的 YRC 逐字时间轴。
-            if (music.isNetease() && !cloudLyricsLoaded && !LyricParser.hasRealWordTiming(parsed)) {
-                try {
-                    String string = CloudMusicApi.lyricNew(songId).toString();
-                    string = string.replaceAll("[ - ]", " ");
-                    rawJson = JsonUtils.toJsonObject(string);
-                    List<LyricLine> fallback = LyricParser.parse(rawJson);
-                    if (LyricParser.hasRealWordTiming(fallback) || parsed.isEmpty()) parsed = fallback;
-                } catch (Throwable throwable) {
-                    System.err.println("[NCM] Legacy lyric fallback failed for " + trackKey + ": " + throwable.getMessage());
-                }
-            }
-
-            // 内置修正 YRC 是最后的真实逐字兜底；读取失败时保留前面已经得到的普通歌词。
-            if (music.isNetease() && !cloudLyricsLoaded && !LyricParser.hasRealWordTiming(parsed)) {
-                InputStream stream = CloudMusic.class.getResourceAsStream("/tritium/yrc/" + songId + ".yrc");
-                if (stream != null) {
-                    try {
-                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                        writeTo(stream, baos);
-                        String yrc = new String(baos.toByteArray(), StandardCharsets.UTF_8);
-                        List<LyricLine> embedded = new ArrayList<>();
-                        LyricParser.parseYrc(yrc, embedded);
-                        if (LyricParser.hasRealWordTiming(embedded)) parsed = embedded;
-                    } catch (Throwable throwable) {
-                        System.err.println("[NCM] Embedded YRC fallback failed for " + trackKey + ": " + throwable.getMessage());
-                    } finally {
-                        try {
-                            stream.close();
-                        } catch (IOException ignored) {
-                        }
-                    }
-                }
-            }
+            User currentProfile = profile;
+            long profileId = currentProfile == null ? 0L : currentProfile.getId();
+            LyricLoadService.LyricLoadResult result = LyricLoadService.load(
+                    music, songId, profileId, embeddedLyricFile);
 
             Music current = currentlyPlaying;
             if (!session.isActive() || current == null || !trackKey.equals(current.getStableKey())
@@ -1995,66 +1467,12 @@ public class CloudMusic implements SharedConstants {
                 return;
             }
 
-            final JsonObject committedJson = rawJson;
-            final List<LyricLine> committedLyrics = parsed == null ? Collections.emptyList() : parsed;
+            final JsonObject committedJson = result.rawJson;
+            final List<LyricLine> committedLyrics = result.lines == null
+                    ? Collections.<LyricLine>emptyList() : result.lines;
             session.pendingLyrics = committedLyrics;
             MultiThreadingUtil.runOnMainThread(() -> applyLyricTimeline(session, committedJson, committedLyrics));
         });
-    }
-
-    private static JsonObject createEmbeddedLyricJson(String lyricText) {
-        JsonObject root = new JsonObject();
-        JsonObject lrc = new JsonObject();
-        lrc.addProperty("lyric", lyricText);
-        root.add("lrc", lrc);
-        return root;
-    }
-
-    /**
-     * Accepts both the direct NetEase lyric response and wrappers used by
-     * enhanced API deployments (for example {data:{...}} or {result:{...}}).
-     */
-    private static JsonObject normalizeCloudLyricResponse(JsonObject response) {
-        if (response == null) return new JsonObject();
-        if (hasLyricPayload(response)) return response;
-
-        JsonElement data = response.get("data");
-        if (data != null && data.isJsonObject() && hasLyricPayload(data.getAsJsonObject())) {
-            return data.getAsJsonObject();
-        }
-
-        JsonElement result = response.get("result");
-        if (result != null && result.isJsonObject() && hasLyricPayload(result.getAsJsonObject())) {
-            return result.getAsJsonObject();
-        }
-        return response;
-    }
-
-    private static boolean hasLyricPayload(JsonObject object) {
-        return object.has("lrc") || object.has("yrc") || object.has("ytlrc")
-                || object.has("tlyric") || object.has("romalrc");
-    }
-
-    /** Resolves the original tagged cache file when AAC/M4A playback uses a decoded WAV sidecar. */
-    private static File resolveEmbeddedLyricFile(File playbackFile) {
-        if (playbackFile == null || !playbackFile.isFile()) {
-            return null;
-        }
-        String name = playbackFile.getName();
-        final String decodedSuffix = ".decoded.wav";
-        if (!name.endsWith(decodedSuffix)) {
-            return playbackFile;
-        }
-
-        String baseName = name.substring(0, name.length() - decodedSuffix.length());
-        String[] sourceExtensions = {"m4a", "aac", "mp3", "flac"};
-        for (String extension : sourceExtensions) {
-            File source = new File(playbackFile.getParentFile(), baseName + "." + extension);
-            if (source.isFile()) {
-                return source;
-            }
-        }
-        return playbackFile;
     }
 
     public static String qrCodeLogin() {
@@ -2124,18 +1542,7 @@ public class CloudMusic implements SharedConstants {
     }
 
     public static User getUserProfile() {
-        JsonObject jsonObject = CloudMusicApi.loginStatus().toJsonObject();
-
-        JsonObject d = jsonObject.getAsJsonObject("data");
-
-        if ((!d.has("account") || d.get("account") instanceof JsonNull) || (!d.has("profile") || d.get("profile") instanceof JsonNull)) {
-            OptionsUtil.setCookie("");
-            return null;
-        }
-
-        JsonObject profile = d.getAsJsonObject("profile");
-
-        return JsonUtils.parse(profile, User.class);
+        return NeteaseAccountRepository.getUserProfile();
     }
 
     public static List<Music> search(String keyWord) {
@@ -2145,51 +1552,15 @@ public class CloudMusic implements SharedConstants {
         }
 
         // Cadence 网络失败时仅对网易云保留原 API 兜底，QQ 不可误发到网易云搜索。
-        List<Music> searchResults = new ArrayList<>();
-        JsonObject searchResponse = CloudMusicApi.cloudSearch(keyWord, CloudMusicApi.SearchType.Single).toJsonObject();
-        JsonArray songs = extractSongsFromResponse(searchResponse);
-        if (songs != null) {
-            for (JsonElement song : songs) {
-                searchResults.add(JsonUtils.parse(song.getAsJsonObject(), Music.class));
-            }
-        }
-        return searchResults;
-    }
-
-    private static JsonArray extractSongsFromResponse(JsonObject searchResponse) {
-        try {
-            JsonObject result = searchResponse.getAsJsonObject("result");
-            return result != null ? result.getAsJsonArray("songs") : null;
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to parse search response", e);
-        }
+        return NeteaseAccountRepository.searchSongs(keyWord);
     }
 
     public static List<Long> likeList() {
-        return loadLikeList(profile);
-    }
-
-    private static List<Long> loadLikeList(User user) {
-        if (user == null) {
-            return new ArrayList<>();
-        }
-        List<Long> list = new ArrayList<>();
-
-        JsonObject json = CloudMusicApi.likeList(user.getId()).toJsonObject();
-        JsonArray ids = json.getAsJsonArray("ids");
-        if (ids == null) {
-            return list;
-        }
-        for (JsonElement id : ids) {
-            list.add(id.getAsLong());
-        }
-
-        return list;
+        return NeteaseAccountRepository.loadLikeList(profile);
     }
 
     public static String qrKey() {
-        JsonObject json = CloudMusicApi.loginQrKey().toJsonObject();
-        return json.getAsJsonObject("data").get("unikey").getAsString();
+        return NeteaseAccountRepository.qrKey();
     }
 
 }
