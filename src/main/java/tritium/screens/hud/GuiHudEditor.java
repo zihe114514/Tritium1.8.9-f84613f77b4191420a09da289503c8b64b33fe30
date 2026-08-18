@@ -14,6 +14,7 @@ import tritium.rendering.shader.Shaders;
 import tritium.rendering.DownloadDynamicIsland;
 import tritium.rendering.rendersystem.RenderSystem;
 import tritium.settings.HudConfig;
+import tritium.settings.HudSetting;
 import tritium.widget.impl.MusicInfoWidget;
 import tritium.widget.impl.MusicLyricsWidget;
 
@@ -48,76 +49,38 @@ public class GuiHudEditor extends GuiScreen {
         NONE, NORMAL, CURRENT
     }
 
-    private enum SliderSetting {
-        CURRENT_LINE_SCALE("整行缩放", 0.95f, 1.16f),
-        CURRENT_WORD_SCALE("逐字放大", 0.00f, 0.28f),
-        CURRENT_GLOW("发光程度", 0.00f, 1.00f),
-        CURRENT_GLOW_RADIUS("发光范围", 0.50f, 5.00f),
-        CURRENT_BLOOM("晕染程度", 0.00f, 1.00f),
-        CURRENT_TRANSITION("染色过渡", 4.00f, 32.00f),
-        CURRENT_BREATH("呼吸幅度", 0.00f, 0.08f),
-        OSD_TRANSITION("OSD填涂过渡", 4.00f, 32.00f),
-        OSD_GLOW("OSD发光程度", 0.00f, 1.00f),
-        OSD_BLOOM("OSD晕染程度", 0.00f, 1.00f),
-        OSD_PULSE("OSD逐字放大", 0.00f, 0.15f),
-        OSD_SMOOTHNESS("OSD动画平滑", 0.00f, 1.00f),
-        NORMAL_OPACITY("普通透明度", 0.15f, 1.00f),
-        NORMAL_SCALE("普通缩放", 0.85f, 1.05f),
-        NORMAL_GLOW("微光程度", 0.00f, 0.65f),
-        NORMAL_BLOOM("柔光晕染", 0.00f, 0.50f),
-        NORMAL_SPACING("歌词间距", 4.00f, 22.00f),
-        EDGE_FADE("边缘淡出", 10.00f, 80.00f),
-        SCROLL_SMOOTHNESS("滚动柔和", 0.00f, 1.00f),
-        SECONDARY_OPACITY("副歌词透明", 0.30f, 1.00f),
-        DYNAMIC_ISLAND_SCALE("灵动岛大小", 0.60f, 1.35f),
-        DYNAMIC_ISLAND_TEXT_SCALE("灵动岛字体", 0.82f, 1.18f),
-        DYNAMIC_ISLAND_MAX_WIDTH("灵动岛基础宽度", 160.0f, 720.0f),
-        DYNAMIC_ISLAND_PROGRESS_HEIGHT("进度条粗细", 0.75f, 4.00f),
-        DYNAMIC_ISLAND_COMPLETION_HOLD("完成停留", 0.50f, 6.00f);
-
-        final String label;
-        final float min;
-        final float max;
-
-        SliderSetting(String label, float min, float max) {
-            this.label = label;
-            this.min = min;
-            this.max = max;
-        }
-    }
-
-    private static final SliderSetting[] CURRENT_SLIDERS = {
-            SliderSetting.CURRENT_LINE_SCALE,
-            SliderSetting.CURRENT_WORD_SCALE,
-            SliderSetting.CURRENT_GLOW,
-            SliderSetting.CURRENT_GLOW_RADIUS,
-            SliderSetting.CURRENT_BLOOM,
-            SliderSetting.CURRENT_TRANSITION,
-            SliderSetting.CURRENT_BREATH,
-            SliderSetting.OSD_TRANSITION,
-            SliderSetting.OSD_GLOW,
-            SliderSetting.OSD_BLOOM,
-            SliderSetting.OSD_PULSE,
-            SliderSetting.OSD_SMOOTHNESS
+    private static final HudSetting[] CURRENT_SLIDERS = {
+            HudSetting.CURRENT_LINE_SCALE,
+            HudSetting.CURRENT_WORD_SCALE,
+            HudSetting.CURRENT_GLOW,
+            HudSetting.CURRENT_GLOW_RADIUS,
+            HudSetting.CURRENT_BLOOM,
+            HudSetting.CURRENT_TRANSITION,
+            HudSetting.CURRENT_BREATH,
+            HudSetting.OSD_TRANSITION,
+            HudSetting.OSD_GLOW,
+            HudSetting.OSD_BLOOM,
+            HudSetting.OSD_PULSE,
+            HudSetting.OSD_SMOOTHNESS
     };
 
-    private static final SliderSetting[] NORMAL_SLIDERS = {
-            SliderSetting.NORMAL_OPACITY,
-            SliderSetting.NORMAL_SCALE,
-            SliderSetting.NORMAL_GLOW,
-            SliderSetting.NORMAL_BLOOM,
-            SliderSetting.NORMAL_SPACING,
-            SliderSetting.EDGE_FADE,
-            SliderSetting.SCROLL_SMOOTHNESS,
-            SliderSetting.SECONDARY_OPACITY
+    private static final HudSetting[] NORMAL_SLIDERS = {
+            HudSetting.NORMAL_OPACITY,
+            HudSetting.NORMAL_SCALE,
+            HudSetting.NORMAL_GLOW,
+            HudSetting.NORMAL_BLOOM,
+            HudSetting.NORMAL_SPACING,
+            HudSetting.EDGE_FADE,
+            HudSetting.SCROLL_SMOOTHNESS,
+            HudSetting.SECONDARY_OPACITY
     };
 
-    private static final SliderSetting[] ISLAND_SLIDERS = {
-            SliderSetting.DYNAMIC_ISLAND_SCALE,
-            SliderSetting.DYNAMIC_ISLAND_TEXT_SCALE,
-            SliderSetting.DYNAMIC_ISLAND_MAX_WIDTH,
-            SliderSetting.DYNAMIC_ISLAND_PROGRESS_HEIGHT,
-            SliderSetting.DYNAMIC_ISLAND_COMPLETION_HOLD
+    private static final HudSetting[] ISLAND_SLIDERS = {
+            HudSetting.DYNAMIC_ISLAND_SCALE,
+            HudSetting.DYNAMIC_ISLAND_TEXT_SCALE,
+            HudSetting.DYNAMIC_ISLAND_MAX_WIDTH,
+            HudSetting.DYNAMIC_ISLAND_PROGRESS_HEIGHT,
+            HudSetting.DYNAMIC_ISLAND_COMPLETION_HOLD
     };
 
     private boolean draggingInfo;
@@ -131,7 +94,7 @@ public class GuiHudEditor extends GuiScreen {
     private boolean islandExpanded = true;
     private boolean settingsCollapsed;
     private int settingsScroll;
-    private SliderSetting draggingSlider;
+    private HudSetting draggingSlider;
 
     private EditingColor editingColor = EditingColor.NONE;
     private float pickerHue;
@@ -427,7 +390,7 @@ public class GuiHudEditor extends GuiScreen {
                 drawToggleRow(fr, "OSD 逐字强调", HudConfig.osdKaraokeEmphasisEnabled,
                         x + 6, rowY, mouseX, mouseY);
                 rowY += COLOR_ROW_H;
-                for (SliderSetting setting : CURRENT_SLIDERS) {
+                for (HudSetting setting : CURRENT_SLIDERS) {
                     drawSlider(fr, setting, x + 6, rowY, SETTINGS_W - 12, mouseX, mouseY);
                     rowY += SLIDER_ROW_H;
                 }
@@ -446,7 +409,7 @@ public class GuiHudEditor extends GuiScreen {
                 drawToggleRow(fr, "边缘淡出", HudConfig.lyricEdgeFadeEnabled,
                         x + 6, rowY, mouseX, mouseY);
                 rowY += COLOR_ROW_H;
-                for (SliderSetting setting : NORMAL_SLIDERS) {
+                for (HudSetting setting : NORMAL_SLIDERS) {
                     drawSlider(fr, setting, x + 6, rowY, SETTINGS_W - 12, mouseX, mouseY);
                     rowY += SLIDER_ROW_H;
                 }
@@ -462,7 +425,7 @@ public class GuiHudEditor extends GuiScreen {
                 drawChoiceRow(fr, "灵动岛样式", DownloadDynamicIsland.getStyleName(),
                         x + 6, rowY, mouseX, mouseY);
                 rowY += COLOR_ROW_H;
-                for (SliderSetting setting : ISLAND_SLIDERS) {
+                for (HudSetting setting : ISLAND_SLIDERS) {
                     drawSlider(fr, setting, x + 6, rowY, SETTINGS_W - 12, mouseX, mouseY);
                     rowY += SLIDER_ROW_H;
                 }
@@ -529,20 +492,20 @@ public class GuiHudEditor extends GuiScreen {
         drawRoundedRect(pillX, y + 5, pillW, 17, 8, hover ? 0xFF5A7391 : 0xFF435367);
         drawCenteredString(fr, safeValue, pillX + pillW / 2, y + 9, 0xFFF7F9FC);
     }
-    private void drawSlider(FontRenderer fr, SliderSetting setting, int x, int y, int w,
+    private void drawSlider(FontRenderer fr, HudSetting setting, int x, int y, int w,
                             int mouseX, int mouseY) {
         boolean hover = isInside(mouseX, mouseY, x, y, w, SLIDER_ROW_H);
         if (hover || draggingSlider == setting) {
             drawRoundedRect(x, y, w, SLIDER_ROW_H, 7, 0x332F4050);
         }
-        drawString(fr, setting.label, x + 6, y + 5, 0xFFD4DCE7);
-        String valueText = formatSliderValue(setting, getSliderValue(setting));
+        drawString(fr, setting.getLabel(), x + 6, y + 5, 0xFFD4DCE7);
+        String valueText = formatSliderValue(setting, setting.getValue());
         drawString(fr, valueText, x + w - 6 - fr.getStringWidth(valueText), y + 5, 0xFFACB8C7);
 
         int trackX = x + 7;
         int trackY = y + 20;
         int trackW = w - 14;
-        float progress = (getSliderValue(setting) - setting.min) / (setting.max - setting.min);
+        float progress = (setting.getValue() - setting.getMin()) / (setting.getMax() - setting.getMin());
         int fillX = trackX + Math.round(trackW * clamp01(progress));
         drawRoundedRect(trackX, trackY, trackW, 3, 2, 0xFF3A4553);
         drawRoundedRect(trackX, trackY, Math.max(1, fillX - trackX), 3, 2, 0xFF8A7CFF);
@@ -800,7 +763,7 @@ public class GuiHudEditor extends GuiScreen {
                     return;
                 }
                 rowY += COLOR_ROW_H;
-                for (SliderSetting setting : CURRENT_SLIDERS) {
+                for (HudSetting setting : CURRENT_SLIDERS) {
                     if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, SLIDER_ROW_H)) {
                         draggingSlider = setting;
                         setSliderFromMouse(setting, mouseX, panelX);
@@ -834,7 +797,7 @@ public class GuiHudEditor extends GuiScreen {
                     return;
                 }
                 rowY += COLOR_ROW_H;
-                for (SliderSetting setting : NORMAL_SLIDERS) {
+                for (HudSetting setting : NORMAL_SLIDERS) {
                     if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, SLIDER_ROW_H)) {
                         draggingSlider = setting;
                         setSliderFromMouse(setting, mouseX, panelX);
@@ -862,7 +825,7 @@ public class GuiHudEditor extends GuiScreen {
                     return;
                 }
                 rowY += COLOR_ROW_H;
-                for (SliderSetting setting : ISLAND_SLIDERS) {
+                for (HudSetting setting : ISLAND_SLIDERS) {
                     if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, SLIDER_ROW_H)) {
                         draggingSlider = setting;
                         setSliderFromMouse(setting, mouseX, panelX);
@@ -1094,77 +1057,15 @@ public class GuiHudEditor extends GuiScreen {
         }
     }
 
-    private void setSliderFromMouse(SliderSetting setting, int mouseX, int panelX) {
+    private void setSliderFromMouse(HudSetting setting, int mouseX, int panelX) {
         int trackX = panelX + 13;
         int trackW = SETTINGS_W - 26;
         float progress = clamp01((mouseX - trackX) / (float) trackW);
-        setSliderValue(setting, setting.min + (setting.max - setting.min) * progress);
+        setting.setValue(setting.getMin() + (setting.getMax() - setting.getMin()) * progress);
         lyricSettingsDirty = true;
     }
 
-    private float getSliderValue(SliderSetting setting) {
-        switch (setting) {
-            case CURRENT_LINE_SCALE: return HudConfig.currentLineScale;
-            case CURRENT_WORD_SCALE: return HudConfig.currentWordScale;
-            case CURRENT_GLOW: return HudConfig.currentGlowStrength;
-            case CURRENT_GLOW_RADIUS: return HudConfig.currentGlowRadius;
-            case CURRENT_BLOOM: return HudConfig.currentBloomStrength;
-            case CURRENT_TRANSITION: return HudConfig.currentTransitionWidth;
-            case CURRENT_BREATH: return HudConfig.currentBreathStrength;
-            case OSD_TRANSITION: return HudConfig.osdKaraokeTransitionWidth;
-            case OSD_GLOW: return HudConfig.osdKaraokeGlowStrength;
-            case OSD_BLOOM: return HudConfig.osdKaraokeBloomStrength;
-            case OSD_PULSE: return HudConfig.osdKaraokePulseStrength;
-            case OSD_SMOOTHNESS: return HudConfig.osdKaraokeSmoothing;
-            case NORMAL_OPACITY: return HudConfig.normalOpacity;
-            case NORMAL_SCALE: return HudConfig.normalScale;
-            case NORMAL_GLOW: return HudConfig.normalGlowStrength;
-            case NORMAL_BLOOM: return HudConfig.normalBloomStrength;
-            case NORMAL_SPACING: return HudConfig.normalLineSpacing;
-            case EDGE_FADE: return HudConfig.edgeFadeSize;
-            case SCROLL_SMOOTHNESS: return HudConfig.scrollSmoothness;
-            case SECONDARY_OPACITY: return HudConfig.secondaryOpacity;
-            case DYNAMIC_ISLAND_SCALE: return HudConfig.dynamicIslandScale;
-            case DYNAMIC_ISLAND_TEXT_SCALE: return HudConfig.dynamicIslandTextScale;
-            case DYNAMIC_ISLAND_MAX_WIDTH: return HudConfig.dynamicIslandMaxWidth;
-            case DYNAMIC_ISLAND_PROGRESS_HEIGHT: return HudConfig.dynamicIslandProgressHeight;
-            case DYNAMIC_ISLAND_COMPLETION_HOLD: return HudConfig.dynamicIslandCompletionHoldSeconds;
-            default: return 0.0f;
-        }
-    }
-
-    private void setSliderValue(SliderSetting setting, float value) {
-        value = Math.max(setting.min, Math.min(setting.max, value));
-        switch (setting) {
-            case CURRENT_LINE_SCALE: HudConfig.currentLineScale = value; break;
-            case CURRENT_WORD_SCALE: HudConfig.currentWordScale = value; break;
-            case CURRENT_GLOW: HudConfig.currentGlowStrength = value; break;
-            case CURRENT_GLOW_RADIUS: HudConfig.currentGlowRadius = value; break;
-            case CURRENT_BLOOM: HudConfig.currentBloomStrength = value; break;
-            case CURRENT_TRANSITION: HudConfig.currentTransitionWidth = value; break;
-            case CURRENT_BREATH: HudConfig.currentBreathStrength = value; break;
-            case OSD_TRANSITION: HudConfig.osdKaraokeTransitionWidth = value; break;
-            case OSD_GLOW: HudConfig.osdKaraokeGlowStrength = value; break;
-            case OSD_BLOOM: HudConfig.osdKaraokeBloomStrength = value; break;
-            case OSD_PULSE: HudConfig.osdKaraokePulseStrength = value; break;
-            case OSD_SMOOTHNESS: HudConfig.osdKaraokeSmoothing = value; break;
-            case NORMAL_OPACITY: HudConfig.normalOpacity = value; break;
-            case NORMAL_SCALE: HudConfig.normalScale = value; break;
-            case NORMAL_GLOW: HudConfig.normalGlowStrength = value; break;
-            case NORMAL_BLOOM: HudConfig.normalBloomStrength = value; break;
-            case NORMAL_SPACING: HudConfig.normalLineSpacing = value; break;
-            case EDGE_FADE: HudConfig.edgeFadeSize = value; break;
-            case SCROLL_SMOOTHNESS: HudConfig.scrollSmoothness = value; break;
-            case SECONDARY_OPACITY: HudConfig.secondaryOpacity = value; break;
-            case DYNAMIC_ISLAND_SCALE: HudConfig.dynamicIslandScale = value; break;
-            case DYNAMIC_ISLAND_TEXT_SCALE: HudConfig.dynamicIslandTextScale = value; break;
-            case DYNAMIC_ISLAND_MAX_WIDTH: HudConfig.dynamicIslandMaxWidth = value; break;
-            case DYNAMIC_ISLAND_PROGRESS_HEIGHT: HudConfig.dynamicIslandProgressHeight = value; break;
-            case DYNAMIC_ISLAND_COMPLETION_HOLD: HudConfig.dynamicIslandCompletionHoldSeconds = value; break;
-        }
-    }
-
-    private String formatSliderValue(SliderSetting setting, float value) {
+    private String formatSliderValue(HudSetting setting, float value) {
         switch (setting) {
             case CURRENT_LINE_SCALE:
             case NORMAL_SCALE:
