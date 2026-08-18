@@ -55,7 +55,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -1140,7 +1139,7 @@ public class CloudMusic implements SharedConstants {
             }
 
             String cacheKey = song.getStableKey() + "_" + quality.getQuality();
-            File cachedMusic = findCachedAudioFile(musicCacheDir, cacheKey, type);
+            File cachedMusic = AudioCacheFiles.findCachedAudioFile(musicCacheDir, cacheKey, type);
             if (cachedMusic != null) {
                 return resolvePlayableAudioFile(cachedMusic);
             }
@@ -1169,10 +1168,10 @@ public class CloudMusic implements SharedConstants {
                     temporaryMusic.delete();
                 } else {
                     music.delete();
-                    moveCacheFile(temporaryMusic, music);
+                    AudioCacheFiles.moveCacheFile(temporaryMusic, music);
                 }
             } else {
-                moveCacheFile(temporaryMusic, music);
+                AudioCacheFiles.moveCacheFile(temporaryMusic, music);
             }
 
             removeOtherQualityCaches(musicCacheDir, song.getStableKey(), quality.getQuality());
@@ -1201,8 +1200,8 @@ public class CloudMusic implements SharedConstants {
                 return sourceFile;
             }
 
-            File decodedFile = getDecodedWavCacheFile(sourceFile);
-            if (isReusableDecodedWav(sourceFile, decodedFile)) {
+            File decodedFile = AudioCacheFiles.getDecodedWavFile(sourceFile);
+            if (AudioCacheFiles.isReusableDecodedWav(sourceFile, decodedFile)) {
                 return decodedFile;
             }
             if (decodedFile.exists() && !decodedFile.delete()) {
@@ -1220,7 +1219,7 @@ public class CloudMusic implements SharedConstants {
                                 DownloadDynamicIsland.updateTranscodeProgress(progress);
                             }
                         });
-                if (!isReusableDecodedWav(sourceFile, decodedFile)) {
+                if (!AudioCacheFiles.isReusableDecodedWav(sourceFile, decodedFile)) {
                     throw new IOException("Decoded AAC cache is invalid: " + sourceFile.getName());
                 }
             } catch (Exception exception) {
@@ -1239,68 +1238,11 @@ public class CloudMusic implements SharedConstants {
         }
 
         private void discardLegacyDecodedWav(File sourceFile) {
-            File decodedFile = getDecodedWavCacheFile(sourceFile);
+            File decodedFile = AudioCacheFiles.getDecodedWavFile(sourceFile);
             if (decodedFile.exists() && !decodedFile.delete()) {
                 System.err.println("[NCM] Unable to remove legacy MP4 decoded cache: " + decodedFile.getName());
             }
         }
-        private File getDecodedWavCacheFile(File sourceFile) {
-            String name = sourceFile.getName();
-            int extensionIndex = name.lastIndexOf('.');
-            String baseName = extensionIndex > 0 ? name.substring(0, extensionIndex) : name;
-            return new File(sourceFile.getParentFile(), baseName + ".decoded.wav");
-        }
-
-        private boolean isReusableDecodedWav(File sourceFile, File decodedFile) {
-            return decodedFile.isFile()
-                    && decodedFile.length() > 44L
-                    && decodedFile.lastModified() >= sourceFile.lastModified()
-                    && "wav".equals(AudioContainerSupport.detectContainer(decodedFile));
-        }
-
-        private File findCachedAudioFile(File musicCacheDir, String cacheKey, String reportedType) {
-            List<String> candidateTypes = new ArrayList<>();
-            if (AudioContainerSupport.isSupportedContainer(reportedType)) {
-                candidateTypes.add(reportedType);
-            }
-            for (String supportedType : AudioContainerSupport.getSupportedContainers()) {
-                if (!candidateTypes.contains(supportedType)) {
-                    candidateTypes.add(supportedType);
-                }
-            }
-
-            for (String candidateType : candidateTypes) {
-                File candidate = new File(musicCacheDir, cacheKey + "." + candidateType);
-                if (!candidate.isFile()) {
-                    continue;
-                }
-
-                String actualType = AudioContainerSupport.detectContainer(candidate);
-                if (!AudioContainerSupport.isSupportedContainer(actualType)) {
-                    candidate.delete();
-                    continue;
-                }
-
-                File normalized = new File(musicCacheDir, cacheKey + "." + actualType);
-                if (candidate.equals(normalized)) {
-                    return candidate;
-                }
-
-                if (normalized.isFile()) {
-                    String normalizedType = AudioContainerSupport.detectContainer(normalized);
-                    if (actualType.equals(normalizedType)) {
-                        candidate.delete();
-                        return normalized;
-                    }
-                    normalized.delete();
-                }
-
-                moveCacheFile(candidate, normalized);
-                return normalized;
-            }
-            return null;
-        }
-
         private void removeOtherQualityCaches(File musicCacheDir, String stableKey, String currentQuality) {
             MultiThreadingUtil.runAsync(() -> {
                 File[] cacheFiles = musicCacheDir.listFiles();
@@ -1521,14 +1463,6 @@ public class CloudMusic implements SharedConstants {
     private static final class UnsupportedMp4ContainerException extends IllegalStateException {
         private UnsupportedMp4ContainerException(String sourceName) {
             super("Detected unsupported MP4 container from file header: " + sourceName);
-        }
-    }
-
-    private static void moveCacheFile(File source, File destination) {
-        try {
-            Files.move(source.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            throw new IllegalStateException("Unable to finalize music cache file: " + source.getName(), e);
         }
     }
 
