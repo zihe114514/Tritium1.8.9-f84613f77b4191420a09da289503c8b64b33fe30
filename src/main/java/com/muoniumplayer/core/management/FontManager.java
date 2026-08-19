@@ -41,7 +41,7 @@ public class FontManager extends AbstractManager {
     /** Provider-brand Fontello glyphs use a separate font to avoid private-use code collisions. */
     public static CFontRenderer musicBrand16, musicBrand18;
     /** QQ Music brand icon font; deliberately separate from Fontello login glyphs. */
-    public static CFontRenderer qqMusicIcon16;
+    public static CFontRenderer qqMusicIcon16, qqMusicIcon20;
 
     public static List<CFontRenderer> getAllFontRenderers() {
 
@@ -107,6 +107,9 @@ public class FontManager extends AbstractManager {
         musicBrand16 = create(16, "music-brand-icons");
         musicBrand18 = create(18, "music-brand-icons");
         qqMusicIcon16 = create(16, "qq-music-icons");
+        // The QQ Music brand glyph has more internal whitespace than the NetEase glyph.
+        // Use a dedicated larger renderer in the source switcher so both providers read at the same visual size.
+        qqMusicIcon20 = create(20, "qq-music-icons");
     }
 
     /**

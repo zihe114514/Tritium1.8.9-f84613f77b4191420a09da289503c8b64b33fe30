@@ -283,7 +283,7 @@ public class NavigateBar extends NCMPanel {
                     new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.TOP_LISTS,
                             qqMode ? MusicPlatform.QQ : MusicPlatform.NETEASE))));
             if (neteaseMode) {
-                this.playlistPanel.addChild(new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                this.playlistPanel.addChild(new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                         () -> "热搜", () -> NCMScreen.getInstance().setCurrentPanel(
                         new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.HOT_SEARCH))));
                 this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
@@ -602,7 +602,7 @@ public class NavigateBar extends NCMPanel {
 
             // QQ Music uses its own provider-brand glyph. Do not reuse the QQ login icon.
             this.platformIcon = new LabelWidget(this.platform == MusicPlatform.QQ ? MusicBrandIcons.QQ_MUSIC : MusicBrandIcons.NETEASE_CLOUD_MUSIC,
-                    this.platform == MusicPlatform.QQ ? FontManager.qqMusicIcon16 : FontManager.musicBrand16);
+                    this.platform == MusicPlatform.QQ ? FontManager.qqMusicIcon20 : FontManager.musicBrand16);
             this.platformIcon.setClickable(false);
             this.addChild(this.platformIcon);
             this.label = new LabelWidget(
