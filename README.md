@@ -40,7 +40,6 @@ Third-party and Forge-related notices are retained in the repository root and in
 
 >此项目基于[tritium-music](https://github.com/IzumiiKonata/tritium-music)二次开发
 
->100%氛围编码
 
 > ⚠️ **警告**：不支持optifine的“快速渲染”功能
 
