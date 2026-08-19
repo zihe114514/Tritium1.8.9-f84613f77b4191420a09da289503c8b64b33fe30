@@ -43,6 +43,7 @@ Third-party and Forge-related notices are retained in the repository root and in
 >100%氛围编码
 
 > ⚠️ **警告**：不支持optifine的“快速渲染”功能
+
 [![Minecraft](https://img.shields.io/badge/Minecrft-1.8.9-green.svg)](#)
 [![Forge](https://img.shields.io/badge/Forge-11.15.1.2318-orange.svg)](#)
 [![Java](https://img.shields.io/badge/Java-8-blue.svg)](#)
