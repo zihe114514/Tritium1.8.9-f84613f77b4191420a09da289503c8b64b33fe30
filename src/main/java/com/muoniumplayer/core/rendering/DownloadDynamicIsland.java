@@ -22,8 +22,6 @@ import java.awt.Color;
 public final class DownloadDynamicIsland implements SharedConstants, SharedRenderingConstants {
 
     private static final DownloadDynamicIsland INSTANCE = new DownloadDynamicIsland();
-
-    private static final long NOTICE_HOLD_MS = 1650L;
     private static final double COMPACT_WIDTH = 40.0;
     private static final double COMPACT_HEIGHT = 16.0;
     private static final double TOP_MARGIN = 6.0;
@@ -364,7 +362,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 completeAt = sourceCompletedAt;
                 animatedProgress = 1.0;
             } else if (sourceNoticeType != IslandNoticeType.NONE
-                    && (sourceNoticePersistent || now - sourceNoticeShownAt < NOTICE_HOLD_MS)) {
+                    && (sourceNoticePersistent || now - sourceNoticeShownAt < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds))) {
                 shownAt = sourceNoticeShownAt;
             }
         }
@@ -453,7 +451,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         boolean activeNotice = sourceNoticeType != IslandNoticeType.NONE
                 && sourceNoticeShownAt > 0L
                 && now >= sourceNoticeShownAt
-                && (sourceNoticePersistent || now - sourceNoticeShownAt < NOTICE_HOLD_MS);
+                && (sourceNoticePersistent || now - sourceNoticeShownAt < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds));
         boolean noticeMode = !activeDownload && !holdingCompletion && activeNotice;
         boolean enabled = HudConfig.dynamicIslandEnabled;
         boolean shouldShow = enabled && (activeDownload || holdingCompletion || activeNotice);
