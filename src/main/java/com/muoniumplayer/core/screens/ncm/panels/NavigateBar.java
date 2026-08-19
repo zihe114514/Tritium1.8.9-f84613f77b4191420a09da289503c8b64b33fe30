@@ -18,6 +18,7 @@ import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.rendering.texture.Textures;
+import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.*;
@@ -25,6 +26,7 @@ import com.muoniumplayer.core.screens.ncm.NCMPanel;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.screens.ncm.PlayerIconAssets;
 import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.json.JsonUtils;
@@ -118,7 +120,7 @@ public class NavigateBar extends NCMPanel {
             searchBarBg.setRadius(searchBar.getRadius() - .5);
         });
 
-        LabelWidget lblSearchIcon = new LabelWidget("K", FontManager.music18);
+        LabelWidget lblSearchIcon = new LabelWidget("K", FontManager.music14);
         searchBar.addChild(lblSearchIcon);
 
         lblSearchIcon.setBeforeRenderCallback(() -> {
@@ -289,7 +291,7 @@ public class NavigateBar extends NCMPanel {
             this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                     () -> "最近播放", () -> NCMScreen.getInstance().setCurrentPanel(
                     new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.RECENT_SONGS))));
-            this.playlistPanel.addChild(new PlaylistItem("F", () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+            this.playlistPanel.addChild(new PlaylistItem(PlayerIconAssets.PERSONAL_FM, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
                     () -> "私人 FM", () -> NCMScreen.getInstance().setCurrentPanel(new PersonalFmPanel())));
         }
         LabelWidget lblPlaylists = new LabelWidget("我的歌单", FontManager.pf14bold);
@@ -811,6 +813,7 @@ public class NavigateBar extends NCMPanel {
     public static class PlaylistItem extends Panel {
 
         String icon;
+        Location iconLocation;
         Supplier<Integer> iconColorSupplier;
         Supplier<String> label;
         Runnable onClick;
@@ -825,7 +828,16 @@ public class NavigateBar extends NCMPanel {
         private PlayList playlist;
 
         public PlaylistItem(String icon, Supplier<Integer> iconColorSupplier, Supplier<String> label, Runnable onClick) {
+            this(icon, null, iconColorSupplier, label, onClick);
+        }
+
+        public PlaylistItem(Location iconLocation, Supplier<Integer> iconColorSupplier, Supplier<String> label, Runnable onClick) {
+            this(null, iconLocation, iconColorSupplier, label, onClick);
+        }
+
+        private PlaylistItem(String icon, Location iconLocation, Supplier<Integer> iconColorSupplier, Supplier<String> label, Runnable onClick) {
             this.icon = icon;
+            this.iconLocation = iconLocation;
             this.iconColorSupplier = iconColorSupplier;
             this.label = label;
             this.onClick = onClick;
@@ -848,24 +860,38 @@ public class NavigateBar extends NCMPanel {
                 bg.setRadius(4);
             });
 
-            LabelWidget lblIcon = new LabelWidget(icon, FontManager.music18);
-            this.addChild(lblIcon);
-            lblIcon.setBeforeRenderCallback(() -> {
-                lblIcon.setColor(iconColorSupplier.get());
-                lblIcon.centerVertically();
-                lblIcon.setPosition(8, lblIcon.getRelativeY()/* + .5*/);
-            });
-
-            lblIcon.setClickable(false);
+            AbstractWidget<?> iconWidget;
+            if (iconLocation == null) {
+                LabelWidget glyphIcon = new LabelWidget(icon, FontManager.music18);
+                this.addChild(glyphIcon);
+                glyphIcon.setBeforeRenderCallback(() -> {
+                    glyphIcon.setColor(iconColorSupplier.get());
+                    glyphIcon.centerVertically();
+                    glyphIcon.setPosition(8, glyphIcon.getRelativeY()/* + .5*/);
+                });
+                glyphIcon.setClickable(false);
+                iconWidget = glyphIcon;
+            } else {
+                ThemedTextureIconWidget textureIcon = new ThemedTextureIconWidget(iconLocation, FontManager.music18,
+                        0, 0, 12, 12);
+                this.addChild(textureIcon);
+                textureIcon.setBeforeRenderCallback(() -> {
+                    textureIcon.setColor(iconColorSupplier.get());
+                    textureIcon.centerVertically();
+                    textureIcon.setPosition(8, textureIcon.getRelativeY());
+                });
+                textureIcon.setClickable(false);
+                iconWidget = textureIcon;
+            }
 
             LabelWidget lbl = new LabelWidget(label, FontManager.pf14bold);
             this.addChild(lbl);
 
             lbl.setBeforeRenderCallback(() -> {
                 lbl.centerVertically();
-                lbl.setPosition(lblIcon.getRelativeX() + lblIcon.getWidth() + 4, lbl.getRelativeY());
+                lbl.setPosition(iconWidget.getRelativeX() + iconWidget.getWidth() + 4, lbl.getRelativeY());
                 lbl.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-                lbl.setMaxWidth(this.getWidth() - 8 - lblIcon.getWidth() - 12);
+                lbl.setMaxWidth(this.getWidth() - 8 - iconWidget.getWidth() - 12);
             });
 
             lbl.setClickable(false);

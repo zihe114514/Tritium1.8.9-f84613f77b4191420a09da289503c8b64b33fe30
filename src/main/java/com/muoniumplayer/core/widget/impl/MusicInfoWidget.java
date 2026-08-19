@@ -100,9 +100,13 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
         if (playingMusic != null) {
 
-            Location cover = playingMusic.getSmallCoverLocation();
-
+            // Dynamic cover is optional. The normal small static cover remains the guaranteed fallback.
+            Location cover = playingMusic.getDynamicCoverLocation();
             ITextureObject texture = TextureManager.getInstance().getTexture(cover);
+            if (texture == null) {
+                cover = playingMusic.getSmallCoverLocation();
+                texture = TextureManager.getInstance().getTexture(cover);
+            }
 
             double imgSpacing = 4;
 

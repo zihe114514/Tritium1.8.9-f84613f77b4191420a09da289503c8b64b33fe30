@@ -629,6 +629,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         }
 
         if (musicLyricsPanel == null) {
+            // The quality pop-up visually overlaps the song list. Consume its
+            // full bounds before dispatching to the list to prevent click-through.
+            if (this.controlsBar.consumeQualityMenuClick(mouseX, mouseY, mouseButton)) {
+                return;
+            }
             this.basePanel.onMouseClickReceived(mouseX, mouseY, mouseButton);
 
             if (this.currentPanel != null)

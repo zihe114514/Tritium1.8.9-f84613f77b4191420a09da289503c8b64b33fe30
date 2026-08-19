@@ -32,10 +32,10 @@ public class FontManager extends AbstractManager {
         super("FontManager");
     }
 
-    public static CFontRenderer pf12bold, pf14bold, pf16bold, pf18bold, pf20bold, pf25bold, pf28bold, pf34bold, pf40bold, pf65bold, pf50bold;
+    public static CFontRenderer pf10bold, pf12bold, pf14bold, pf16bold, pf18bold, pf20bold, pf25bold, pf28bold, pf34bold, pf40bold, pf65bold, pf50bold;
     public static CFontRenderer pf12, pf14, pf18, pf20, pf25, pf32;
     public static CFontRenderer icon30;
-    public static CFontRenderer music18, music40;
+    public static CFontRenderer music14, music18, music40;
 
     public static List<CFontRenderer> getAllFontRenderers() {
 
@@ -74,6 +74,7 @@ public class FontManager extends AbstractManager {
         pf32 = create(32, normalName);
         pf18 = create(18, normalName);
 
+        pf10bold = create(10, boldName);
         pf12bold = create(12, boldName);
         pf14bold = create(14, boldName);
         pf16bold = create(16, boldName);
@@ -88,6 +89,7 @@ public class FontManager extends AbstractManager {
 
         icon30 = create(30, "icomoon");
 
+        music14 = create(14, "music");
         music18 = create(18, "music");
         music40 = create(40, "music");
     }

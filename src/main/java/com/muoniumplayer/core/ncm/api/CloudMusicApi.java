@@ -25,6 +25,12 @@ import java.util.stream.Collectors;
 @UtilityClass
 public class CloudMusicApi {
 
+    /** Requests NetEase dynamic-cover metadata for a signed-in song. */
+    public RequestUtil.RequestAnswer songDynamicCover(long id) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("songId", id);
+        return RequestUtil.createRequest("/api/songplay/dynamic-cover", data, OptionsUtil.createOptions());
+    }
     public RequestUtil.RequestAnswer lyricNew(long id) {
 
         Map<String, Object> data = new HashMap<>();

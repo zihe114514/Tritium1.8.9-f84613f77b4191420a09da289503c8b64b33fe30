@@ -9,6 +9,7 @@ import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.CadenceMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.NeteaseAccountProfiles;
 import com.muoniumplayer.core.ncm.music.QRCodeGenerator;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.texture.DynamicTexture;
@@ -26,6 +27,7 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.util.Base64;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -233,6 +235,25 @@ public class AccountManagerOverlay extends NCMPanel {
                 cookieLogin.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             });
         }
+        if (platform == MusicPlatform.NETEASE && CadenceMusicService.isLoggedIn(platform)) {
+            RoundedButtonWidget switchAccount = new RoundedButtonWidget(
+                    () -> "切换已保存账号（" + NeteaseAccountProfiles.load().size() + "）", FontManager.pf12bold);
+            dialog.addChild(switchAccount);
+            switchAccount.setRadius(6);
+            switchAccount.setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                showSavedNeteaseAccounts();
+                return true;
+            });
+            switchAccount.setBeforeRenderCallback(() -> {
+                switchAccount.setBounds(Math.max(1, dialog.getWidth() - 32), 26);
+                switchAccount.setPosition(16, dialog.getHeight() - 80);
+                switchAccount.setColor(switchAccount.isHovering()
+                        ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                        : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+                switchAccount.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            });
+        }
         if (!CadenceMusicService.isLoggedIn(platform)) {
             startQrLogin(platform, token);
         }
@@ -279,6 +300,7 @@ public class AccountManagerOverlay extends NCMPanel {
         dialog.addChild(cookieField);
         cookieField.getTextField().setMaxStringLength(4096);
         cookieField.getTextField().isPassword = true;
+        cookieField.setEnabled(true).setFocused(true);
         cookieField.setPlaceholder("粘贴 MUSIC_U、MUSIC_A 或完整 Cookie 字符串");
         cookieField.drawUnderline(false);
         cookieField.setBeforeRenderCallback(() -> {
@@ -324,6 +346,7 @@ public class AccountManagerOverlay extends NCMPanel {
                     if (CloudMusic.profile == null) {
                         throw new IllegalStateException("登录资料加载失败");
                     }
+                    NeteaseAccountProfiles.saveCurrent();
                     statusText = "Cookie 登录成功";
                     statusColor = 0x53C68C;
                     MultiThreadingUtil.runOnMainThread(() -> {
@@ -359,6 +382,51 @@ public class AccountManagerOverlay extends NCMPanel {
         return result.has("data") && result.get("data").isJsonObject()
                 && result.getAsJsonObject("data").has("profile")
                 && result.getAsJsonObject("data").get("profile").isJsonObject();
+    }
+
+    private void showSavedNeteaseAccounts() {
+        final long token = pageGeneration.incrementAndGet();
+        detailPlatform = MusicPlatform.NETEASE;
+        requestRunning = false;
+        getChildren().clear();
+        Panel dialog = createDialog(440, 300);
+        addTitle(dialog, "切换网易云账号", "已保存的 Cookie 仅保存在本地，可随时切换");
+        RoundedButtonWidget back = new RoundedButtonWidget("‹ 返回", FontManager.pf12bold);
+        dialog.addChild(back);
+        back.setBounds(64, 12, 64, 22);
+        back.setRadius(5);
+        back.setOnClickCallback((x, y, button) -> { if (button == 0) showDetail(MusicPlatform.NETEASE); return button == 0; });
+        List<NeteaseAccountProfiles.Account> accounts = NeteaseAccountProfiles.load();
+        if (accounts.isEmpty()) {
+            LabelWidget empty = new LabelWidget("暂无已保存账号，请先完成一次扫码或 Cookie 登录", FontManager.pf12);
+            dialog.addChild(empty); empty.setClickable(false);
+            empty.setBeforeRenderCallback(() -> { empty.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT)); empty.setPosition(16, 88); });
+            return;
+        }
+        int limit = Math.min(6, accounts.size());
+        for (int i = 0; i < limit; i++) {
+            final NeteaseAccountProfiles.Account account = accounts.get(i);
+            final double y = 66 + i * 32;
+            RoundedButtonWidget item = new RoundedButtonWidget(account.getDisplayName() + (account.id.isEmpty() ? "" : "  ·  " + account.id), FontManager.pf12bold);
+            dialog.addChild(item); item.setRadius(6);
+            item.setBeforeRenderCallback(() -> { item.setBounds(Math.max(1, dialog.getWidth() - 32), 26); item.setPosition(16, y); item.setColor(item.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER) : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)); item.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)); });
+            item.setOnClickCallback((x, yy, button) -> {
+                if (button != 0 || requestRunning) return false;
+                requestRunning = true; statusText = "正在切换账号…"; statusColor = 0xAEB5C4;
+                MultiThreadingUtil.runAsync(() -> {
+                    boolean success = NeteaseAccountProfiles.switchTo(account);
+                    MultiThreadingUtil.runOnMainThread(() -> {
+                        requestRunning = false;
+                        if (!isCurrent(MusicPlatform.NETEASE, token)) return;
+                        statusText = success ? "账号已切换" : "账号切换失败，Cookie 可能已过期";
+                        statusColor = success ? 0x53C68C : 0xF1767D;
+                        NCMScreen.getInstance().markDirty();
+                        showDetail(MusicPlatform.NETEASE);
+                    });
+                });
+                return true;
+            });
+        }
     }
     private Panel createDialog(double preferredWidth, double preferredHeight) {
         RectWidget mask = new RectWidget();
@@ -434,6 +502,7 @@ public class AccountManagerOverlay extends NCMPanel {
                         requestRunning = false;
                         if (platform == MusicPlatform.NETEASE) {
                             CloudMusic.loadNCM(OptionsUtil.getCookie());
+                            NeteaseAccountProfiles.saveCurrent();
                         } else {
                             CadenceMusicService.refreshQQAccountData();
                         }
@@ -525,5 +594,3 @@ public class AccountManagerOverlay extends NCMPanel {
         return message == null || message.trim().isEmpty() ? "未知错误" : message;
     }
 }
-
-

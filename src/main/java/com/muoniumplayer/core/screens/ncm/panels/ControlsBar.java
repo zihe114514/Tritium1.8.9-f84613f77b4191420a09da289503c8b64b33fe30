@@ -13,6 +13,7 @@ import com.muoniumplayer.core.screens.ncm.MusicLyricsPanel;
 import com.muoniumplayer.core.screens.ncm.NCMPanel;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
+import com.muoniumplayer.core.screens.ncm.PlayerIconAssets;
 import com.muoniumplayer.core.screens.ncm.VolumeControl;
 import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
 
@@ -22,6 +23,19 @@ import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
  * Date: 2025/10/17 21:24
  */
 public class ControlsBar extends NCMPanel {
+
+    private boolean qualityMenuOpen;
+    private RoundedRectWidget qualityMenuBackground;
+    private RoundedRectWidget[] qualityOptions;
+
+    public boolean consumeQualityMenuClick(double mouseX, double mouseY, int mouseButton) {
+        if (!qualityMenuOpen || qualityMenuBackground == null) return false;
+        boolean withinMenu = mouseX >= qualityMenuBackground.getX() && mouseX <= qualityMenuBackground.getX() + qualityMenuBackground.getWidth()
+                && mouseY >= qualityMenuBackground.getY() && mouseY <= qualityMenuBackground.getY() + qualityMenuBackground.getHeight();
+        if (!withinMenu) return false;
+        this.onMouseClickReceived(mouseX, mouseY, mouseButton);
+        return true;
+    }
 
     public ControlsBar() {
     }
@@ -119,7 +133,10 @@ public class ControlsBar extends NCMPanel {
                         .setPosition(next.getRelativeX() + next.getWidth() * .5 + 20, next.getRelativeY() + buttonsYOffset)
                         .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)));
         // 播放模式与核心控件并列：顺序播放 → 随机播放 → 单曲循环。
-        IconWidget playMode = new IconWidget(CloudMusic.playMode.getIcon(), FontManager.icon30, 0, 0, 20, 20);
+        ThemedTextureIconWidget playMode = new ThemedTextureIconWidget(
+                () -> CloudMusic.isPersonalFmActive() ? null : PlayerIconAssets.forPlayMode(CloudMusic.playMode),
+                () -> CloudMusic.isPersonalFmActive() ? "F" : CloudMusic.playMode.getIcon(),
+                FontManager.icon30, 0, 0, 20, 20);
         this.addChild(playMode);
 
         playMode
@@ -128,13 +145,12 @@ public class ControlsBar extends NCMPanel {
                     boolean personalFm = CloudMusic.isPersonalFmActive();
                     playMode
                             .center()
-                            .setIcon(personalFm ? "F" : mode.getIcon())
                             .setPosition(next.getRelativeX() + next.getWidth() + 10, next.getRelativeY())
                             .setClickable(!personalFm)
                             .setAlpha(ControlsBar.this.getAlpha() * (personalFm ? .35f : 1.0f))
-                            .setColor(personalFm || mode == CloudMusic.PlayMode.Sequential
-                                    ? NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)
-                                    : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+                            // The supplied mode icons share one visual language; use one
+                            // consistent theme tint for sequential, random and single-loop.
+                            .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
                 })
                 .setOnClickCallback((x, y, mouseButton) -> {
                     if (mouseButton == 0) {
@@ -343,9 +359,9 @@ public class ControlsBar extends NCMPanel {
         final double qualityButtonHeight = 20.0;
         final double qualityOptionHeight = 18.0;
         final double qualityMenuPadding = 3.0;
-        final boolean[] qualityMenuOpen = {false};
-        final RoundedRectWidget[] qualityMenuBackground = new RoundedRectWidget[1];
-        final RoundedRectWidget[] qualityOptions = new RoundedRectWidget[selectableQualities.length];
+
+
+        qualityOptions = new RoundedRectWidget[selectableQualities.length];
         RoundedRectWidget qualitySelector = new RoundedRectWidget();
         this.addChild(qualitySelector);
         qualitySelector
@@ -355,6 +371,8 @@ public class ControlsBar extends NCMPanel {
                     // Dedicated footer slot: immediately left of the volume control, with a
                     // fixed visual gap matching the player layout.  Do not let a transient
                     // layout value hide this primary action.
+                    double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
+                    double buttonHeight = qualityButtonHeight * scale;
                     double parentWidth = qualitySelector.getParentWidth();
                     double volumeWidth = Math.max(74.0, Math.min(122.0, parentWidth * .18));
                     double volumeX = compactVolumeWidget.getRelativeX();
@@ -362,35 +380,35 @@ public class ControlsBar extends NCMPanel {
                         volumeX = parentWidth - volumeWidth - 8.0;
                     }
                     double selectorGap = Math.min(38.0, Math.max(14.0, parentWidth * .045));
-                    String selectorLabel = "音质 · " + formatQuality(CloudMusic.quality) + (qualityMenuOpen[0] ? " ︿" : " ﹀");
-                    double desiredWidth = FontManager.pf12bold.getStringWidthD(selectorLabel) + 14.0;
-                    double selectorWidth = Math.max(72.0, Math.min(112.0, desiredWidth));
+                    String selectorLabel = "音质 · " + formatQuality(CloudMusic.quality) + (qualityMenuOpen ? " ︿" : " ﹀");
+                    double desiredWidth = (scale < .9 ? FontManager.pf10bold : FontManager.pf12bold).getStringWidthD(selectorLabel) + 14.0 * scale;
+                    double selectorWidth = Math.max(56.0 * scale, Math.min(112.0 * scale, desiredWidth));
                     double selectorX = volumeX - selectorGap - selectorWidth;
 
                     // On a very narrow player, shrink only enough to remain inside the footer;
                     // the label itself trims safely instead of the whole quality action vanishing.
                     if (selectorX < 6.0) {
-                        selectorWidth = Math.max(34.0, volumeX - selectorGap - 6.0);
+                        selectorWidth = Math.max(34.0 * scale, volumeX - selectorGap - 6.0);
                         selectorX = Math.max(6.0, volumeX - selectorGap - selectorWidth);
                     }
 
                     qualitySelector
                             .setHidden(false)
                             .setClickable(true)
-                            .setBounds(selectorWidth, qualityButtonHeight)
-                            .setRadius(5.0)
+                            .setBounds(selectorWidth, buttonHeight)
+                            .setRadius(5.0 * scale)
                             .setColor(qualitySelector.isHovering()
                                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND))
                             .setAlpha(ControlsBar.this.getAlpha() * .94f)
                             .setPosition(selectorX,
-                                    Math.max(1.0, (qualitySelector.getParentHeight() - qualityButtonHeight) * .5));
+                                    Math.max(1.0, (qualitySelector.getParentHeight() - buttonHeight) * .5));
                 })
                 .setOnClickCallback((relativeX, relativeY, mouseButton) -> {
                     if (mouseButton == 0) {
-                        boolean open = !qualityMenuOpen[0];
-                        qualityMenuOpen[0] = open;
-                        qualityMenuBackground[0].setHidden(!open);
+                        boolean open = !qualityMenuOpen;
+                        qualityMenuOpen = open;
+                        qualityMenuBackground.setHidden(!open);
                         for (RoundedRectWidget qualityOption : qualityOptions) {
                             qualityOption.setHidden(!open);
                         }
@@ -398,28 +416,29 @@ public class ControlsBar extends NCMPanel {
                     return true;
                 });
 
-        LabelWidget qualityText = new LabelWidget(() -> "音质 · " + formatQuality(CloudMusic.quality) + (qualityMenuOpen[0] ? " ︿" : " ﹀"), FontManager.pf12bold);
+        LabelWidget qualityText = new LabelWidget(() -> "音质 · " + formatQuality(CloudMusic.quality) + (qualityMenuOpen ? " ︿" : " ﹀"), FontManager.pf12bold);
         qualitySelector.addChild(qualityText);
         qualityText.setClickable(false);
         qualityText.setBeforeRenderCallback(() -> qualityText
                 .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
                 .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
-                .setMaxWidth(Math.max(0.0, qualitySelector.getWidth() - 14.0))
-                .setPosition(7.0, Math.max(2.0, (qualityButtonHeight - qualityText.getHeight()) * .5)));
+                .setMaxWidth(Math.max(0.0, qualitySelector.getWidth() - 14.0 * Math.max(.82, NCMPlayerConfig.getPlayerScale())))
+                .setPosition(7.0, Math.max(2.0, (qualitySelector.getHeight() - qualityText.getHeight()) * .5)));
 
         // The menu is declared after the selector, therefore it is rendered and hit-tested on
         // top of the bottom bar.  It grows upward so it never covers the compact controls.
-        qualityMenuBackground[0] = new RoundedRectWidget();
-        this.addChild(qualityMenuBackground[0]);
-        qualityMenuBackground[0]
+        qualityMenuBackground = new RoundedRectWidget();
+        this.addChild(qualityMenuBackground);
+        qualityMenuBackground
                 .setClickable(false)
                 .setHidden(true)
                 .setBeforeRenderCallback(() -> {
-                    double menuHeight = selectableQualities.length * qualityOptionHeight + qualityMenuPadding * 2.0;
-                    qualityMenuBackground[0]
+                    double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
+                    double menuHeight = selectableQualities.length * qualityOptionHeight * scale + qualityMenuPadding * 2.0 * scale;
+                    qualityMenuBackground
                             .setBounds(qualitySelector.getWidth(), menuHeight)
                             .setPosition(qualitySelector.getRelativeX(), qualitySelector.getRelativeY() - menuHeight - 4.0)
-                            .setRadius(6.0)
+                            .setRadius(6.0 * Math.max(.82, NCMPlayerConfig.getPlayerScale()))
                             .setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND))
                             .setAlpha(ControlsBar.this.getAlpha() * .98f);
                 });
@@ -435,11 +454,12 @@ public class ControlsBar extends NCMPanel {
                     .setHidden(true)
                     .setBeforeRenderCallback(() -> {
                         boolean selected = option == (CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality);
+                        double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
                         qualityOption
                                 .setBounds(Math.max(0.0, qualitySelector.getWidth() - qualityMenuPadding * 2.0), qualityOptionHeight)
                                 .setPosition(qualitySelector.getRelativeX() + qualityMenuPadding,
-                                        qualityMenuBackground[0].getRelativeY() + qualityMenuPadding + optionIndex * qualityOptionHeight)
-                                .setRadius(4.0)
+                                        qualityMenuBackground.getRelativeY() + qualityMenuPadding * scale + optionIndex * qualityOptionHeight * scale)
+                                .setRadius(4.0 * scale)
                                 .setColor(qualityOption.isHovering()
                                         ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                                         : (selected ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT) : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)))
@@ -449,8 +469,8 @@ public class ControlsBar extends NCMPanel {
                         if (mouseButton != 0) return true;
                         CloudMusic.quality = option;
                         NCMPlayerConfig.setAudioQuality(option);
-                        qualityMenuOpen[0] = false;
-                        qualityMenuBackground[0].setHidden(true);
+                        qualityMenuOpen = false;
+                        qualityMenuBackground.setHidden(true);
                         for (RoundedRectWidget menuOption : qualityOptions) {
                             menuOption.setHidden(true);
                         }
@@ -465,7 +485,7 @@ public class ControlsBar extends NCMPanel {
             optionText.setClickable(false);
             optionText.setBeforeRenderCallback(() -> optionText
                     .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
-                    .setPosition(5.0, Math.max(1.0, (qualityOptionHeight - optionText.getHeight()) * .5)));
+                    .setPosition(5.0, Math.max(1.0, (qualityOption.getHeight() - optionText.getHeight()) * .5)));
         }
     }
 

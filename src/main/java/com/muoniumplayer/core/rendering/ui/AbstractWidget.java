@@ -379,7 +379,9 @@ public abstract class AbstractWidget<SELF extends AbstractWidget<SELF>> implemen
     }
 
     protected boolean iterateChildrenMouseClick(List<AbstractWidget<?>> children, double mouseX, double mouseY, int mouseButton) {
-        for (AbstractWidget<?> child : children) {
+        for (int childIndex = children.size() - 1; childIndex >= 0; childIndex--) {
+            // Later children render above earlier ones, so they must receive input first.
+            AbstractWidget<?> child = children.get(childIndex);
 
             if (child.isHidden()) {
                 continue;

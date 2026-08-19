@@ -29,6 +29,7 @@ Deuterium/
 
 # Codex/local agent state
 .codex/
+.codex-optifine-adload.html
 
 # JVM crash dumps and runtime diagnostics
 *.hprof
@@ -37,6 +38,9 @@ replay_pid*
 *.log
 logs/
 crash-reports/
+
+# Local archival snapshots are kept outside the repository.
+backups/
 
 # Local player state, account credentials and downloaded media
 NCMCookie.txt

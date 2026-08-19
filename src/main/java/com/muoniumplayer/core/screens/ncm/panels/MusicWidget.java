@@ -8,11 +8,12 @@ import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.texture.Textures;
-import com.muoniumplayer.core.rendering.ui.widgets.IconWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedImageWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
+import com.muoniumplayer.core.rendering.ui.widgets.ThemedTextureIconWidget;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.screens.ncm.PlayerIconAssets;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
@@ -306,15 +307,15 @@ public class MusicWidget extends RoundedRectWidget {
         });
         lblMusicDuration.setClickable(false);
 
-        // ===== 收藏：歌曲喜欢/取消喜欢（★/☆）+ 加入歌单（+）=====
-        IconWidget btnLike = new IconWidget("☆", FontManager.pf16bold, 0, 0, 20, 20);
+        // ===== 收藏：歌曲喜欢/取消喜欢 + 加入歌单 =====
+        ThemedTextureIconWidget btnLike = new ThemedTextureIconWidget(
+                PlayerIconAssets.FAVORITE, "☆", FontManager.pf16bold, 0, 0, 20, 20);
         this.addChild(btnLike);
         btnLike.setShouldOverrideMouseCursor(true);
         btnLike.setHidden(!music.isNetease());
         btnLike.setClickable(music.isNetease());
         btnLike.setBeforeRenderCallback(() -> {
             boolean liked = CloudMusic.likeList != null && CloudMusic.likeList.contains(music.getId());
-            btnLike.setIcon(liked ? "★" : "☆");
             btnLike.setColor(liked ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                     : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             btnLike.centerVertically();
@@ -347,7 +348,8 @@ public class MusicWidget extends RoundedRectWidget {
             return true;
         });
 
-        IconWidget btnAddToPlaylist = new IconWidget("+", FontManager.pf16bold, 0, 0, 20, 20);
+        ThemedTextureIconWidget btnAddToPlaylist = new ThemedTextureIconWidget(
+                PlayerIconAssets.PLAYLIST, "+", FontManager.pf16bold, 0, 0, 20, 20);
         this.addChild(btnAddToPlaylist);
         btnAddToPlaylist.setShouldOverrideMouseCursor(true);
         btnAddToPlaylist.setHidden(!music.isNetease());

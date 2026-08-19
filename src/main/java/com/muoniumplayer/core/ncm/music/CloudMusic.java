@@ -786,6 +786,8 @@ public class CloudMusic implements SharedConstants {
                 return false;
             }
             currentlyPlaying = song;
+            // Dynamic cover lookup is optional and never blocks audio startup or static-cover rendering.
+            loadDynamicMusicCover(song);
 
             // 每次点击/切歌都会重新创建解析任务；失败结果不会被缓存。
             Tuple<String, String> playUrl = song.getPlayUrl();
@@ -1216,6 +1218,9 @@ public class CloudMusic implements SharedConstants {
         MusicCoverService.loadMusicCover(music, forceReload);
     }
 
+    public static void loadDynamicMusicCover(Music music) {
+        MusicCoverService.loadDynamicMusicCover(music);
+    }
     public static BufferedImage gaussianBlur(BufferedImage imgIn, int blur) {
         return MusicCoverService.gaussianBlur(imgIn, blur);
     }

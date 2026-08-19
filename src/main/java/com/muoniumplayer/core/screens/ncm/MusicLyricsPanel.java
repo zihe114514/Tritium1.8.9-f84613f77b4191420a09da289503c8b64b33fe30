@@ -778,8 +778,13 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             this.roundedRectTextured(coverCenterX - coverSize * .5, coverCenterY - coverSize * .575, coverSize, coverSize, coverRadius * coverSizePerc, alpha);
         }
 
-        Location musicCover = snapshot.music.getCoverLocation();
-        ITextureObject tex = textureManager.getTexture(musicCover);
+        // Prefer the optional dynamic cover once its asynchronous request has produced a texture.
+        // Until then (or when a song has no supported dynamic artwork), retain the static cover.
+        Location dynamicCover = snapshot.music.getDynamicCoverLocation();
+        ITextureObject tex = textureManager.getTexture(dynamicCover);
+        if (tex == null) {
+            tex = textureManager.getTexture(snapshot.music.getCoverLocation());
+        }
 
         if (tex != null) {
             coverAlpha = Interpolations.interpolate(coverAlpha, 1.0f, 0.2f);
