@@ -6,19 +6,19 @@ import com.muoniumplayer.core.utils.Location;
 /**
  * Static player-control icons imported from the supplied artwork.
  *
- * <p>Resource paths intentionally stay under the historical {@code tritium}
+ * <p>Resource paths intentionally stay under the historical {@code muonium}
  * root because that root is part of the installed-mod resource compatibility
  * contract.</p>
  */
 public final class PlayerIconAssets {
 
-    public static final Location FAVORITE = Location.of("tritium/textures/player/icons/favorite.png");
-    public static final Location PLAYLIST = Location.of("tritium/textures/player/icons/playlist.png");
-    public static final Location HISTORY = Location.of("tritium/textures/player/icons/history.png");
-    public static final Location PERSONAL_FM = Location.of("tritium/textures/player/icons/personal-fm.png");
-    public static final Location PLAY_MODE_SEQUENTIAL = Location.of("tritium/textures/player/icons/play-mode-sequential.png");
-    public static final Location PLAY_MODE_RANDOM = Location.of("tritium/textures/player/icons/play-mode-random.png");
-    public static final Location PLAY_MODE_SINGLE_LOOP = Location.of("tritium/textures/player/icons/play-mode-single-loop.png");
+    public static final Location FAVORITE = Location.of("muonium/textures/player/icons/favorite.png");
+    public static final Location PLAYLIST = Location.of("muonium/textures/player/icons/playlist.png");
+    public static final Location HISTORY = Location.of("muonium/textures/player/icons/history.png");
+    public static final Location PERSONAL_FM = Location.of("muonium/textures/player/icons/personal-fm.png");
+    public static final Location PLAY_MODE_SEQUENTIAL = Location.of("muonium/textures/player/icons/play-mode-sequential.png");
+    public static final Location PLAY_MODE_RANDOM = Location.of("muonium/textures/player/icons/play-mode-random.png");
+    public static final Location PLAY_MODE_SINGLE_LOOP = Location.of("muonium/textures/player/icons/play-mode-single-loop.png");
 
     private PlayerIconAssets() {
     }

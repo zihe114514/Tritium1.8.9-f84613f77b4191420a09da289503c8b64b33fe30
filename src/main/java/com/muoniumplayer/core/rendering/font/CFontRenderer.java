@@ -67,8 +67,8 @@ public class CFontRenderer implements Closeable, SharedConstants {
             this.fallBackFonts[i] = fallBackFonts[i].deriveFont(sizePx * 2 * cffScaleFactor(fallBackFonts[i]));
         }
 
-//        this.fallBackFonts[fallBackFonts.length] = Font.createFont(Font.TRUETYPE_FONT, FontManager.class.getResourceAsStream("/tritium/fonts/NotoColorEmoji.ttf")).deriveFont(sizePx * 2);
-//        this.fallBackFonts[fallBackFonts.length + 1] = Font.createFont(Font.TRUETYPE_FONT, FontManager.class.getResourceAsStream("/tritium/fonts/Symbola.ttf")).deriveFont(sizePx * 2);
+//        this.fallBackFonts[fallBackFonts.length] = Font.createFont(Font.TRUETYPE_FONT, FontManager.class.getResourceAsStream("/muonium/fonts/NotoColorEmoji.ttf")).deriveFont(sizePx * 2);
+//        this.fallBackFonts[fallBackFonts.length + 1] = Font.createFont(Font.TRUETYPE_FONT, FontManager.class.getResourceAsStream("/muonium/fonts/Symbola.ttf")).deriveFont(sizePx * 2);
     }
 
     public CFontRenderer(Font font, float sizePx, FontKerning fontKerning, Font... fallBackFonts) {

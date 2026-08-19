@@ -11,7 +11,11 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.NeteaseAccountProfiles;
 import com.muoniumplayer.core.ncm.music.QRCodeGenerator;
+import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.rendering.FontelloIcons;
+import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.TextureManager;
+import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.texture.DynamicTexture;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
@@ -36,8 +40,8 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class AccountManagerOverlay extends NCMPanel {
 
-    private static final Location NETEASE_QR = Location.of("tritium/textures/account/netease_qr.png");
-    private static final Location QQ_QR = Location.of("tritium/textures/account/qq_qr.png");
+    private static final Location NETEASE_QR = Location.of("muonium/textures/account/netease_qr.png");
+    private static final Location QQ_QR = Location.of("muonium/textures/account/qq_qr.png");
 
     private final AtomicLong pageGeneration = new AtomicLong();
     private volatile boolean closing;
@@ -45,6 +49,23 @@ public class AccountManagerOverlay extends NCMPanel {
     private volatile String statusText = "";
     private volatile int statusColor = 0xAEB5C4;
     private volatile boolean requestRunning;
+    /**
+     * The supplied QQ HTTP API has no QR/OAuth endpoint. Keep the visual choice
+     * explicit so a WeChat selection can never accidentally initiate QQ QR login.
+     */
+    private volatile QQLoginChannel qqLoginChannel = QQLoginChannel.QQ;
+    private double dialogPresentation;
+
+    private enum QQLoginChannel {
+        QQ("QQ 扫码"),
+        WECHAT("微信登录");
+
+        private final String displayName;
+
+        QQLoginChannel(String displayName) {
+            this.displayName = displayName;
+        }
+    }
 
     @Override
     public void onInit() {
@@ -73,73 +94,152 @@ public class AccountManagerOverlay extends NCMPanel {
         detailPlatform = null;
         requestRunning = false;
         getChildren().clear();
-        Panel dialog = createDialog(392, 286);
+        Panel dialog = createDialog(468, 326);
 
-        addTitle(dialog, "账号管理", "分别管理网易云音乐与 QQ 音乐登录状态");
-        addAccountCard(dialog, MusicPlatform.NETEASE, 66);
-        addAccountCard(dialog, MusicPlatform.QQ, 128);
+        addTitle(dialog, "账号与登录", "本地保存登录凭据；可分别管理音乐来源");
+        addAccountCard(dialog, MusicPlatform.NETEASE, 78);
+        addAccountCard(dialog, MusicPlatform.QQ, 166);
 
-        LabelWidget hint = new LabelWidget("账号仅保存在本地配置中 · 点击卡片进入二级菜单", FontManager.pf12);
+        RoundedRectWidget privacySurface = new RoundedRectWidget();
+        dialog.addChild(privacySurface);
+        privacySurface.setClickable(false);
+        privacySurface.setRadius(8);
+        privacySurface.setBeforeRenderCallback(() -> {
+            privacySurface.setBounds(Math.max(1, dialog.getWidth() - 32), 42);
+            privacySurface.setPosition(16, dialog.getHeight() - 58);
+            privacySurface.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+
+        LabelWidget hint = new LabelWidget("登录信息仅保存在本地配置中，不会显示 Cookie 内容", FontManager.pf12);
         dialog.addChild(hint);
         hint.setClickable(false);
         hint.setBeforeRenderCallback(() -> {
             hint.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            hint.setPosition(16, dialog.getHeight() - 28);
-            hint.setMaxWidth(dialog.getWidth() - 32);
+            hint.setPosition(28, dialog.getHeight() - 42);
+            hint.setMaxWidth(Math.max(1, dialog.getWidth() - 56));
         });
     }
 
     private void addAccountCard(Panel dialog, MusicPlatform platform, double y) {
-        RoundedButtonWidget card = new RoundedButtonWidget(
-                () -> platform.getDisplayName() + "  ·  " + CadenceMusicService.getAccountName(platform) + "    ›",
-                FontManager.pf14bold);
+        RoundedButtonWidget card = new RoundedButtonWidget("", FontManager.pf14bold);
         dialog.addChild(card);
-        card.setBounds(16, y, 360, 48);
-        card.setRadius(7);
+        card.setBounds(16, y, 436, 74);
+        card.setRadius(11);
         card.setOnClickCallback((x, yy, button) -> {
             if (button != 0) return false;
             showDetail(platform);
             return true;
         });
         card.setBeforeRenderCallback(() -> {
-            card.setBounds(Math.max(1, dialog.getWidth() - 32), 48);
+            card.setBounds(Math.max(1, dialog.getWidth() - 32), 74);
             card.setPosition(16, y);
             card.setColor(card.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            card.setTextColor(CadenceMusicService.isLoggedIn(platform)
-                    ? platform.getBrandColor()
-                    : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            card.setTextColor(0x00FFFFFF);
+        });
+
+        RoundedRectWidget iconPlate = new RoundedRectWidget();
+        dialog.addChild(iconPlate);
+        iconPlate.setClickable(false);
+        iconPlate.setRadius(13);
+        iconPlate.setBeforeRenderCallback(() -> {
+            iconPlate.setBounds(40, 40);
+            iconPlate.setPosition(30, y + 17);
+            iconPlate.setColor(platform.getBrandColor());
+        });
+
+        LabelWidget platformIcon = new LabelWidget(platform == MusicPlatform.QQ ? FontelloIcons.QQ : MusicBrandIcons.NETEASE_CLOUD_MUSIC,
+                platform == MusicPlatform.QQ ? FontManager.fontello18 : FontManager.musicBrand18);
+        dialog.addChild(platformIcon);
+        platformIcon.setClickable(false);
+        platformIcon.setBeforeRenderCallback(() -> {
+            platformIcon.setColor(0xFFFFFF);
+            platformIcon.setPosition(iconPlate.getRelativeX() + iconPlate.getWidth() * .5 - platformIcon.getWidth() * .5,
+                    iconPlate.getRelativeY() + iconPlate.getHeight() * .5 - platformIcon.getHeight() * .5 + 1);
+        });
+
+        LabelWidget name = new LabelWidget(platform.getDisplayName(), FontManager.pf14bold);
+        dialog.addChild(name);
+        name.setClickable(false);
+        name.setBeforeRenderCallback(() -> {
+            name.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            name.setPosition(84, y + 16);
+        });
+
+        LabelWidget account = new LabelWidget(() -> CadenceMusicService.isLoggedIn(platform)
+                ? CadenceMusicService.getAccountName(platform)
+                : "未登录 · 点击配置登录方式", FontManager.pf12);
+        dialog.addChild(account);
+        account.setClickable(false);
+        account.setBeforeRenderCallback(() -> {
+            account.setColor(CadenceMusicService.isLoggedIn(platform)
+                    ? NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT)
+                    : 0x9DA6B7);
+            account.setMaxWidth(Math.max(1, dialog.getWidth() - 196));
+            account.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            account.setPosition(84, y + 39);
+        });
+
+        RoundedRectWidget state = new RoundedRectWidget();
+        dialog.addChild(state);
+        state.setClickable(false);
+        state.setRadius(7);
+        state.setBeforeRenderCallback(() -> {
+            boolean loggedIn = CadenceMusicService.isLoggedIn(platform);
+            state.setBounds(loggedIn ? 52 : 48, 18);
+            state.setPosition(dialog.getWidth() - state.getWidth() - 32, y + 14);
+            state.setColor(loggedIn ? 0x2A8F63 : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+        });
+
+        LabelWidget stateText = new LabelWidget(() -> CadenceMusicService.isLoggedIn(platform) ? "已登录" : "未登录", FontManager.pf12bold);
+        dialog.addChild(stateText);
+        stateText.setClickable(false);
+        stateText.setBeforeRenderCallback(() -> {
+            boolean loggedIn = CadenceMusicService.isLoggedIn(platform);
+            stateText.setColor(loggedIn ? 0xE9FFF4 : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            stateText.setPosition(state.getRelativeX() + state.getWidth() * .5 - stateText.getWidth() * .5,
+                    state.getRelativeY() + 4);
+        });
+
+        LabelWidget chevron = new LabelWidget("›", FontManager.pf18bold);
+        dialog.addChild(chevron);
+        chevron.setClickable(false);
+        chevron.setBeforeRenderCallback(() -> {
+            chevron.setColor(card.isHovering() ? platform.getBrandColor() : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            chevron.setPosition(dialog.getWidth() - 39, y + 42);
         });
     }
 
     private void showDetail(MusicPlatform platform) {
+        showDetail(platform, false);
+    }
+
+    /** Opens the QR flow even when another NetEase account is already active. */
+    private void showDetail(MusicPlatform platform, boolean addAccountByQr) {
         long token = pageGeneration.incrementAndGet();
         detailPlatform = platform;
         requestRunning = false;
-        statusText = CadenceMusicService.isLoggedIn(platform) ? "当前账号已登录" : "正在获取登录二维码…";
-        statusColor = CadenceMusicService.isLoggedIn(platform) ? 0x53C68C : 0xAEB5C4;
+        boolean loggedIn = CadenceMusicService.isLoggedIn(platform);
+        boolean qrLoginVisible = !loggedIn || addAccountByQr;
+        boolean qqWechatSelected = platform == MusicPlatform.QQ && qqLoginChannel == QQLoginChannel.WECHAT;
+        statusText = addAccountByQr
+                ? "正在准备扫码添加账号…"
+                : loggedIn
+                ? "当前账号已登录"
+                : (qqWechatSelected ? "微信授权接口尚未配置，不会误用 QQ 扫码" : "请选择登录方式后继续");
+        statusColor = addAccountByQr ? 0xAEB5C4 : (loggedIn ? 0x53C68C : (qqWechatSelected ? 0xD5A44A : 0xAEB5C4));
         getChildren().clear();
         Panel dialog = createDialog(420, 390);
 
-        RoundedButtonWidget back = new RoundedButtonWidget("‹ 返回", FontManager.pf12bold);
-        dialog.addChild(back);
-        back.setBounds(14, 12, 64, 22);
-        back.setRadius(5);
-        back.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-        back.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-        back.setOnClickCallback((x, y, button) -> {
-            if (button != 0) return false;
-            showOverview();
-            return true;
-        });
+        addBackButton(dialog, addAccountByQr ? this::showSavedNeteaseAccounts : this::showOverview);
 
-        LabelWidget title = new LabelWidget(platform.getDisplayName() + "账号", FontManager.pf18bold);
+        LabelWidget title = new LabelWidget(addAccountByQr ? "扫码添加网易云账号" : platform.getDisplayName() + "账号", FontManager.pf18bold);
         dialog.addChild(title);
         title.setClickable(false);
         title.setBeforeRenderCallback(() -> {
             title.setColor(platform.getBrandColor());
-            title.setPosition(90, 15);
+            title.setPosition(58, 15);
         });
 
         RoundedRectWidget qrPlate = new RoundedRectWidget();
@@ -151,7 +251,7 @@ public class AccountManagerOverlay extends NCMPanel {
             double size = Math.max(80, Math.min(136, dialog.getHeight() - 150));
             qrPlate.setBounds(size, size);
             qrPlate.setPosition(dialog.getWidth() * .5 - size * .5, 48);
-            qrPlate.setHidden(CadenceMusicService.isLoggedIn(platform));
+            qrPlate.setHidden(!qrLoginVisible);
         });
 
         RoundedImageWidget qrImage = new RoundedImageWidget(() -> getQrLocation(platform), 0, 0, 120, 120);
@@ -164,11 +264,13 @@ public class AccountManagerOverlay extends NCMPanel {
             double imageSize = Math.max(64, plateSize - 16);
             qrImage.setBounds(imageSize, imageSize);
             qrImage.setPosition(dialog.getWidth() * .5 - imageSize * .5, 56);
-            qrImage.setHidden(CadenceMusicService.isLoggedIn(platform));
+            qrImage.setHidden(!qrLoginVisible);
         });
 
         LabelWidget account = new LabelWidget(
-                () -> CadenceMusicService.isLoggedIn(platform)
+                () -> qrLoginVisible
+                        ? "请使用网易云客户端扫码并确认"
+                        : CadenceMusicService.isLoggedIn(platform)
                         ? "已登录：" + CadenceMusicService.getAccountName(platform)
                         : "请使用" + platform.getDisplayName() + "客户端扫码并确认",
                 FontManager.pf14bold);
@@ -178,7 +280,7 @@ public class AccountManagerOverlay extends NCMPanel {
             account.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             account.setMaxWidth(dialog.getWidth() - 36);
             double plateSize = Math.max(80, Math.min(136, dialog.getHeight() - 150));
-            double accountY = CadenceMusicService.isLoggedIn(platform) ? 92 : 48 + plateSize + 12;
+            double accountY = qrLoginVisible ? 48 + plateSize + 12 : 92;
             account.setPosition(dialog.getWidth() * .5 - account.getWidth() * .5, accountY);
         });
 
@@ -189,20 +291,37 @@ public class AccountManagerOverlay extends NCMPanel {
             status.setColor(statusColor);
             status.setMaxWidth(dialog.getWidth() - 36);
             double plateSize = Math.max(80, Math.min(136, dialog.getHeight() - 150));
-            double accountY = CadenceMusicService.isLoggedIn(platform) ? 92 : 48 + plateSize + 12;
-            status.setPosition(dialog.getWidth() * .5 - status.getWidth() * .5, accountY + 25);
+            double accountY = qrLoginVisible ? 48 + plateSize + 12 : 92;
+            status.setPosition(dialog.getWidth() * .5 - status.getWidth() * .5 + (hasConnectionFeedback() ? 9 : 0), accountY + 25);
         });
+        addConnectionFeedbackIcon(dialog, status);
 
         RoundedButtonWidget primary = new RoundedButtonWidget(
-                () -> CadenceMusicService.isLoggedIn(platform) ? "退出登录" : (requestRunning ? "等待扫码…" : "刷新二维码"),
+                () -> addAccountByQr
+                        ? (requestRunning ? "等待扫码…" : "重新获取二维码")
+                        : CadenceMusicService.isLoggedIn(platform)
+                        ? "退出登录"
+                        : (platform == MusicPlatform.QQ && qqLoginChannel == QQLoginChannel.WECHAT
+                        ? "微信登录暂不可用"
+                        : (requestRunning ? "等待扫码…" : "开始扫码登录")),
                 FontManager.pf12bold);
         dialog.addChild(primary);
         primary.setBounds(16, 286, 388, 30);
         primary.setRadius(7);
         primary.setOnClickCallback((x, y, button) -> {
             if (button != 0) return false;
-            if (CadenceMusicService.isLoggedIn(platform)) {
+            if (addAccountByQr) {
+                if (requestRunning) {
+                    statusText = "等待扫码中，正在持续检查登录状态…";
+                    statusColor = 0xAEB5C4;
+                } else {
+                    startQrLogin(platform, pageGeneration.get(), true);
+                }
+            } else if (CadenceMusicService.isLoggedIn(platform)) {
                 logout(platform);
+            } else if (platform == MusicPlatform.QQ && qqLoginChannel == QQLoginChannel.WECHAT) {
+                statusText = "当前 QQ 接口仅提供 Cookie 与内容请求，未提供微信 OAuth/二维码登录";
+                statusColor = 0xD5A44A;
             } else if (!requestRunning) {
                 startQrLogin(platform, pageGeneration.get());
             }
@@ -211,13 +330,13 @@ public class AccountManagerOverlay extends NCMPanel {
         primary.setBeforeRenderCallback(() -> {
             primary.setBounds(Math.max(1, dialog.getWidth() - 32), 30);
             primary.setPosition(16, dialog.getHeight() - 48);
-            primary.setColor(CadenceMusicService.isLoggedIn(platform)
+            primary.setColor(!addAccountByQr && CadenceMusicService.isLoggedIn(platform)
                     ? 0xA94A52
                     : (primary.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT_HOVER) : platform.getBrandColor()));
             primary.setTextColor(0xFFFFFF);
         });
 
-        if (platform == MusicPlatform.NETEASE && !CadenceMusicService.isLoggedIn(platform)) {
+        if (!addAccountByQr && platform == MusicPlatform.NETEASE && !CadenceMusicService.isLoggedIn(platform)) {
             RoundedButtonWidget cookieLogin = new RoundedButtonWidget("Cookie 登录", FontManager.pf12bold);
             dialog.addChild(cookieLogin);
             cookieLogin.setRadius(6);
@@ -235,7 +354,7 @@ public class AccountManagerOverlay extends NCMPanel {
                 cookieLogin.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             });
         }
-        if (platform == MusicPlatform.NETEASE && CadenceMusicService.isLoggedIn(platform)) {
+        if (!addAccountByQr && platform == MusicPlatform.NETEASE && CadenceMusicService.isLoggedIn(platform)) {
             RoundedButtonWidget switchAccount = new RoundedButtonWidget(
                     () -> "切换已保存账号（" + NeteaseAccountProfiles.load().size() + "）", FontManager.pf12bold);
             dialog.addChild(switchAccount);
@@ -254,9 +373,79 @@ public class AccountManagerOverlay extends NCMPanel {
                 switchAccount.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             });
         }
-        if (!CadenceMusicService.isLoggedIn(platform)) {
-            startQrLogin(platform, token);
+        if (platform == MusicPlatform.QQ && !CadenceMusicService.isLoggedIn(platform)) {
+            addQQLoginChannelSelector(dialog);
         }
+        // NetEase preserves the original direct QR acquisition behavior. QQ exposes an
+        // explicit channel selector so WeChat can never be treated as a QQ QR session.
+        if (platform == MusicPlatform.NETEASE && qrLoginVisible) {
+            startQrLogin(platform, token, addAccountByQr);
+        }
+    }
+
+    private void addQQLoginChannelSelector(Panel dialog) {
+        LabelWidget label = new LabelWidget("登录方式", FontManager.pf12bold);
+        dialog.addChild(label);
+        label.setClickable(false);
+        label.setBeforeRenderCallback(() -> {
+            label.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            label.setPosition(16, dialog.getHeight() - 113);
+        });
+
+        RoundedButtonWidget qq = new RoundedButtonWidget("扫码", FontManager.pf12bold);
+        RoundedButtonWidget wechat = new RoundedButtonWidget("登录", FontManager.pf12bold);
+        dialog.addChild(qq);
+        dialog.addChild(wechat);
+
+        LabelWidget qqIcon = new LabelWidget(FontelloIcons.QQ, FontManager.fontello16);
+        LabelWidget wechatIcon = new LabelWidget(FontelloIcons.WECHAT, FontManager.fontello16);
+        dialog.addChild(qqIcon);
+        dialog.addChild(wechatIcon);
+        qqIcon.setClickable(false);
+        wechatIcon.setClickable(false);
+
+        qq.setRadius(6);
+        wechat.setRadius(6);
+        qq.setOnClickCallback((x, y, button) -> {
+            if (button != 0 || requestRunning) return false;
+            qqLoginChannel = QQLoginChannel.QQ;
+            statusText = "已选择 QQ 扫码，点击下方按钮获取二维码";
+            statusColor = MusicPlatform.QQ.getBrandColor();
+            return true;
+        });
+        wechat.setOnClickCallback((x, y, button) -> {
+            if (button != 0 || requestRunning) return false;
+            qqLoginChannel = QQLoginChannel.WECHAT;
+            statusText = "微信授权接口尚未配置，不会误用 QQ 扫码";
+            statusColor = 0xD5A44A;
+            return true;
+        });
+
+        qq.setBeforeRenderCallback(() -> configureQQLoginChannelButton(qq, dialog, 16, QQLoginChannel.QQ));
+        wechat.setBeforeRenderCallback(() -> configureQQLoginChannelButton(wechat, dialog,
+                dialog.getWidth() * .5 + 2, QQLoginChannel.WECHAT));
+        qqIcon.setBeforeRenderCallback(() -> layoutLoginChannelIcon(qqIcon, qq, QQLoginChannel.QQ));
+        wechatIcon.setBeforeRenderCallback(() -> layoutLoginChannelIcon(wechatIcon, wechat, QQLoginChannel.WECHAT));
+    }
+
+    private void configureQQLoginChannelButton(RoundedButtonWidget button, Panel dialog, double x, QQLoginChannel channel) {
+        double width = Math.max(1, dialog.getWidth() * .5 - 18);
+        button.setBounds(width, 24);
+        button.setPosition(x, dialog.getHeight() - 91);
+        boolean selected = qqLoginChannel == channel;
+        button.setColor(selected
+                ? MusicPlatform.QQ.getBrandColor()
+                : (button.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)));
+        button.setTextColor(selected ? 0xFFFFFF : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+    }
+
+    private void layoutLoginChannelIcon(LabelWidget icon, RoundedButtonWidget button, QQLoginChannel channel) {
+        boolean selected = qqLoginChannel == channel;
+        icon.setColor(selected ? 0xFFFFFF : (channel == QQLoginChannel.QQ
+                ? MusicPlatform.QQ.getBrandColor() : 0x4CAF72));
+        icon.setPosition(button.getRelativeX() + button.getWidth() * .5 - 30,
+                button.getRelativeY() + button.getHeight() * .5 - icon.getHeight() * .5 + 1);
     }
 
     /** Cookie import validates against login-status before replacing the existing local session. */
@@ -269,22 +458,8 @@ public class AccountManagerOverlay extends NCMPanel {
         getChildren().clear();
         Panel dialog = createDialog(440, 260);
 
-        RoundedButtonWidget back = new RoundedButtonWidget("‹ 返回", FontManager.pf12bold);
-        dialog.addChild(back);
-        back.setRadius(5);
-        back.setOnClickCallback((x, y, button) -> {
-            if (button != 0) return false;
-            showDetail(MusicPlatform.NETEASE);
-            return true;
-        });
-        back.setBeforeRenderCallback(() -> {
-            back.setBounds(64, 22);
-            back.setPosition(14, 12);
-            back.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            back.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-        });
-
-        addTitle(dialog, "Cookie 登录", "仅本地保存；校验失败不会覆盖当前登录状态");
+        addBackButton(dialog, () -> showDetail(MusicPlatform.NETEASE));
+        addDetailTitle(dialog, "Cookie 登录", "仅本地保存；校验失败不会覆盖当前登录状态");
 
         RoundedRectWidget fieldSurface = new RoundedRectWidget();
         dialog.addChild(fieldSurface);
@@ -317,8 +492,9 @@ public class AccountManagerOverlay extends NCMPanel {
             status.setColor(statusColor);
             status.setMaxWidth(dialog.getWidth() - 32);
             status.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            status.setPosition(16, 128);
+            status.setPosition(16 + (hasConnectionFeedback() ? 17 : 0), 128);
         });
+        addConnectionFeedbackIcon(dialog, status);
 
         RoundedButtonWidget confirm = new RoundedButtonWidget(() -> requestRunning ? "正在校验…" : "验证并登录", FontManager.pf12bold);
         dialog.addChild(confirm);
@@ -349,6 +525,7 @@ public class AccountManagerOverlay extends NCMPanel {
                     NeteaseAccountProfiles.saveCurrent();
                     statusText = "Cookie 登录成功";
                     statusColor = 0x53C68C;
+                    DownloadDynamicIsland.showNetworkConnectionSuccess("网易云账号");
                     MultiThreadingUtil.runOnMainThread(() -> {
                         requestRunning = false;
                         if (isCurrent(MusicPlatform.NETEASE, token)) {
@@ -362,6 +539,7 @@ public class AccountManagerOverlay extends NCMPanel {
                         if (!isCurrent(MusicPlatform.NETEASE, token)) return;
                         statusText = "Cookie 登录失败：" + safeMessage(throwable);
                         statusColor = 0xF1767D;
+                        DownloadDynamicIsland.showNetworkConnectionFailure("网易云账号", safeMessage(throwable));
                     });
                 }
             });
@@ -389,24 +567,69 @@ public class AccountManagerOverlay extends NCMPanel {
         detailPlatform = MusicPlatform.NETEASE;
         requestRunning = false;
         getChildren().clear();
-        Panel dialog = createDialog(440, 300);
-        addTitle(dialog, "切换网易云账号", "已保存的 Cookie 仅保存在本地，可随时切换");
-        RoundedButtonWidget back = new RoundedButtonWidget("‹ 返回", FontManager.pf12bold);
-        dialog.addChild(back);
-        back.setBounds(64, 12, 64, 22);
-        back.setRadius(5);
-        back.setOnClickCallback((x, y, button) -> { if (button == 0) showDetail(MusicPlatform.NETEASE); return button == 0; });
+        Panel dialog = createDialog(440, 336);
+        addBackButton(dialog, () -> showDetail(MusicPlatform.NETEASE));
+        addDetailTitle(dialog, "已保存账号", "可切换本地账号，或主动添加新的网易云 Cookie");
+
+        RoundedButtonWidget scanAddAccount = new RoundedButtonWidget("扫码添加", FontManager.pf12bold);
+        dialog.addChild(scanAddAccount);
+        LabelWidget scanAccountIcon = new LabelWidget(FontelloIcons.ACCOUNT_ADD, FontManager.fontello16);
+        scanAddAccount.addChild(scanAccountIcon);
+        scanAccountIcon.setClickable(false);
+        scanAccountIcon.setBeforeRenderCallback(() -> {
+            scanAccountIcon.setColor(0xFFFFFF);
+            scanAccountIcon.setPosition(scanAddAccount.getWidth() * .5 - 42,
+                    scanAddAccount.getHeight() * .5 - scanAccountIcon.getHeight() * .5 + 1);
+        });
+        scanAddAccount.setRadius(7);
+        scanAddAccount.setOnClickCallback((x, y, button) -> {
+            if (button != 0 || requestRunning) return false;
+            showDetail(MusicPlatform.NETEASE, true);
+            return true;
+        });
+        scanAddAccount.setBeforeRenderCallback(() -> {
+            double width = Math.max(1, (dialog.getWidth() - 36) * .58);
+            scanAddAccount.setBounds(width, 28);
+            scanAddAccount.setPosition(16, dialog.getHeight() - 46);
+            scanAddAccount.setColor(scanAddAccount.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ACCENT));
+            scanAddAccount.setTextColor(0xFFFFFF);
+        });
+
+        RoundedButtonWidget cookieAddAccount = new RoundedButtonWidget("Cookie 添加", FontManager.pf12bold);
+        dialog.addChild(cookieAddAccount);
+        cookieAddAccount.setRadius(7);
+        cookieAddAccount.setOnClickCallback((x, y, button) -> {
+            if (button != 0 || requestRunning) return false;
+            showCookieLogin();
+            return true;
+        });
+        cookieAddAccount.setBeforeRenderCallback(() -> {
+            double scanWidth = Math.max(1, (dialog.getWidth() - 36) * .58);
+            cookieAddAccount.setBounds(Math.max(1, dialog.getWidth() - 20 - scanWidth), 28);
+            cookieAddAccount.setPosition(20 + scanWidth, dialog.getHeight() - 46);
+            cookieAddAccount.setColor(cookieAddAccount.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            cookieAddAccount.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+        });
         List<NeteaseAccountProfiles.Account> accounts = NeteaseAccountProfiles.load();
         if (accounts.isEmpty()) {
-            LabelWidget empty = new LabelWidget("暂无已保存账号，请先完成一次扫码或 Cookie 登录", FontManager.pf12);
+            LabelWidget empty = new LabelWidget("暂无已保存账号，可通过下方扫码或 Cookie 添加", FontManager.pf12);
             dialog.addChild(empty); empty.setClickable(false);
-            empty.setBeforeRenderCallback(() -> { empty.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT)); empty.setPosition(16, 88); });
+            empty.setBeforeRenderCallback(() -> {
+                empty.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+                empty.setMaxWidth(Math.max(1, dialog.getWidth() - 32));
+                empty.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+                empty.setPosition(16, 96);
+            });
             return;
         }
         int limit = Math.min(6, accounts.size());
         for (int i = 0; i < limit; i++) {
             final NeteaseAccountProfiles.Account account = accounts.get(i);
-            final double y = 66 + i * 32;
+            final double y = 74 + i * 31;
             RoundedButtonWidget item = new RoundedButtonWidget(account.getDisplayName() + (account.id.isEmpty() ? "" : "  ·  " + account.id), FontManager.pf12bold);
             dialog.addChild(item); item.setRadius(6);
             item.setBeforeRenderCallback(() -> { item.setBounds(Math.max(1, dialog.getWidth() - 32), 26); item.setPosition(16, y); item.setColor(item.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER) : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)); item.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT)); });
@@ -429,6 +652,7 @@ public class AccountManagerOverlay extends NCMPanel {
         }
     }
     private Panel createDialog(double preferredWidth, double preferredHeight) {
+        dialogPresentation = 0.0;
         RectWidget mask = new RectWidget();
         addChild(mask);
         mask.setColor(0x000000).setAlpha(.48f);
@@ -444,16 +668,19 @@ public class AccountManagerOverlay extends NCMPanel {
         addChild(dialog);
         dialog.setOnClickCallback((x, y, button) -> true);
         dialog.setBeforeRenderCallback(() -> {
+            dialogPresentation = Interpolations.interpolate(dialogPresentation, 1.0, .18f);
             double w = Math.max(1, Math.min(preferredWidth, getWidth() - 24));
             double h = Math.max(1, Math.min(preferredHeight, getHeight() - 24));
             dialog.setBounds(w, h);
-            dialog.center();
+            dialog.setAlpha((float) dialogPresentation);
+            dialog.setPosition(getWidth() * .5 - w * .5,
+                    getHeight() * .5 - h * .5 + (1.0 - dialogPresentation) * 10.0);
         });
 
         RoundedRectWidget bg = new RoundedRectWidget();
         dialog.addChild(bg);
         bg.setClickable(false);
-        bg.setRadius(10);
+        bg.setRadius(13);
         bg.setColor(NCMScreen.getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
         bg.setBeforeRenderCallback(() -> bg.setMargin(0));
         return dialog;
@@ -477,61 +704,156 @@ public class AccountManagerOverlay extends NCMPanel {
         });
     }
 
+    /** Shared detail-page header: icon back control never overlaps the title. */
+    private void addBackButton(Panel dialog, final Runnable action) {
+        RoundedButtonWidget back = new RoundedButtonWidget(FontelloIcons.BACK, FontManager.fontello18);
+        dialog.addChild(back);
+        back.setRadius(7);
+        back.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            action.run();
+            return true;
+        });
+        back.setBeforeRenderCallback(() -> {
+            back.setBounds(28, 24);
+            back.setPosition(16, 13);
+            back.setColor(back.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            back.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+        });
+    }
+
+    private void addDetailTitle(Panel dialog, String titleText, String subtitleText) {
+        LabelWidget title = new LabelWidget(titleText, FontManager.pf18bold);
+        dialog.addChild(title);
+        title.setClickable(false);
+        title.setBeforeRenderCallback(() -> {
+            title.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            title.setPosition(56, 14);
+        });
+
+        LabelWidget subtitle = new LabelWidget(subtitleText, FontManager.pf12);
+        dialog.addChild(subtitle);
+        subtitle.setClickable(false);
+        subtitle.setBeforeRenderCallback(() -> {
+            subtitle.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            subtitle.setMaxWidth(Math.max(1, dialog.getWidth() - 72));
+            subtitle.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            subtitle.setPosition(56, 39);
+        });
+    }
+
+    private boolean hasConnectionFeedback() {
+        return statusColor == 0x53C68C || statusColor == 0xF1767D;
+    }
+
+    private void addConnectionFeedbackIcon(Panel dialog, LabelWidget status) {
+        LabelWidget feedback = new LabelWidget(() -> statusColor == 0x53C68C ? FontelloIcons.LINK : FontelloIcons.UNLINK,
+                FontManager.fontello14);
+        dialog.addChild(feedback);
+        feedback.setClickable(false);
+        feedback.setBeforeRenderCallback(() -> {
+            boolean visible = hasConnectionFeedback();
+            feedback.setHidden(!visible);
+            feedback.setColor(statusColor == 0x53C68C ? 0x53C68C : 0xF1767D);
+            feedback.setPosition(status.getRelativeX() - 15, status.getRelativeY() + 1);
+        });
+    }
+
     private void startQrLogin(MusicPlatform platform, long token) {
+        startQrLogin(platform, token, false);
+    }
+
+    /**
+     * Keeps a QR session alive until it reaches a terminal provider state.  UI
+     * status changes are posted onto the Minecraft thread, so "waiting" and
+     * "scanned" never disappear while the polling worker is still active.
+     */
+    private void startQrLogin(MusicPlatform platform, long token, boolean addAccountByQr) {
         if (requestRunning || closing || detailPlatform != platform || token != pageGeneration.get()) return;
         requestRunning = true;
-        statusText = "正在获取登录二维码…";
-        statusColor = 0xAEB5C4;
+        publishQrStatus(platform, token, "正在获取登录二维码…", 0xAEB5C4);
 
         MultiThreadingUtil.runAsync(() -> {
             try {
                 QrCode qr = CadenceMusicService.createQrCode(platform);
                 if (!isCurrent(platform, token)) return;
                 loadQrTexture(platform, qr.getQrContent(), token);
-                statusText = "等待扫码";
+                publishQrStatus(platform, token, "等待扫码 · 正在持续检查登录状态…", 0xAEB5C4);
+                int transientErrors = 0;
 
                 while (isCurrent(platform, token)) {
-                    QrLoginState state = CadenceMusicService.checkQrCode(platform, qr);
+                        // The QR code has already initialized Cadence's login session.  Do not
+                        // reapply the old Netease cookie on every poll: doing so invalidates a
+                        // newly scanned account before Cadence can persist it.
+                        QrLoginState state = CadenceMusicService.checkQrCodeSession(platform, qr);
                     if (!isCurrent(platform, token)) return;
-                    if (state == QrLoginState.SCANNED) {
-                        statusText = "已扫码，请在手机上确认";
-                        statusColor = platform.getBrandColor();
+                    if (state == QrLoginState.WAITING) {
+                        transientErrors = 0;
+                        publishQrStatus(platform, token, "等待扫码 · 正在持续检查登录状态…", 0xAEB5C4);
+                    } else if (state == QrLoginState.SCANNED) {
+                        transientErrors = 0;
+                        publishQrStatus(platform, token, "已扫码，请在手机上确认…", platform.getBrandColor());
                     } else if (state == QrLoginState.CONFIRMED) {
-                        statusText = "登录成功";
-                        statusColor = 0x53C68C;
-                        requestRunning = false;
                         if (platform == MusicPlatform.NETEASE) {
-                            CloudMusic.loadNCM(OptionsUtil.getCookie());
+                            String confirmedCookie = OptionsUtil.getCookie();
+                            if (confirmedCookie == null || confirmedCookie.trim().isEmpty()) {
+                                throw new IllegalStateException("服务端未返回有效登录凭据");
+                            }
+                            CloudMusic.loadNCM(confirmedCookie);
+                            if (CloudMusic.profile == null) {
+                                throw new IllegalStateException("登录资料加载失败");
+                            }
                             NeteaseAccountProfiles.saveCurrent();
                         } else {
                             CadenceMusicService.refreshQQAccountData();
                         }
+                        requestRunning = false;
+                        publishQrStatus(platform, token, addAccountByQr ? "扫码成功，账号已添加" : "登录成功", 0x53C68C);
+                        DownloadDynamicIsland.showNetworkConnectionSuccess(platform.getDisplayName() + "账号");
                         MultiThreadingUtil.runOnMainThread(() -> {
-                            if (isCurrent(platform, token)) NCMScreen.getInstance().markDirty();
+                            if (!isCurrent(platform, token)) return;
+                            NCMScreen.getInstance().markDirty();
+                            if (addAccountByQr && platform == MusicPlatform.NETEASE) {
+                                showSavedNeteaseAccounts();
+                            }
                         });
                         return;
                     } else if (state == QrLoginState.EXPIRED) {
-                        statusText = "二维码已过期，点击刷新";
-                        statusColor = 0xF1767D;
+                        publishQrStatus(platform, token, "二维码已过期，点击重新获取二维码", 0xF1767D);
+                        DownloadDynamicIsland.showNetworkConnectionFailure(platform.getDisplayName() + "登录", "二维码已过期");
                         requestRunning = false;
                         return;
                     } else if (state == QrLoginState.ERROR) {
-                        statusText = "登录状态检查失败，点击重试";
-                        statusColor = 0xF1767D;
-                        requestRunning = false;
-                        return;
+                        transientErrors++;
+                        if (transientErrors >= 3) {
+                            publishQrStatus(platform, token, "登录状态检查失败，点击重新获取二维码", 0xF1767D);
+                            DownloadDynamicIsland.showNetworkConnectionFailure(platform.getDisplayName() + "登录", "状态检查失败");
+                            requestRunning = false;
+                            return;
+                        }
+                        publishQrStatus(platform, token, "检查连接波动，正在继续检查（" + transientErrors + "/3）…", 0xD5A44A);
                     }
-                    Thread.sleep(2500L);
+                    Thread.sleep(2000L);
                 }
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
             } catch (Throwable throwable) {
                 if (isCurrent(platform, token)) {
-                    statusText = "二维码获取失败：" + safeMessage(throwable);
-                    statusColor = 0xF1767D;
+                    publishQrStatus(platform, token, "二维码登录失败：" + safeMessage(throwable), 0xF1767D);
+                    DownloadDynamicIsland.showNetworkConnectionFailure(platform.getDisplayName() + "登录", safeMessage(throwable));
                     requestRunning = false;
                 }
             }
+        });
+    }
+
+    private void publishQrStatus(MusicPlatform platform, long token, String text, int color) {
+        MultiThreadingUtil.runOnMainThread(() -> {
+            if (!isCurrent(platform, token)) return;
+            statusText = text;
+            statusColor = color;
         });
     }
 

@@ -345,9 +345,19 @@ public class HomePanel extends NCMPanel {
     }
     private static class PlaylistWidget extends AbstractWidget<PlaylistWidget> {
 
+        /** Extra air between the two title lines in the NetEase home grid. */
+        private static final double NETEASE_TITLE_LINE_GAP = 6.0;
+        private static final double DEFAULT_TITLE_LINE_GAP = 4.0;
+        private static final double COVER_SIZE = 100.0;
+        private static final double COVER_HOVER_EXPANSION = 5.0;
+        private static final double COVER_TITLE_SPACING = 4.0;
+
         @Getter
         private final PlayList playList;
         private final Runnable customAction;
+        private final CFontRenderer titleFont;
+        private final double titleLineGap;
+        private final PlaylistTitleWidget titleWidget;
 
         double emphasizeAnim = 0;
 
@@ -361,10 +371,17 @@ public class HomePanel extends NCMPanel {
             this.playList = playList;
             this.customAction = customAction;
 
-            double size = 100;
-            double emphasizeAnimMax = 5;
+            double size = COVER_SIZE;
+            double emphasizeAnimMax = COVER_HOVER_EXPANSION;
+            this.titleFont = FontManager.pf14bold;
+            boolean neteaseTitle = playList.getPlatform() == MusicPlatform.NETEASE;
+            this.titleLineGap = neteaseTitle ? NETEASE_TITLE_LINE_GAP : DEFAULT_TITLE_LINE_GAP;
 
-            this.setBounds(size + emphasizeAnimMax, size + emphasizeAnimMax + 16);
+            // Glyph widths are generated lazily by CFontRenderer. Start with one
+            // loading line, then reflow after its glyph atlas has measured this title.
+            this.titleWidget = new PlaylistTitleWidget(new String[]{safePlaylistTitle(playList.getName())},
+                    titleFont, titleLineGap, size);
+            updateTitleLayout(false);
 
             RoundedImageWidget cover = new RoundedImageWidget(this::getCoverLocation, 0, 0, size, size);
 
@@ -390,16 +407,12 @@ public class HomePanel extends NCMPanel {
                                 .setBounds(cover.getRelativeX(), this.getWidth() * .5 - size * .5 - emphasizeAnim * .5, cover.getWidth(), cover.getHeight());
                     });
 
-            CFontRenderer pf14bold = FontManager.pf14bold;
-            LabelWidget lblName = new LabelWidget(() -> fitPlaylistTitle(pf14bold, playList.getName(), size), pf14bold);
-
+            PlaylistTitleWidget lblName = this.titleWidget;
             this.addChild(lblName);
-
-            lblName
-                    .setClickable(false)
-                    .setBeforeRenderCallback(() -> lblName
-                            .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
-                            .setPosition(cover.getRelativeX(), cover.getRelativeY() + cover.getHeight() + 4));
+            lblName.setClickable(false);
+            lblName.setBeforeRenderCallback(() -> lblName
+                    .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
+                    .setPosition(cover.getRelativeX(), cover.getRelativeY() + cover.getHeight() + COVER_TITLE_SPACING));
 
             this.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
 
@@ -416,21 +429,28 @@ public class HomePanel extends NCMPanel {
 
         @Override
         public void onRender(double mouseX, double mouseY) {
-
+            // Runs before this card's children. Once the first frame has loaded the
+            // title glyphs, remeasure and reserve every wrapped line before the grid
+            // lays out the following frame's rows.
+            updateTitleLayout(titleFont.areGlyphsLoaded(safePlaylistTitle(playList.getName())));
         }
 
-        private static String fitPlaylistTitle(CFontRenderer font, String title, double width) {
-            String safeTitle = title == null ? "" : title.trim();
-            String[] lines = font.fitWidth(safeTitle, width);
-            if (lines.length <= 2) {
-                return String.join("\n", lines);
+        private void updateTitleLayout(boolean canMeasureText) {
+            if (canMeasureText) {
+                titleWidget.setLines(wrapPlaylistTitle(titleFont, playList.getName(), COVER_SIZE));
             }
+            this.setBounds(COVER_SIZE + COVER_HOVER_EXPANSION,
+                    COVER_SIZE + COVER_HOVER_EXPANSION + COVER_TITLE_SPACING + titleWidget.getContentHeight());
+        }
 
-            StringBuilder remaining = new StringBuilder(lines[1]);
-            for (int i = 2; i < lines.length; i++) {
-                remaining.append(lines[i]);
-            }
-            return lines[0] + "\n" + font.trim(remaining.toString(), width);
+        private static String safePlaylistTitle(String title) {
+            String safe = title == null ? "" : title.trim();
+            return safe.isEmpty() ? "未命名歌单" : safe;
+        }
+
+        private static String[] wrapPlaylistTitle(CFontRenderer font, String title, double width) {
+            String[] lines = font.fitWidth(safePlaylistTitle(title), width);
+            return lines == null || lines.length == 0 ? new String[]{""} : lines;
         }
         private void loadCover() {
 
@@ -453,6 +473,56 @@ public class HomePanel extends NCMPanel {
             return this.playList.getCoverLocation();
         }
 
+    }
+
+    /**
+     * Draws each playlist-title line explicitly so NetEase cards can use a
+     * slightly roomier line advance without changing the global font renderer.
+     */
+    private static final class PlaylistTitleWidget extends AbstractWidget<PlaylistTitleWidget> {
+        private String[] lines;
+        private final CFontRenderer font;
+        private final double lineGap;
+        private final double maxWidth;
+
+        private PlaylistTitleWidget(String[] lines, CFontRenderer font, double lineGap, double maxWidth) {
+            this.font = font;
+            this.lineGap = lineGap;
+            this.maxWidth = Math.max(1.0, maxWidth);
+            setLines(lines);
+        }
+
+        private void setLines(String[] lines) {
+            this.lines = lines == null || lines.length == 0 ? new String[]{""} : lines.clone();
+            setBounds(maxWidth, getContentHeight());
+        }
+
+        private double getContentHeight() {
+            return heightOf(font, lines, lineGap);
+        }
+
+        @Override
+        public void onRender(double mouseX, double mouseY) {
+            double advance = lineAdvance(font, lineGap);
+            for (int index = 0; index < lines.length; index++) {
+                font.drawString(lines[index], getX(), getY() + advance * index, getHexColor());
+            }
+            // Keep the text viewport exactly aligned with the cover footprint. The
+            // explicit width stops a caption from changing horizontal grid spacing.
+            setBounds(maxWidth, getContentHeight());
+        }
+
+        private static double heightOf(CFontRenderer font, String[] lines, double lineGap) {
+            int count = Math.max(1, lines == null ? 0 : lines.length);
+            return lineAdvance(font, lineGap) * count;
+        }
+
+        private static double lineAdvance(CFontRenderer font, double lineGap) {
+            // Before its first glyph upload CFontRenderer reports a negative height.
+            // The configured font size is a safe reserve until measurement is ready.
+            double glyphHeight = Math.max(font.sizePx + 2.0, font.getFontHeight());
+            return glyphHeight + Math.max(0.0, lineGap);
+        }
     }
 
 }

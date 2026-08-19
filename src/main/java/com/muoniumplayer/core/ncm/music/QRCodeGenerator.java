@@ -19,7 +19,7 @@ import java.util.Hashtable;
 
 public class QRCodeGenerator {
 
-    public static final Location qrCode = Location.of("tritium/textures/QRCode.png");
+    public static final Location qrCode = Location.of("muonium/textures/QRCode.png");
 
     @SneakyThrows
     public static void generateAndLoadTexture(String address) {

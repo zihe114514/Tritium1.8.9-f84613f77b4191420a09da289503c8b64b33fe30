@@ -32,7 +32,7 @@ plugins {
 */
 version = "1.0.0"
 // Maven/Gradle artifact identity. Runtime compatibility remains anchored to
-// the legacy Forge mod id `deuteriummusic` in MuoniumPlayerMod.
+// the MuoniumPlayer Forge mod id is declared in MuoniumPlayerMod.
 group = "com.muoniumplayer"
 archivesBaseName = "MuoniumPlayer"
 

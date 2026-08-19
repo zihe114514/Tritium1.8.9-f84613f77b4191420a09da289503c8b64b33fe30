@@ -36,6 +36,12 @@ public class FontManager extends AbstractManager {
     public static CFontRenderer pf12, pf14, pf18, pf20, pf25, pf32;
     public static CFontRenderer icon30;
     public static CFontRenderer music14, music18, music40;
+    /** Fontello icon font bundled with the player UI. */
+    public static CFontRenderer fontello14, fontello16, fontello18, fontello22;
+    /** Provider-brand Fontello glyphs use a separate font to avoid private-use code collisions. */
+    public static CFontRenderer musicBrand16, musicBrand18;
+    /** QQ Music brand icon font; deliberately separate from Fontello login glyphs. */
+    public static CFontRenderer qqMusicIcon16;
 
     public static List<CFontRenderer> getAllFontRenderers() {
 
@@ -92,24 +98,39 @@ public class FontManager extends AbstractManager {
         music14 = create(14, "music");
         music18 = create(18, "music");
         music40 = create(40, "music");
+
+        fontello14 = create(14, "fontello");
+        fontello16 = create(16, "fontello");
+        fontello18 = create(18, "fontello");
+        fontello22 = create(22, "fontello");
+
+        musicBrand16 = create(16, "music-brand-icons");
+        musicBrand18 = create(18, "music-brand-icons");
+        qqMusicIcon16 = create(16, "qq-music-icons");
     }
 
-    @SneakyThrows
+    /**
+     * Font renderers are constructed synchronously in {@link #loadFonts()}; none
+     * are initialized by a later worker. The former endless polling loop therefore
+     * could never repair a missing assignment/resource and froze Forge's loading
+     * screen while spamming the log. Validate once and continue startup instead.
+     */
     public static void waitUntilAllLoaded() {
-
-        while (true) {
-            List<CFontRenderer> list = getAllFontRenderers();
-
-            Thread.sleep(100);
-
-            long count = list.stream().filter(Objects::isNull).count();
-
-            if (count == 0)
-                break;
-
-            System.out.println("Waiting for " + count + " font renderers to be initialized.");
+        List<String> missing = Arrays.stream(FontManager.class.getDeclaredFields())
+                .filter(field -> field.getType() == CFontRenderer.class)
+                .filter(field -> {
+                    try {
+                        return field.get(null) == null;
+                    } catch (IllegalAccessException ignored) {
+                        return true;
+                    }
+                })
+                .map(field -> field.getName())
+                .collect(Collectors.toList());
+        if (!missing.isEmpty()) {
+            System.err.println("[MuoniumPlayer] Font initialization incomplete: " + missing
+                    + ". Continuing without a blocking retry loop.");
         }
-
     }
 
     @Override
@@ -151,8 +172,8 @@ public class FontManager extends AbstractManager {
     public static CFontRenderer create(float size, InputStream fontStream) {
         Font font = Font.createFont(Font.TRUETYPE_FONT, fontStream);
 
-        Font fallback = readFont("/tritium/fonts/pf_normal.ttf");
-        FontKerning fallbackKerning = readFontKerning("/tritium/fonts/pf_normal.ttf");
+        Font fallback = readFont("/muonium/fonts/pf_normal.ttf");
+        FontKerning fallbackKerning = readFontKerning("/muonium/fonts/pf_normal.ttf");
         return new CFontRenderer(font, size * 0.5f, fallbackKerning, fallback);
     }
 
@@ -161,38 +182,38 @@ public class FontManager extends AbstractManager {
         Font font = Font.createFont(Font.TRUETYPE_FONT, fontStream);
         Font fallBack = Font.createFont(Font.TRUETYPE_FONT, fallBackStream);
 
-        FontKerning fontKerning = readFontKerning("/tritium/fonts/pf_normal.ttf");
+        FontKerning fontKerning = readFontKerning("/muonium/fonts/pf_normal.ttf");
         return new CFontRenderer(font, size * 0.5f, fontKerning, fallBack);
     }
 
     @SneakyThrows
     public static CFontRenderer create(float size, String name) {
 
-        Font font = readFont("/tritium/fonts/" + name + ".ttf");
-        FontKerning kerning = readFontKerning("/tritium/fonts/" + name + ".ttf");
+        Font font = readFont("/muonium/fonts/" + name + ".ttf");
+        FontKerning kerning = readFontKerning("/muonium/fonts/" + name + ".ttf");
 
         // 中文字体默认使用 SF Pro 作为主字体
         // 因为它们的英文字母太他妈难看了
         // 丑陋不堪，，
         if ("googlesans".equals(name) || "product".equals(name) || "tahoma".equals(name)) {
-            Font fallback = readFont("/tritium/fonts/pf_normal.ttf");
-            FontKerning fallbackKerning = readFontKerning("/tritium/fonts/pf_normal.ttf");
+            Font fallback = readFont("/muonium/fonts/pf_normal.ttf");
+            FontKerning fallbackKerning = readFontKerning("/muonium/fonts/pf_normal.ttf");
             return new CFontRenderer(font, size * 0.5f, kerning, fallback);
         } else if ("googlesansbold".equals(name)) {
-            Font fallback = readFont("/tritium/fonts/pf_middleblack.ttf");
-            FontKerning fallbackKerning = readFontKerning("/tritium/fonts/pf_middleblack.ttf");
+            Font fallback = readFont("/muonium/fonts/pf_middleblack.ttf");
+            FontKerning fallbackKerning = readFontKerning("/muonium/fonts/pf_middleblack.ttf");
             return new CFontRenderer(font, size * 0.5f, kerning, fallback);
         } else if ("pf_normal".equals(name)) {
             String mainPath = USE_LEGACY_JAVA8_TTF_FONTS
-                    ? "/tritium/fonts/arial.ttf"
-                    : "/tritium/fonts/sfregular.otf";
+                    ? "/muonium/fonts/arial.ttf"
+                    : "/muonium/fonts/sfregular.otf";
             Font main = readFont(mainPath);
             FontKerning mainKerning = readFontKerning(mainPath);
             return new CFontRenderer(main, size * 0.5f, mainKerning, font);
         } else if ("pf_middleblack".equals(name)) {
             String mainPath = USE_LEGACY_JAVA8_TTF_FONTS
-                    ? "/tritium/fonts/arialBold.ttf"
-                    : "/tritium/fonts/sfbold.otf";
+                    ? "/muonium/fonts/arialBold.ttf"
+                    : "/muonium/fonts/sfbold.otf";
             Font main = readFont(mainPath);
             FontKerning mainKerning = readFontKerning(mainPath);
             return new CFontRenderer(main, size * 0.5f, mainKerning, font);

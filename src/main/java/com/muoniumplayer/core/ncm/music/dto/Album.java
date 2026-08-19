@@ -24,7 +24,7 @@ public class Album {
     private final List<String> translatedName;
 
     public final Location getCoverLocation() {
-        return Location.of("tritium/textures/album/" + this.id + "/cover.png");
+        return Location.of("muonium/textures/album/" + this.id + "/cover.png");
     }
 
     @Override

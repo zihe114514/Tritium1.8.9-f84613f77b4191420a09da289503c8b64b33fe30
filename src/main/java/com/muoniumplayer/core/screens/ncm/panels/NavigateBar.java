@@ -14,8 +14,11 @@ import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.rendering.FontelloIcons;
+import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
+import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.rendering.texture.Textures;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
@@ -26,7 +29,6 @@ import com.muoniumplayer.core.screens.ncm.NCMPanel;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.screens.ncm.NCMTheme;
-import com.muoniumplayer.core.screens.ncm.PlayerIconAssets;
 import com.muoniumplayer.core.utils.KeyboardUtils;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.json.JsonUtils;
@@ -253,13 +255,6 @@ public class NavigateBar extends NCMPanel {
 
         this.playlistPanel.setSpacing(4);
 
-        LabelWidget lbl = new LabelWidget("MuoniumPlayer", FontManager.pf14bold);
-        lbl.setBeforeRenderCallback(() -> {
-            lbl.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            lbl.setPosition(6, lbl.getRelativeY());
-        });
-
-        this.playlistPanel.addChild(lbl);
 
         {
             PlaylistItem item = new PlaylistItem("A", () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT), () -> "主页", () -> NCMScreen.getInstance().setCurrentPanel(new HomePanel()));
@@ -273,8 +268,8 @@ public class NavigateBar extends NCMPanel {
 
         boolean qqMode = CadenceMusicService.getCurrentPlatform() == MusicPlatform.QQ;
         boolean neteaseMode = !qqMode;
-        if (neteaseMode) {
-            LabelWidget lblDiscovery = new LabelWidget("网易云发现", FontManager.pf14bold);
+        if (neteaseMode || qqMode) {
+            LabelWidget lblDiscovery = new LabelWidget(qqMode ? "QQ 音乐发现" : "网易云发现", FontManager.pf14bold);
             lblDiscovery.setClickable(false);
             lblDiscovery.setBeforeRenderCallback(() -> {
                 lblDiscovery.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
@@ -282,17 +277,22 @@ public class NavigateBar extends NCMPanel {
             });
             this.playlistPanel.addChild(lblDiscovery);
 
-            this.playlistPanel.addChild(new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
-                    () -> "热搜", () -> NCMScreen.getInstance().setCurrentPanel(
-                    new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.HOT_SEARCH))));
-            this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+            this.playlistPanel.addChild(new PlaylistItem(FontelloIcons.LEADERBOARD, FontManager.fontello16,
+                    () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
                     () -> "排行榜", () -> NCMScreen.getInstance().setCurrentPanel(
-                    new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.TOP_LISTS))));
-            this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
-                    () -> "最近播放", () -> NCMScreen.getInstance().setCurrentPanel(
-                    new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.RECENT_SONGS))));
-            this.playlistPanel.addChild(new PlaylistItem(PlayerIconAssets.PERSONAL_FM, () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
-                    () -> "私人 FM", () -> NCMScreen.getInstance().setCurrentPanel(new PersonalFmPanel())));
+                    new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.TOP_LISTS,
+                            qqMode ? MusicPlatform.QQ : MusicPlatform.NETEASE))));
+            if (neteaseMode) {
+                this.playlistPanel.addChild(new PlaylistItem("K", () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                        () -> "热搜", () -> NCMScreen.getInstance().setCurrentPanel(
+                        new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.HOT_SEARCH))));
+                this.playlistPanel.addChild(new PlaylistItem("D", () -> NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT),
+                        () -> "最近播放", () -> NCMScreen.getInstance().setCurrentPanel(
+                        new NeteaseDiscoveryPanel(NeteaseDiscoveryPanel.Page.RECENT_SONGS))));
+                this.playlistPanel.addChild(new PlaylistItem(MusicBrandIcons.PERSONAL_FM, FontManager.musicBrand16,
+                        () -> NCMScreen.getColor(NCMScreen.ColorType.ACCENT),
+                        () -> "私人 FM", () -> NCMScreen.getInstance().setCurrentPanel(new PersonalFmPanel())));
+            }
         }
         LabelWidget lblPlaylists = new LabelWidget("我的歌单", FontManager.pf14bold);
         lblPlaylists.setBeforeRenderCallback(() -> {
@@ -553,7 +553,7 @@ public class NavigateBar extends NCMPanel {
     private Location getUserAvatarLocation() {
         if (CadenceMusicService.getCurrentPlatform() == MusicPlatform.QQ) {
             return CadenceMusicService.getQQAvatarUrl().isEmpty()
-                    ? null : Location.of("tritium/textures/account/qq_avatar.png");
+                    ? null : Location.of("muonium/textures/account/qq_avatar.png");
         }
         return CloudMusic.profile == null ? null : CloudMusic.profile.getAvatarLocation();
     }
@@ -581,6 +581,7 @@ public class NavigateBar extends NCMPanel {
     private final class SourceButton extends Panel {
         private final MusicPlatform platform;
         private final RoundedRectWidget background = new RoundedRectWidget();
+        private final LabelWidget platformIcon;
         private final LabelWidget label;
 
         private SourceButton(MusicPlatform platform) {
@@ -599,18 +600,31 @@ public class NavigateBar extends NCMPanel {
                 this.background.setAlpha(selected ? .96f : (this.isHovering() ? .45f : 0f));
             });
 
+            // QQ Music uses its own provider-brand glyph. Do not reuse the QQ login icon.
+            this.platformIcon = new LabelWidget(this.platform == MusicPlatform.QQ ? MusicBrandIcons.QQ_MUSIC : MusicBrandIcons.NETEASE_CLOUD_MUSIC,
+                    this.platform == MusicPlatform.QQ ? FontManager.qqMusicIcon16 : FontManager.musicBrand16);
+            this.platformIcon.setClickable(false);
+            this.addChild(this.platformIcon);
             this.label = new LabelWidget(
-                    () -> NavigateBar.this.getWidth() < 112
-                            ? (this.platform == MusicPlatform.QQ ? "Q" : "N")
-                            : (this.platform == MusicPlatform.QQ ? "Q  QQ音乐" : "N  网易云"),
+                    () -> NavigateBar.this.getWidth() < 112 ? ""
+                            : (this.platform == MusicPlatform.QQ ? "QQ音乐" : "网易云音乐"),
                     FontManager.pf12bold);
             this.label.setClickable(false);
             this.addChild(this.label);
+            this.platformIcon.setBeforeRenderCallback(() -> {
+                boolean compact = NavigateBar.this.getWidth() < 112;
+                double groupWidth = this.platformIcon.getWidth() + (compact ? 0 : 4 + this.label.getWidth());
+                this.platformIcon.setColor(CadenceMusicService.getCurrentPlatform() == this.platform
+                        ? 0xFFFFFF : this.platform.getBrandColor());
+                this.platformIcon.setPosition(this.getWidth() * .5 - groupWidth * .5,
+                        this.getHeight() * .5 - this.platformIcon.getHeight() * .5 + 1);
+            });
             this.label.setBeforeRenderCallback(() -> {
-                this.label.center();
                 this.label.setColor(CadenceMusicService.getCurrentPlatform() == this.platform
                         ? 0xFFFFFF
                         : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+                this.label.setPosition(this.platformIcon.getRelativeX() + this.platformIcon.getWidth() + 4,
+                        this.getHeight() * .5 - this.label.getHeight() * .5 + 1);
             });
         }
     }
@@ -828,14 +842,20 @@ public class NavigateBar extends NCMPanel {
         private PlayList playlist;
 
         public PlaylistItem(String icon, Supplier<Integer> iconColorSupplier, Supplier<String> label, Runnable onClick) {
-            this(icon, null, iconColorSupplier, label, onClick);
+            this(icon, FontManager.music18, null, iconColorSupplier, label, onClick);
+        }
+
+        public PlaylistItem(String icon, CFontRenderer iconFont, Supplier<Integer> iconColorSupplier,
+                            Supplier<String> label, Runnable onClick) {
+            this(icon, iconFont, null, iconColorSupplier, label, onClick);
         }
 
         public PlaylistItem(Location iconLocation, Supplier<Integer> iconColorSupplier, Supplier<String> label, Runnable onClick) {
-            this(null, iconLocation, iconColorSupplier, label, onClick);
+            this(null, FontManager.music18, iconLocation, iconColorSupplier, label, onClick);
         }
 
-        private PlaylistItem(String icon, Location iconLocation, Supplier<Integer> iconColorSupplier, Supplier<String> label, Runnable onClick) {
+        private PlaylistItem(String icon, CFontRenderer iconFont, Location iconLocation,
+                             Supplier<Integer> iconColorSupplier, Supplier<String> label, Runnable onClick) {
             this.icon = icon;
             this.iconLocation = iconLocation;
             this.iconColorSupplier = iconColorSupplier;
@@ -862,7 +882,7 @@ public class NavigateBar extends NCMPanel {
 
             AbstractWidget<?> iconWidget;
             if (iconLocation == null) {
-                LabelWidget glyphIcon = new LabelWidget(icon, FontManager.music18);
+                LabelWidget glyphIcon = new LabelWidget(icon, iconFont == null ? FontManager.music18 : iconFont);
                 this.addChild(glyphIcon);
                 glyphIcon.setBeforeRenderCallback(() -> {
                     glyphIcon.setColor(iconColorSupplier.get());

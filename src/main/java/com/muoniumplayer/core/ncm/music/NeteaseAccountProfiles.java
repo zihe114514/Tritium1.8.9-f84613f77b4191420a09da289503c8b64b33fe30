@@ -5,6 +5,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.muoniumplayer.core.ncm.OptionsUtil;
+import com.muoniumplayer.core.settings.ConfigPaths;
 import com.muoniumplayer.core.settings.JsonConfigStorage;
 
 import java.io.File;
@@ -15,7 +16,7 @@ import java.util.List;
 /** Local, cookie-based NetEase account switcher. Cookies never leave the existing NetEase request path. */
 public final class NeteaseAccountProfiles {
 
-    private static final File FILE = new File("config/tritium/netease_accounts.json");
+    private static final File FILE = ConfigPaths.NETEASE_ACCOUNTS;
     private static final Gson GSON = new Gson();
 
     private NeteaseAccountProfiles() { }

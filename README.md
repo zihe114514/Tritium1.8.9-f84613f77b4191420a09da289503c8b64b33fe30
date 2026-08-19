@@ -25,8 +25,8 @@ build/libs/MuoniumPlayer-1.0.0-dev.jar
 ## Development notes
 
 - The published project name is **MuoniumPlayer**.
-- The Forge Mod ID remains `deuteriummusic` for existing installations and configuration compatibility.
-- Historical configuration file names and the `tritium` resource namespace are intentionally retained so users do not lose settings or bundled assets after upgrading.
+- The Forge Mod ID is `muonium`. Legacy configuration files are migrated automatically on first startup.
+- Resources and configuration paths use the `muonium` / `muoniumplayer` namespace; legacy names are migrated automatically.
 - Build output, game runtime data, IDE metadata, crash dumps, credentials, downloaded music, and local archival snapshots are excluded from Git.
 
 ## License notices

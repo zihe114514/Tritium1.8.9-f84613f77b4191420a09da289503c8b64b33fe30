@@ -5,7 +5,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
+import com.muoniumplayer.core.ncm.music.CadenceMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
@@ -46,12 +48,22 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
     }
 
     private final Page page;
+    private final MusicPlatform platform;
     private volatile List<Entry> entries = Collections.emptyList();
     private volatile boolean loading;
     private volatile String status = "";
 
     public NeteaseDiscoveryPanel(Page page) {
+        this(page, MusicPlatform.NETEASE);
+    }
+
+    /**
+     * Shared discovery surface: QQ routes use the same list, typography and
+     * playback pipeline as the existing NetEase page instead of duplicating UI.
+     */
+    public NeteaseDiscoveryPanel(Page page, MusicPlatform platform) {
         this.page = page == null ? Page.HOT_SEARCH : page;
+        this.platform = platform == null ? MusicPlatform.NETEASE : platform;
     }
 
     @Override
@@ -64,7 +76,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         getChildren().clear();
         final double margin = 12.0;
 
-        LabelWidget title = new LabelWidget(() -> page.title, FontManager.pf25bold);
+        LabelWidget title = new LabelWidget(() -> pageTitle(), FontManager.pf25bold);
         addChild(title);
         title.setClickable(false);
         title.setBeforeRenderCallback(() -> title
@@ -73,7 +85,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
                 .setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH)
                 .setPosition(margin, margin));
 
-        LabelWidget subtitle = new LabelWidget(() -> status.isEmpty() ? page.subtitle : status, FontManager.pf12);
+        LabelWidget subtitle = new LabelWidget(() -> status.isEmpty() ? pageSubtitle() : status, FontManager.pf12);
         addChild(subtitle);
         subtitle.setClickable(false);
         subtitle.setBeforeRenderCallback(() -> subtitle
@@ -143,6 +155,10 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         status = "正在获取…";
         MultiThreadingUtil.runAsync(() -> {
             try {
+                if (platform == MusicPlatform.QQ) {
+                    loadQQPage();
+                    return;
+                }
                 if (page == Page.TOP_LISTS) {
                     CardPage cards = topListCards();
                     MultiThreadingUtil.runOnMainThread(() -> {
@@ -180,7 +196,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
                             status = "暂无最近播放记录或登录状态已失效";
                             renderLayout();
                         } else {
-                            openSongs(page.title, songs);
+                            openSongs(page.title, songs, false);
                         }
                     });
                     return;
@@ -198,6 +214,43 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
                 MultiThreadingUtil.runOnMainThread(this::renderLayout);
             }
         });
+    }
+
+    private void loadQQPage() {
+        if (page != Page.TOP_LISTS) {
+            entries = Collections.emptyList();
+            status = "该 QQ 功能暂未由当前数据源提供";
+            loading = false;
+            MultiThreadingUtil.runOnMainThread(this::renderLayout);
+            return;
+        }
+
+        final List<Music> tracks = CadenceMusicService.getQQTopTracks(100);
+        List<Entry> loaded = new ArrayList<>();
+        for (int index = 0; index < tracks.size(); index++) {
+            final int playIndex = index;
+            final Music track = tracks.get(index);
+            if (track == null) continue;
+            String artist = track.getArtistsName() == null ? "" : track.getArtistsName();
+            String album = track.getAlbum() == null || track.getAlbum().getName() == null ? "" : track.getAlbum().getName();
+            String subtitle = artist + (artist.isEmpty() || album.isEmpty() ? "" : " · ") + album;
+            loaded.add(new Entry((index + 1) + ". " + track.getName(), subtitle,
+                    () -> CloudMusic.play(tracks, playIndex)));
+        }
+        entries = loaded;
+        status = loaded.isEmpty() ? "QQ 音乐排行榜暂无内容" : "QQ 音乐巅峰榜 · " + loaded.size() + " 首";
+        loading = false;
+        MultiThreadingUtil.runOnMainThread(this::renderLayout);
+    }
+
+    private String pageTitle() {
+        if (platform == MusicPlatform.QQ && page == Page.TOP_LISTS) return "QQ 音乐排行榜";
+        return page.title;
+    }
+
+    private String pageSubtitle() {
+        if (platform == MusicPlatform.QQ && page == Page.TOP_LISTS) return "QQ 音乐巅峰榜 · 复用播放器现有列表与播放样式";
+        return page.subtitle;
     }
 
     private List<Entry> requestEntries() {
@@ -315,6 +368,10 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
     }
 
     public static void openSongs(String title, List<Music> songs) {
+        openSongs(title, songs, true);
+    }
+
+    private static void openSongs(String title, List<Music> songs, boolean showBackButton) {
         CloudMusic.currentPlaylistContext = null;
         PlayList playlist = JsonUtils.parse("{}", PlayList.class);
         playlist.setSearchMode(true);
@@ -323,7 +380,7 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
         playlist.setMusicsLoaded(true);
         // setCurrentPanel() invokes onInit() exactly once. Calling it again here
         // duplicated every row and made the recent-play page render overlapping text.
-        NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playlist));
+        NCMScreen.getInstance().setCurrentPanel(new PlaylistPanel(playlist, showBackButton));
     }
 
 

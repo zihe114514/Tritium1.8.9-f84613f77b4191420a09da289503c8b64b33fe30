@@ -202,6 +202,23 @@ public final class CadenceMusicService {
 
     public static QrLoginState checkQrCode(MusicPlatform platform, QrCode qrCode) {
         initialize(OptionsUtil.getCookie());
+        return checkQrCodeSession(platform, qrCode);
+    }
+
+    /**
+     * Checks the state of an already-created QR session without reinitializing the
+     * Netease cookie.  Reinitializing during every polling pass overwrote the
+     * temporary QR-login session with the previously active account's cookie,
+     * which prevented a newly scanned Netease account from being persisted.
+     *
+     * <p>The QR session is initialized exactly once by {@link #createQrCode(MusicPlatform)}.
+     * QQ callers retain the same Cadence state and are deliberately untouched.</p>
+     */
+    public static QrLoginState checkQrCodeSession(MusicPlatform platform, QrCode qrCode) {
+        if (platform == null || qrCode == null) {
+            return QrLoginState.ERROR;
+        }
+        initializeIfNeeded();
         QrLoginState state = SERVICE.checkQrCode(platform.toCadenceSource(), qrCode);
         if (state == QrLoginState.CONFIRMED) {
             persistLogin(platform);

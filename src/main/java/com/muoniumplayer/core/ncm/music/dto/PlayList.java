@@ -66,7 +66,7 @@ public class PlayList {
 
     public final Location getCoverLocation() {
         String source = getPlatform().name().toLowerCase(java.util.Locale.ROOT);
-        return Location.of("tritium/textures/playlist/" + source + "/" + this.id + "/cover.png");
+        return Location.of("muonium/textures/playlist/" + source + "/" + this.id + "/cover.png");
     }
 
     public MusicPlatform getPlatform() {

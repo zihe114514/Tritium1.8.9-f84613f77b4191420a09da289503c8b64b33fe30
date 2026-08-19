@@ -22,6 +22,7 @@ import com.muoniumplayer.core.screens.ncm.LyricLine;
 import com.muoniumplayer.core.screens.ncm.LyricParser;
 import com.muoniumplayer.core.screens.ncm.MusicLyricsPanel;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
 import com.muoniumplayer.core.utils.Tuple;
 import com.muoniumplayer.core.utils.json.JsonUtils;
@@ -406,16 +407,11 @@ public class CloudMusic implements SharedConstants {
 
     /**
      * Returns the persisted player volume normalized to {@code 0.0..1.0}.
-     * The HUD module owns the stored Value so new AudioPlayer instances pick up
-     * exactly the same level after a track switch.
+     * The mod-owned HUD configuration is the source of truth, so the value
+     * survives a complete Minecraft restart as well as a track switch.
      */
     public static float getVolume() {
-        try {
-            return clampVolume(MuoniumPlayerExtension.getInstance().musicInfo.volume.getValue().floatValue());
-        } catch (RuntimeException ignored) {
-            AudioPlayer activePlayer = player;
-            return activePlayer == null ? 0.10f : clampVolume(activePlayer.getVolume());
-        }
+        return clampVolume(HudConfig.playerVolume);
     }
 
     /**
@@ -431,7 +427,14 @@ public class CloudMusic implements SharedConstants {
             return false;
         }
 
+        // Persist independently of the host value manager. Its value store is not
+        // guaranteed to be written when Minecraft closes, which previously reset
+        // the slider to 10% at the next launch.
+        HudConfig.playerVolume = safeVolume;
+        HudConfig.save();
         try {
+            // Keep the existing hidden OpenAPI setting synchronized for compatibility
+            // with the HUD module and any legacy integration that reads it directly.
             MuoniumPlayerExtension.getInstance().musicInfo.volume.setValue((double) safeVolume);
         } catch (RuntimeException ignored) {
             // The active player still receives the new value below if the module is not ready.
@@ -1147,7 +1150,7 @@ public class CloudMusic implements SharedConstants {
             AudioPlayer player = CloudMusic.player;
             if (player == null) {
                 player = new AudioPlayer(musicFile);
-                player.setVolume(MuoniumPlayerExtension.getInstance().musicInfo.volume.getValue().floatValue());
+                player.setVolume(CloudMusic.getVolume());
                 CloudMusic.player = player;
             } else {
                 player.setAudio(musicFile);

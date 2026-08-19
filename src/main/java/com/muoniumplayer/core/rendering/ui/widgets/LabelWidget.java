@@ -57,25 +57,30 @@ public class LabelWidget extends AbstractWidget<LabelWidget> {
     @Override
     public void onRender(double mouseX, double mouseY) {
         boolean widthNotLimited = this.getMaxWidth() == -1;
-
         String lbl = this.getLabel();
+        CFontRenderer activeFont = this.font != null ? this.font : FontManager.pf18;
 
-        if (widthNotLimited)
-            font.drawString(lbl, this.getX(), this.getY(), this.getHexColor());
-        else {
-
-            if (this.widthLimitType == WidthLimitType.SCROLL) {
-                this.scrollText.getValue().render(font, lbl, this.getX(), this.getY(), this.getMaxWidth(), this.getHexColor());
-            } else {
-                font.drawString(font.trim(lbl, this.getMaxWidth()), this.getX(), this.getY(), this.getHexColor());
-            }
-
+        // Labels are used extensively with asynchronous/state-backed Suppliers.
+        // A provider may temporarily return null while a page is being rebuilt, and
+        // a renderer can also be unavailable during the very first initialization
+        // frame. Never let either transient state abort the whole NCMScreen tree.
+        if (activeFont == null) {
+            this.setBounds(0, 0);
+            return;
         }
 
-        double width;
-        double stringWidth = font.getStringWidthD(lbl);
-        width = widthNotLimited ? stringWidth : Math.min(this.getMaxWidth(), stringWidth);
-        this.setBounds(width, font.getStringHeight(lbl));
+        if (widthNotLimited) {
+            activeFont.drawString(lbl, this.getX(), this.getY(), this.getHexColor());
+        } else if (this.widthLimitType == WidthLimitType.SCROLL) {
+            this.scrollText.getValue().render(activeFont, lbl, this.getX(), this.getY(),
+                    this.getMaxWidth(), this.getHexColor());
+        } else {
+            activeFont.drawString(activeFont.trim(lbl, this.getMaxWidth()), this.getX(), this.getY(), this.getHexColor());
+        }
+
+        double stringWidth = activeFont.getStringWidthD(lbl);
+        double width = widthNotLimited ? stringWidth : Math.min(this.getMaxWidth(), stringWidth);
+        this.setBounds(Math.max(0, width), Math.max(0, activeFont.getStringHeight(lbl)));
     }
 
     public LabelWidget setMaxWidth(double maxWidth) {
@@ -89,22 +94,33 @@ public class LabelWidget extends AbstractWidget<LabelWidget> {
     }
 
     public LabelWidget setFont(CFontRenderer font) {
+        // Keep a null value recoverable: FontManager.pf18 may not be ready when a
+        // widget is constructed, so onRender will resolve the fallback later.
         this.font = font;
         return this;
     }
 
     public String getLabel() {
-        String lbl = label.get();
-        return lbl == null ? "null" : lbl;
+        Supplier<String> supplier = this.label;
+        if (supplier == null) {
+            return "";
+        }
+        try {
+            String value = supplier.get();
+            return value == null ? "" : value;
+        } catch (RuntimeException ignored) {
+            // A transient provider failure must not crash rendering of every panel.
+            return "";
+        }
     }
 
     public LabelWidget setLabel(String label) {
-        this.setLabel(() -> label);
+        this.setLabel(() -> label == null ? "" : label);
         return this;
     }
 
     public LabelWidget setLabel(Supplier<String> label) {
-        this.label = label;
+        this.label = label == null ? () -> "" : label;
         return this;
     }
 }

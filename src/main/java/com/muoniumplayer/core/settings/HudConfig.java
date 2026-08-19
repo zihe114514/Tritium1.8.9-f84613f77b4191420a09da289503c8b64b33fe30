@@ -26,6 +26,13 @@ public final class HudConfig {
     public static float infoY = 0.02f;
     public static float infoScale = 1.0f;
 
+    /**
+     * Player output volume, normalized to {@code 0.0..1.0}.  This is stored in
+     * the mod-owned HUD configuration rather than relying on the external value
+     * store, which may be recreated between Minecraft launches.
+     */
+    public static float playerVolume = 0.10f;
+
     /** Lyrics: horizontally centered near the bottom. */
     public static float lyricX = 0.5f;
     public static float lyricY = 0.85f;
@@ -141,6 +148,7 @@ public final class HudConfig {
             infoX = clampPos(getFloat(o, "infoX", infoX));
             infoY = clampPos(getFloat(o, "infoY", infoY));
             infoScale = clampScale(getFloat(o, "infoScale", infoScale));
+            playerVolume = clamp(getFloat(o, "playerVolume", playerVolume), 0.0f, 1.0f);
             lyricX = clampPos(getFloat(o, "lyricX", lyricX));
             lyricY = clampPos(getFloat(o, "lyricY", lyricY));
             lyricScale = clampScale(getFloat(o, "lyricScale", lyricScale));
@@ -193,6 +201,7 @@ public final class HudConfig {
             o.addProperty("infoX", infoX);
             o.addProperty("infoY", infoY);
             o.addProperty("infoScale", infoScale);
+            o.addProperty("playerVolume", playerVolume);
             o.addProperty("lyricX", lyricX);
             o.addProperty("lyricY", lyricY);
             o.addProperty("lyricScale", lyricScale);

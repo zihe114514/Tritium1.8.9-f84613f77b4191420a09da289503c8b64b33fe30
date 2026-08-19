@@ -565,6 +565,12 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         }
 
         if (this.accountManagerOverlay != null) {
+            // The account overlay contains editable Cookie fields. Previously this
+            // modal consumed every key before its widget tree could see it, so both
+            // normal typing and Ctrl+V paste appeared to do nothing.
+            if (this.accountManagerOverlay.onKeyTypedReceived(typedChar, keyCode)) {
+                return;
+            }
             if (keyCode == Keyboard.KEY_ESCAPE) {
                 this.accountManagerOverlay.handleEscape();
             }

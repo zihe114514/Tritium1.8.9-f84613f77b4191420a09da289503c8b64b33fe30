@@ -1,6 +1,7 @@
 package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.core.management.FontManager;
+import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RectWidget;
@@ -79,22 +80,15 @@ public final class ConfirmationOverlay extends NCMPanel {
         warningBadge.setColor(0xD87857);
         warningBadge.setBeforeRenderCallback(() -> warningBadge.setBounds(18, 16, 24, 24));
 
-        // Draw the warning mark from vector primitives instead of the custom font. The external
-        // font's half-width exclamation glyph can report a bad baseline/size on older Java 8 builds,
-        // which made the warning icon appear offset or malformed in the unsubscribe dialog.
-        RoundedRectWidget warningStem = new RoundedRectWidget();
-        dialog.addChild(warningStem);
-        warningStem.setClickable(false);
-        warningStem.setRadius(1);
-        warningStem.setColor(0xFFFFFF);
-        warningStem.setBeforeRenderCallback(() -> warningStem.setBounds(29, 21, 2, 8));
-
-        RoundedRectWidget warningDot = new RoundedRectWidget();
-        dialog.addChild(warningDot);
-        warningDot.setClickable(false);
-        warningDot.setRadius(1);
-        warningDot.setColor(0xFFFFFF);
-        warningDot.setBeforeRenderCallback(() -> warningDot.setBounds(29, 32, 2, 2));
+        // Fontello's warning glyph is bundled with the player and avoids the malformed
+        // half-width exclamation fallback that was visible on early Java 8 runtimes.
+        LabelWidget warningIcon = new LabelWidget(FontelloIcons.WARNING, FontManager.fontello18);
+        dialog.addChild(warningIcon);
+        warningIcon.setClickable(false);
+        warningIcon.setBeforeRenderCallback(() -> {
+            warningIcon.setColor(0xFFFFFF);
+            warningIcon.setPosition(30 - warningIcon.getWidth() * .5, 28 - warningIcon.getHeight() * .5 + 1);
+        });
 
         LabelWidget titleLabel = new LabelWidget(title, FontManager.pf18bold);
         dialog.addChild(titleLabel);

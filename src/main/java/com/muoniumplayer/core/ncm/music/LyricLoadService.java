@@ -99,7 +99,7 @@ final class LyricLoadService {
         }
 
         if (music.isNetease() && !cloudLyricsLoaded && !LyricParser.hasRealWordTiming(parsed)) {
-            InputStream stream = LyricLoadService.class.getResourceAsStream("/tritium/yrc/" + songId + ".yrc");
+            InputStream stream = LyricLoadService.class.getResourceAsStream("/muonium/yrc/" + songId + ".yrc");
             if (stream != null) {
                 try {
                     ByteArrayOutputStream output = new ByteArrayOutputStream();

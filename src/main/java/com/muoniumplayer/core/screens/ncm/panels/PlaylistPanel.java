@@ -7,6 +7,7 @@ import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.ncm.music.dto.User;
+import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
@@ -33,9 +34,16 @@ import java.util.stream.Collectors;
 public class PlaylistPanel extends NCMPanel {
 
     public PlayList playList;
+    private final boolean showBackButton;
 
     public PlaylistPanel(PlayList playlist) {
+        this(playlist, true);
+    }
+
+    /** Used by the recent-play list, whose parent discovery page already owns navigation. */
+    public PlaylistPanel(PlayList playlist, boolean showBackButton) {
         this.playList = playlist;
+        this.showBackButton = showBackButton;
     }
 
     private static final int MUSIC_ENTRANCE_STAGGER_LIMIT = 28;
@@ -53,13 +61,14 @@ public class PlaylistPanel extends NCMPanel {
         this.getChildren().clear();
         this.musicsLoading = true;
 
-        RoundedButtonWidget btnBack = new RoundedButtonWidget("返回", FontManager.pf12bold);
+        RoundedButtonWidget btnBack = new RoundedButtonWidget(FontelloIcons.BACK, FontManager.fontello18);
         this.addChild(btnBack);
         btnBack.setShouldOverrideMouseCursor(true);
         btnBack.setBeforeRenderCallback(() -> {
-            btnBack.setBounds(42, 16);
-            btnBack.setPosition(12, 8);
-            btnBack.setRadius(4);
+            btnBack.setHidden(!showBackButton);
+            btnBack.setBounds(28, 22);
+            btnBack.setPosition(Math.max(8, getWidth() - btnBack.getWidth() - 12), 8);
+            btnBack.setRadius(6);
             btnBack.setColor(btnBack.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));

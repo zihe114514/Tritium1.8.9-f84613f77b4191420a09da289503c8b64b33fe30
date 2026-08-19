@@ -1,14 +1,14 @@
 [
 {
-  "modid": "deuteriummusic",
+  "modid": "muonium",
   "name": "MuoniumPlayer",
-  "description": "MuoniumPlayer — a standalone NetEase Cloud Music player for Minecraft 1.8.9 Forge.",
+  "description": "Music player for Minecraft 1.8.9 Forge",
   "version": "${version}",
   "mcversion": "${mcversion}",
-  "url": "",
+  "url": "https://github.com/zihe114514/MuoniumPlayer",
   "updateUrl": "",
-  "authorList": ["IzumiiKonata"],
-  "credits": "Based on the original Tritium Music extension.",
+  "authorList": ["zihe", "eyz2021"],
+  "credits": "Based on the original Muonium Music extension.",
   "logoFile": "",
   "screenshots": [],
   "dependencies": []

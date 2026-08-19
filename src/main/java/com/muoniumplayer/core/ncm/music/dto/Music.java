@@ -330,19 +330,19 @@ public class Music {
     }
 
     public final Location getCoverLocation() {
-        return Location.of("tritium/textures/music/" + getStableKey() + "/cover.png");
+        return Location.of("muonium/textures/music/" + getStableKey() + "/cover.png");
     }
 
     public final Location getBlurredCoverLocation() {
-        return Location.of("tritium/textures/music/" + getStableKey() + "/cover_blurred.png");
+        return Location.of("muonium/textures/music/" + getStableKey() + "/cover_blurred.png");
     }
 
     /** Animated cover texture when NetEase provides a supported dynamic image; otherwise absent. */
     public final Location getDynamicCoverLocation() {
-        return Location.of("tritium/textures/music/" + getStableKey() + "/cover_dynamic.png");
+        return Location.of("muonium/textures/music/" + getStableKey() + "/cover_dynamic.png");
     }
     public final Location getSmallCoverLocation() {
-        return Location.of("tritium/textures/music/" + getStableKey() + "/cover_small.png");
+        return Location.of("muonium/textures/music/" + getStableKey() + "/cover_small.png");
     }
 
     public String getArtistsName() {

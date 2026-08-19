@@ -4,6 +4,7 @@ import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.PersonalFmManager;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
+import com.muoniumplayer.core.rendering.FontelloIcons;
 import com.muoniumplayer.core.rendering.ui.AbstractWidget;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
@@ -29,11 +30,11 @@ public final class PersonalFmPanel extends NCMPanel {
     private void renderLayout() {
         getChildren().clear();
 
-        RoundedButtonWidget back = new RoundedButtonWidget("返回", FontManager.pf12bold);
+        RoundedButtonWidget back = new RoundedButtonWidget(FontelloIcons.BACK, FontManager.fontello18);
         addChild(back);
         back.setShouldOverrideMouseCursor(true);
         back.setBeforeRenderCallback(() -> {
-            back.setBounds(42, 16).setPosition(MARGIN, 8).setRadius(4)
+            back.setBounds(28, 22).setPosition(Math.max(MARGIN, getWidth() - back.getWidth() - MARGIN), 8).setRadius(6)
                     .setColor(back.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                             : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
             back.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));

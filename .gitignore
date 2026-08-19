@@ -24,8 +24,8 @@ run
 # local claude settings (user-specific, not for sharing)
 .claude/settings.local.json
 
-# original Deuterium reference source — not part of this mod's distribution
-Deuterium/
+# original Muonium reference source — not part of this mod's distribution
+Muonium/
 
 # Codex/local agent state
 .codex/
@@ -45,9 +45,13 @@ backups/
 # Local player state, account credentials and downloaded media
 NCMCookie.txt
 MusicCache/
-tritium_player_config.json
-tritium_player_theme.json
-deuteriummusic_hud.json
+muonium_player_config.json
+muonium_player_theme.json
+muonium_hud.json
 
 # Other editor-local state
 .vscode/
+# Legacy config names kept ignored so migrated user files are never committed.
+tritium_player_config.json
+tritium_player_theme.json
+deuteriummusic_hud.json

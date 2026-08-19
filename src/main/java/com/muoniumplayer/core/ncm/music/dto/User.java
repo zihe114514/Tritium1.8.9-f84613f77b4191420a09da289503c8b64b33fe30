@@ -29,7 +29,7 @@ public class User {
     private final String avatarUrl;
 
     public final Location getAvatarLocation() {
-        return Location.of("tritium/textures/user/" + this.id + "/avatar.png");
+        return Location.of("muonium/textures/user/" + this.id + "/avatar.png");
     }
 
     /**

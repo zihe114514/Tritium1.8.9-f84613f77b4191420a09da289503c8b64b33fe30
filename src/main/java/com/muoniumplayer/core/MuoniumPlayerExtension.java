@@ -47,7 +47,10 @@ public class MuoniumPlayerExtension {
     public void init(OpenAPI api) {
         api.registerEvent(MuoniumPlayerEventHandler.getInstance());
 
-        // Load the persisted quality before the asynchronous account bootstrap can resolve a URL.
+        // Restore all player preferences before the asynchronous account bootstrap
+        // can create an AudioPlayer. This includes the mod-owned persisted volume.
+        HudConfig.load();
+        this.musicInfo.volume.setValue((double) HudConfig.playerVolume);
         NCMPlayerConfig.load();
         CloudMusic.quality = NCMPlayerConfig.getAudioQuality();
         MultiThreadingUtil.runAsync(CloudMusic::initNCM);
@@ -75,7 +78,6 @@ public class MuoniumPlayerExtension {
         // 与 HUD 编辑器（EDIT_HUD，参考 cloudmusic/mod/gui/GuiOverlayEditor）。
         this.musicInfo.setEnabled(true);
         this.musicLyrics.setEnabled(true);
-        HudConfig.load();
         NCMTheme.load();
         this.musicLyrics.loadHudEditorSettings();
     }

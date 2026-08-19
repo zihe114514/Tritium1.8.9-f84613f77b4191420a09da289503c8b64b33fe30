@@ -31,7 +31,7 @@ public class LoginRenderer implements SharedRenderingConstants, SharedConstants 
     double scale = 1;
 
     public boolean avatarLoaded = false;
-    public Location tempAvatar = Location.of("tritium/textures/TempAvatar.png");
+    public Location tempAvatar = Location.of("muonium/textures/TempAvatar.png");
     public String tempUsername = "";
 
     public LoginRenderer() {

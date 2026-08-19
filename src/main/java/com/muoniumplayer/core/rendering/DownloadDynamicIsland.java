@@ -238,6 +238,18 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         String safeReason = safeNoticeValue(reason, "无法获取可播放音频");
         publishNotice(IslandNoticeType.PLAYBACK_ERROR, "播放失败", safeSong + " · " + safeReason);
     }
+
+    /** Gives login and account validation a distinct, non-download success feedback. */
+    public static void showNetworkConnectionSuccess(String target) {
+        publishNotice(IslandNoticeType.NETWORK_SUCCESS, "网络连接成功",
+                safeNoticeValue(target, "音乐服务") + " · 已建立连接");
+    }
+
+    /** Gives login and account validation a distinct, readable connection failure feedback. */
+    public static void showNetworkConnectionFailure(String target, String reason) {
+        publishNotice(IslandNoticeType.NETWORK_ERROR, "网络连接失败",
+                safeNoticeValue(target, "音乐服务") + " · " + safeNoticeValue(reason, "请检查网络后重试"));
+    }
     private static void publishNotice(IslandNoticeType type, String title, String value) {
         publishNotice(type, title, value, false);
     }
@@ -840,6 +852,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     hexColor(.70f, 1f, .77f, alpha));
             return;
         }
+        if (type == IslandNoticeType.NETWORK_SUCCESS) {
+            drawNoticeFontelloIcon(FontelloIcons.LINK, centerX, centerY, alpha,
+                    hexColor(.70f, 1f, .77f, alpha));
+            return;
+        }
+        if (type == IslandNoticeType.NETWORK_ERROR) {
+            drawNoticeFontelloIcon(FontelloIcons.UNLINK, centerX, centerY, alpha,
+                    hexColor(1f, .48f, .50f, alpha));
+            return;
+        }
         if (type == IslandNoticeType.REFRESH_ERROR || type == IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR
                 || type == IslandNoticeType.PLAYBACK_ERROR) {
             drawRotatedPill(centerX, centerY, 10.0, 1.25, 45f,
@@ -898,6 +920,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         roundedRect(right - thickness, bottom - arm, thickness, arm, .5, foreground);
     }
 
+    private void drawNoticeFontelloIcon(String glyph, double centerX, double centerY, float alpha, int color) {
+        if (glyph == null || glyph.isEmpty() || alpha <= .01f || FontManager.fontello16 == null) return;
+        double width = FontManager.fontello16.getStringWidthD(glyph);
+        double height = Math.max(1.0, FontManager.fontello16.getFontHeight());
+        // Do not use a fixed baseline: Fontello glyphs have different ascender and
+        // descender bounds. Metric centering keeps every left-side notice icon in
+        // the middle of its circular plate.
+        FontManager.fontello16.drawString(glyph, centerX - width * .5, centerY - height * .5, color);
+    }
+
     private void renderSpinner(double centerX, double centerY, float alpha, int accentColor,
                                long now, boolean preview) {
         if (alpha <= .01f) return;
@@ -954,7 +986,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         PLAYLIST_TRACK_ADD_ERROR,
         TRANSCODING,
         TRANSCODE_SUCCESS,
-        PLAYBACK_ERROR
+        PLAYBACK_ERROR,
+        NETWORK_SUCCESS,
+        NETWORK_ERROR
     }
 
 

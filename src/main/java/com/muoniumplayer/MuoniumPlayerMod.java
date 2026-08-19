@@ -48,12 +48,12 @@ import com.muoniumplayer.core.screens.hud.GuiHudEditor;
 )
 public class MuoniumPlayerMod {
 
-    public static final String MOD_ID = "deuteriummusic";
+    public static final String MOD_ID = "muonium";
     public static final String MOD_NAME = "MuoniumPlayer";
     public static final String MOD_VERSION = "1.0.0";
 
     /** 按键分类名，在「选项 → 控制」中作为分组标题显示。 */
-    public static final String KEY_CATEGORY = "key.categories.deuteriummusic";
+    public static final String KEY_CATEGORY = "key.categories.muonium";
 
     // ==================== 可配置按键绑定 ====================
     /** 打开网易云音乐主界面，默认右 Shift。可在「选项 → 控制」中修改。 */
@@ -84,14 +84,14 @@ public class MuoniumPlayerMod {
         MuoniumPlayerExtension.getInstance().init(this.api);
 
         // 3. 注册可配置按键绑定（出现在「选项 → 控制 → MuoniumPlayer」分组下）
-        keyOpenMusic = new KeyBinding("key.deuteriummusic.open_music", Keyboard.KEY_RSHIFT, KEY_CATEGORY);
-        keyEditHud = new KeyBinding("key.deuteriummusic.edit_hud", Keyboard.KEY_H, KEY_CATEGORY);
+        keyOpenMusic = new KeyBinding("key.muonium.open_music", Keyboard.KEY_RSHIFT, KEY_CATEGORY);
+        keyEditHud = new KeyBinding("key.muonium.edit_hud", Keyboard.KEY_H, KEY_CATEGORY);
         // Page Up / Page Down avoid collisions with the vanilla movement and inventory keys,
         // while remaining fully rebindable through Options -> Controls.
-        keyPreviousTrack = new KeyBinding("key.deuteriummusic.previous_track", Keyboard.KEY_PRIOR, KEY_CATEGORY);
-        keyNextTrack = new KeyBinding("key.deuteriummusic.next_track", Keyboard.KEY_NEXT, KEY_CATEGORY);
-        keyVolumeUp = new KeyBinding("key.deuteriummusic.volume_up", Keyboard.KEY_ADD, KEY_CATEGORY);
-        keyVolumeDown = new KeyBinding("key.deuteriummusic.volume_down", Keyboard.KEY_SUBTRACT, KEY_CATEGORY);
+        keyPreviousTrack = new KeyBinding("key.muonium.previous_track", Keyboard.KEY_PRIOR, KEY_CATEGORY);
+        keyNextTrack = new KeyBinding("key.muonium.next_track", Keyboard.KEY_NEXT, KEY_CATEGORY);
+        keyVolumeUp = new KeyBinding("key.muonium.volume_up", Keyboard.KEY_ADD, KEY_CATEGORY);
+        keyVolumeDown = new KeyBinding("key.muonium.volume_down", Keyboard.KEY_SUBTRACT, KEY_CATEGORY);
         ClientRegistry.registerKeyBinding(keyOpenMusic);
         ClientRegistry.registerKeyBinding(keyEditHud);
         ClientRegistry.registerKeyBinding(keyPreviousTrack);

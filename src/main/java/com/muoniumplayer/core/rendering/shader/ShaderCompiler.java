@@ -56,7 +56,7 @@ public class ShaderCompiler implements SharedConstants {
 
     public static String getShaderResource(final String resource) {
         try {
-            final InputStream inputStream = Location.of("/tritium/shaders/" + resource).getResourceStream();
+            final InputStream inputStream = Location.of("/muonium/shaders/" + resource).getResourceStream();
             final InputStreamReader inputStreamReader = new InputStreamReader(inputStream);
             final BufferedReader bufferedReader = new BufferedReader(inputStreamReader);
             String source = "";
