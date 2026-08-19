@@ -1142,10 +1142,23 @@ public class GuiHudEditor extends GuiScreen {
                 NORMAL_SLIDERS.length, ISLAND_SLIDERS.length, PICKER_W);
     }
     private void beginScissor(int x, int y, int w, int h) {
+        // GL_SCISSOR rejects negative width/height with GL_INVALID_VALUE (1281). The editor is
+        // dynamically sized and can be rendered during a resize/minimize frame, so clamp before
+        // entering the clipped settings region rather than leaking an error into later HUD passes.
+        if (w <= 0 || h <= 0 || mc == null || mc.displayHeight <= 0) {
+            GL11.glDisable(GL11.GL_SCISSOR_TEST);
+            return;
+        }
         ScaledResolution scaled = new ScaledResolution(mc);
-        int scale = scaled.getScaleFactor();
+        int scale = Math.max(1, scaled.getScaleFactor());
+        int scissorWidth = Math.max(0, w * scale);
+        int scissorHeight = Math.max(0, h * scale);
+        if (scissorWidth == 0 || scissorHeight == 0) {
+            GL11.glDisable(GL11.GL_SCISSOR_TEST);
+            return;
+        }
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
-        GL11.glScissor(x * scale, mc.displayHeight - (y + h) * scale, w * scale, h * scale);
+        GL11.glScissor(x * scale, mc.displayHeight - (y + h) * scale, scissorWidth, scissorHeight);
     }
 
     private static boolean isInside(int mx, int my, int x, int y, int w, int h) {

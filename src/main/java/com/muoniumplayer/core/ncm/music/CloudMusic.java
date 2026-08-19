@@ -759,6 +759,8 @@ public class CloudMusic implements SharedConstants {
 
             synchronized (PLAYER_STATE_LOCK) {
                 AudioPlayer activePlayer = ownedPlayer;
+                NeteasePlaybackHistoryReporter.finish(activePlayer,
+                        NeteasePlaybackHistoryReporter.EndReason.REPLACED);
                 if (activePlayer != null && CloudMusic.player == activePlayer) {
                     try {
                         activePlayer.close();
@@ -861,6 +863,7 @@ public class CloudMusic implements SharedConstants {
                 AudioPlayer activePlayer = ownedPlayer;
                 if (activePlayer == null) break;
                 CloudMusic.updateCurrentLyric(activePlayer.getCurrentTimeMillis());
+                NeteasePlaybackHistoryReporter.observe(activePlayer);
 
                 try {
                     Thread.sleep(10L);
@@ -874,6 +877,9 @@ public class CloudMusic implements SharedConstants {
         private void handlePlaybackCompletion() {
             AudioPlayer completedPlayer = ownedPlayer;
             if (completedPlayer == null || isPlaybackCancelled()) return;
+
+            NeteasePlaybackHistoryReporter.finish(completedPlayer,
+                    NeteasePlaybackHistoryReporter.EndReason.COMPLETED);
 
             if (!dontAdd && playedFrom != null && curIdx >= 0 && curIdx < playList.size()) {
                 playList.get(curIdx).updPlayCount(playedFrom, completedPlayer.getCurrentTimeSeconds());
@@ -946,6 +952,7 @@ public class CloudMusic implements SharedConstants {
 
             if (!isSessionUsable(targetSession)) return false;
             playing.set(true);
+            NeteasePlaybackHistoryReporter.start(song, currentPlaylistContext, activePlayer);
             final AudioPlayer callbackPlayer = activePlayer;
             callbackPlayer.setAfterPlayed(() -> {
                 // 已被下一首复用/替换的播放器回调不能结束新会话。

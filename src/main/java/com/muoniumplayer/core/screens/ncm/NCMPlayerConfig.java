@@ -22,6 +22,11 @@ public final class NCMPlayerConfig {
 
     private static float playerScale = 1.0f;
     private static Quality audioQuality = Quality.LOSSLESS;
+    /**
+     * Opt-in only. When enabled, MuoniumPlayer submits a NetEase listening record
+     * only after the local audio state has actually played for the required time.
+     */
+    private static boolean neteaseListeningHistorySyncEnabled;
     private static boolean loaded;
 
     private NCMPlayerConfig() {
@@ -43,6 +48,9 @@ public final class NCMPlayerConfig {
                 } catch (Throwable ignored) {
                     audioQuality = Quality.LOSSLESS;
                 }
+            }
+            if (object != null && object.has("neteaseListeningHistorySyncEnabled")) {
+                neteaseListeningHistorySyncEnabled = object.get("neteaseListeningHistorySyncEnabled").getAsBoolean();
             }
         } catch (Throwable ignored) {
             playerScale = 1.0f;
@@ -66,6 +74,19 @@ public final class NCMPlayerConfig {
     public static synchronized void setAudioQuality(Quality quality) {
         load();
         audioQuality = quality == null ? Quality.LOSSLESS : quality;
+        save();
+    }
+
+    /** Returns whether real local NetEase playback sessions may be synchronized. */
+    public static synchronized boolean isNeteaseListeningHistorySyncEnabled() {
+        load();
+        return neteaseListeningHistorySyncEnabled;
+    }
+
+    /** Persists the user's explicit consent for real-play listening-history synchronization. */
+    public static synchronized void setNeteaseListeningHistorySyncEnabled(boolean enabled) {
+        load();
+        neteaseListeningHistorySyncEnabled = enabled;
         save();
     }
 
@@ -113,6 +134,7 @@ public final class NCMPlayerConfig {
             JsonObject object = new JsonObject();
             object.addProperty("playerScale", playerScale);
             object.addProperty("audioQuality", getAudioQuality().name());
+            object.addProperty("neteaseListeningHistorySyncEnabled", neteaseListeningHistorySyncEnabled);
             JsonConfigStorage.writeObject(FILE, GSON, object);
 
         } catch (Throwable ignored) {

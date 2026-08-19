@@ -240,6 +240,32 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         publishNotice(IslandNoticeType.PLAYBACK_ERROR, "播放失败", safeSong + " · " + safeReason);
     }
 
+    /** Shows the immediate recent-play upload result and request latency. */
+    public static void showRecentPlayUploadSuccess(long elapsedMillis) {
+        publishNotice(IslandNoticeType.RECENT_PLAY_SUCCESS, "听歌历史上报",
+                "最近播放上报成功 " + Math.max(0L, elapsedMillis) + "ms");
+    }
+
+    public static void showRecentPlayUploadFailure(long elapsedMillis, String reason) {
+        publishNotice(IslandNoticeType.RECENT_PLAY_ERROR, "听歌历史上报",
+                "最近播放上报失败 " + Math.max(0L, elapsedMillis) + "ms · "
+                        + safeNoticeValue(reason, "请求失败"));
+    }
+
+    /** Shows a cumulative listening-duration checkpoint result and request latency. */
+    public static void showListeningDurationUploadSuccess(int playedSeconds, long elapsedMillis) {
+        publishNotice(IslandNoticeType.LISTENING_DURATION_SUCCESS, "听歌时长上报",
+                "听歌时长上报成功 时长" + Math.max(0, playedSeconds) + "秒 "
+                        + Math.max(0L, elapsedMillis) + "ms");
+    }
+
+    public static void showListeningDurationUploadFailure(int playedSeconds, long elapsedMillis, String reason) {
+        publishNotice(IslandNoticeType.LISTENING_DURATION_ERROR, "听歌时长上报",
+                "听歌时长上报失败 时长" + Math.max(0, playedSeconds) + "秒 "
+                        + Math.max(0L, elapsedMillis) + "ms · "
+                        + safeNoticeValue(reason, "请求失败"));
+    }
+
     /** Gives login and account validation a distinct, non-download success feedback. */
     public static void showNetworkConnectionSuccess(String target) {
         publishNotice(IslandNoticeType.NETWORK_SUCCESS, "网络连接成功",
@@ -1052,7 +1078,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         TRANSCODE_SUCCESS,
         PLAYBACK_ERROR,
         NETWORK_SUCCESS,
-        NETWORK_ERROR
+        NETWORK_ERROR,
+        RECENT_PLAY_SUCCESS,
+        RECENT_PLAY_ERROR,
+        LISTENING_DURATION_SUCCESS,
+        LISTENING_DURATION_ERROR
     }
 
 

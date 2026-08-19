@@ -214,6 +214,19 @@ public class CloudMusicApi {
     }
 
     /**
+     * Submits a listening record for a song that has actually been played by the local player.
+     * The endpoint accepts a NetEase song id, an optional originating playlist id and real played
+     * seconds. Callers are responsible for consent, local timing and duplicate prevention.
+     */
+    public RequestUtil.RequestAnswer reportListeningHistory(long songId, long sourcePlaylistId, int playedSeconds) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("id", songId);
+        data.put("sourceid", Math.max(0L, sourcePlaylistId));
+        data.put("time", Math.max(1, playedSeconds));
+        return RequestUtil.createRequest("/api/feedback/weblog", data, OptionsUtil.createOptions("weapi"));
+    }
+
+    /**
      * Validates an imported Cookie without mutating the active account state.  The caller only
      * persists it after the response proves that a NetEase profile is available.
      */

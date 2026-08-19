@@ -41,6 +41,7 @@ sourceCompatibility = targetCompatibility = '1.8'
 // 源码为 UTF-8（含中文注释/字符串字面量）。默认 GBK 会破坏 S2+ 移植的中文 UI/歌词文案。
 // 应用于所有 JavaCompile（含 test），否则 test 里的中文字符串字面量会乱码。
 tasks.withType(JavaCompile) {
+    dependsOn 'prepareForgeCompatibleKotlinStdlib'
     options.encoding = 'UTF-8'
 
     // Gradle 4.5 / ForgeGradle 2.1 不会自动把 compileOnly 上的注解处理器（lombok）加入 -processorpath，
@@ -74,6 +75,18 @@ minecraft {
     coreMod = "lain.mods.inputfix.InputFix"
 }
 
+// Forge 1.8.9 uses ASM 5 while scanning the development classpath. Kotlin 2.4's
+// otherwise Java-8-compatible stdlib contains Java 9 multi-release metadata that
+// ASM 5 cannot parse. Build a filtered local copy for both runClient and shadowJar.
+def forgeKotlinStdlib = file("$buildDir/forge189-libs/kotlin-stdlib-2.4.0-forge189.jar")
+task prepareForgeCompatibleKotlinStdlib(type: Zip) {
+    from zipTree(file('libs/kotlin-stdlib-2.4.0.jar'))
+    includeEmptyDirs = false
+    exclude 'META-INF/versions/**'
+    exclude 'module-info.class'
+    destinationDir = forgeKotlinStdlib.parentFile
+    archiveName = forgeKotlinStdlib.name
+}
 // shade：需要打进最终 jar 的运行时依赖（编译期可见，运行期由 fat-jar 自带）。
 configurations {
     shade
@@ -111,9 +124,10 @@ dependencies {
     // Cadence：统一网易云/QQ 音乐 API。使用本地构建产物以保证 Java 8/Forge 1.8.9 环境可复现。
     shade files('libs/music-api-0.1.1.jar')
     // Cadence 由 Kotlin 编写，运行时必须携带 stdlib；与其他 MOD 隔离后打入最终 JAR。
-    shade files('libs/kotlin-stdlib-2.4.0.jar')
+    shade files(forgeKotlinStdlib)
     // Cadence 使用 Gson 2.11 API；统一迁移避免与 Minecraft 1.8.9 自带旧版 Gson 冲突。
     shade 'com.google.code.gson:gson:2.11.0'
+
 
     // JNA：DeviceIdGenerator 读取注册表 CPU 名 + CursorUtils 切换光标。
     // 5.14.0 为 Java 8 兼容版本。必须 relocation 到 repackage/：
@@ -174,6 +188,7 @@ shadowJar {
 // 而本 mod 代码基于 JNA 5.14.0 编写（Native.load(String,Class)、WinUser.IDC_* 等 3.4.0 缺失），
 // 若直接打包未迁移的 com.sun.jna 会与 MC 自带 3.4.0 冲突；迁到 repackage.com.sun.jna 则完全自洽。
 shadowJar {
+    dependsOn 'prepareForgeCompatibleKotlinStdlib'
     // 不带分类器的主 JAR 才是可直接放入 mods/ 的 fat + reobf 正式包。
     // 普通反混淆薄包使用 -dev 后缀，防止安装错误。
     classifier = ''
@@ -198,3 +213,9 @@ reobf {
 
 // 让 build 产出无后缀的正式 fat jar；-dev.jar 仅用于开发排查。
 tasks.build.dependsOn tasks.reobfShadowJar
+
+// Gradle run configurations resolve this filtered artifact too, so Forge never scans
+// META-INF/versions/9/module-info.class from the original Kotlin 2.4 stdlib.
+tasks.matching { it.name == 'runClient' || it.name == 'runServer' }.all {
+    dependsOn 'prepareForgeCompatibleKotlinStdlib'
+}

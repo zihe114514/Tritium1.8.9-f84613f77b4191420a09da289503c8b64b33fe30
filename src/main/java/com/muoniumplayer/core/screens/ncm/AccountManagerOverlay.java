@@ -372,6 +372,30 @@ public class AccountManagerOverlay extends NCMPanel {
                         : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
                 switchAccount.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
             });
+            RoundedButtonWidget listeningHistorySync = new RoundedButtonWidget(
+                    () -> "听歌历史同步：" + (NCMPlayerConfig.isNeteaseListeningHistorySyncEnabled() ? "已开启" : "已关闭"),
+                    FontManager.pf12bold);
+            dialog.addChild(listeningHistorySync);
+            listeningHistorySync.setRadius(6);
+            listeningHistorySync.setOnClickCallback((x, y, button) -> {
+                if (button != 0) return false;
+                boolean enabled = !NCMPlayerConfig.isNeteaseListeningHistorySyncEnabled();
+                NCMPlayerConfig.setNeteaseListeningHistorySyncEnabled(enabled);
+                statusText = enabled
+                        ? "已开启：仅同步本地实际播放达到阈值的网易云歌曲"
+                        : "已关闭：后续播放仅保留在本地播放器";
+                statusColor = enabled ? 0x53C68C : 0xAEB5C4;
+                return true;
+            });
+            listeningHistorySync.setBeforeRenderCallback(() -> {
+                listeningHistorySync.setBounds(Math.max(1, dialog.getWidth() - 32), 26);
+                listeningHistorySync.setPosition(16, dialog.getHeight() - 112);
+                listeningHistorySync.setColor(listeningHistorySync.isHovering()
+                        ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                        : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+                listeningHistorySync.setTextColor(NCMPlayerConfig.isNeteaseListeningHistorySyncEnabled()
+                        ? 0x6EDAA0 : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            });
         }
         if (platform == MusicPlatform.QQ && !CadenceMusicService.isLoggedIn(platform)) {
             addQQLoginChannelSelector(dialog);
