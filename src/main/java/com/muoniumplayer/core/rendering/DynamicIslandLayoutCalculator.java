@@ -27,6 +27,7 @@ final class DynamicIslandLayoutCalculator {
         }
 
         boolean systemCard = style == DynamicIslandStyle.SYSTEM_CARD;
+        boolean musicFocus = style == DynamicIslandStyle.MUSIC_FOCUS;
         double minWidth;
         double targetHeight;
         if (style == DynamicIslandStyle.COMPACT) {
@@ -35,6 +36,9 @@ final class DynamicIslandLayoutCalculator {
         } else if (style == DynamicIslandStyle.CARD) {
             minWidth = noticeMode ? 146.0 : 170.0;
             targetHeight = noticeMode ? 38.0 : 42.0;
+        } else if (musicFocus) {
+            minWidth = noticeMode ? 172.0 : 194.0;
+            targetHeight = noticeMode ? 50.0 : 56.0;
         } else if (systemCard) {
             minWidth = noticeMode ? 154.0 : 176.0;
             targetHeight = noticeMode ? 46.0 : 52.0;
@@ -55,7 +59,7 @@ final class DynamicIslandLayoutCalculator {
         double widestText = Math.max(titleWidth, valueWidth);
         double configuredTextScale = DynamicIslandMath.clamp(HudConfig.dynamicIslandTextScale,
                 minAutoTextScale, maxAutoTextScale);
-        double sideReserve = systemCard ? 60.0 : (style == DynamicIslandStyle.CARD ? 48.0 : 46.0);
+        double sideReserve = systemCard ? 60.0 : (musicFocus ? 68.0 : (style == DynamicIslandStyle.CARD ? 48.0 : 46.0));
         if (!noticeMode) {
             sideReserve += Math.max(31.0, FontManager.pf12bold.getStringWidthD("100%")
                     * configuredTextScale + 14.0);

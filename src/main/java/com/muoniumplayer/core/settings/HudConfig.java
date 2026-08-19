@@ -88,7 +88,7 @@ public final class HudConfig {
     public static float dynamicIslandProgressHeight = 1.35f;
     /** Seconds to keep the completed state visible before hiding. */
     public static float dynamicIslandCompletionHoldSeconds = 1.80f;
-    /** Visual preset for the global island: 0 pill, 1 glass, 2 compact, 3 card, 4 system card. */
+    /** Visual preset for the global island: 0 pill, 1 glass, 2 compact, 3 card, 4 system card, 5 music focus. */
     public static int dynamicIslandStyle = 0;
 
     private HudConfig() {
@@ -189,7 +189,7 @@ public final class HudConfig {
             dynamicIslandMaxWidth = clamp(getFloat(o, "dynamicIslandMaxWidth", dynamicIslandMaxWidth), 160.0f, 720.0f);
             dynamicIslandProgressHeight = clamp(getFloat(o, "dynamicIslandProgressHeight", dynamicIslandProgressHeight), 0.75f, 4.0f);
             dynamicIslandCompletionHoldSeconds = clamp(getFloat(o, "dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds), 0.5f, 6.0f);
-            dynamicIslandStyle = clampInt(getInt(o, "dynamicIslandStyle", dynamicIslandStyle), 0, 4);
+            dynamicIslandStyle = clampInt(getInt(o, "dynamicIslandStyle", dynamicIslandStyle), 0, 5);
         } catch (Throwable ignored) {
         }
     }

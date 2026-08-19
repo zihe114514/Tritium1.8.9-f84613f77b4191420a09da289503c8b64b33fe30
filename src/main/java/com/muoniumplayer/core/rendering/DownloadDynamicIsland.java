@@ -37,7 +37,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         GLASS("通透玻璃"),
         COMPACT("紧凑状态"),
         CARD("浮层卡片"),
-        SYSTEM_CARD("系统通知");
+        SYSTEM_CARD("系统通知"),
+        MUSIC_FOCUS("音乐聚焦");
 
         private final String displayName;
 
@@ -531,7 +532,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         IslandLayout layout = createIslandLayout(style, noticeMode, activeNoticeType, activeNoticeTitle,
                 activeNoticeValue, speedValue, preview, configuredScale, screenWidth);
 
-        double compactWidth = style == DynamicIslandStyle.COMPACT ? 46.0 : COMPACT_WIDTH;
+        double compactWidth = style == DynamicIslandStyle.COMPACT ? 46.0
+                : (style == DynamicIslandStyle.MUSIC_FOCUS ? 48.0 : COMPACT_WIDTH);
         double compactHeight = style == DynamicIslandStyle.COMPACT ? 14.0 : COMPACT_HEIGHT;
         double expandedWidth = preview ? layout.targetWidth
                 : animateExpandedDimension(animatedExpandedWidth, layout.targetWidth, true);
@@ -563,14 +565,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
         double x = centerX - width * .5;
         boolean systemCard = style == DynamicIslandStyle.SYSTEM_CARD;
+        boolean musicFocus = style == DynamicIslandStyle.MUSIC_FOCUS;
         double radius = systemCard ? Math.min(11.0, height * .25)
-                : (style == DynamicIslandStyle.CARD ? Math.min(12.0, height * .30) : height * .5);
+                : (musicFocus ? Math.min(14.0, height * .31)
+                : (style == DynamicIslandStyle.CARD ? Math.min(12.0, height * .30) : height * .5));
         int accentColor = NCMTheme.getAccentColor();
         int iconAccentColor = DynamicIslandMath.brightenAccent(accentColor, .30f);
 
         // Keep the shadow on the island's own rounded silhouette. The prior expanded,
         // left-shifted rectangle looked like a separate dark background canvas.
-        float shadowAlpha = alpha * (style == DynamicIslandStyle.GLASS ? .13f : .19f);
+        float shadowAlpha = alpha * (style == DynamicIslandStyle.GLASS ? .13f : (musicFocus ? .23f : .19f));
         roundedRect(x + 1.0, y + 1.8, width, height, radius,
                 hexColor(0f, 0f, 0f, shadowAlpha));
         roundedRect(x + 2.0, y + 3.0, width, height, radius,
@@ -587,6 +591,17 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     RenderSystem.reAlpha(accentColor, alpha * .90f));
             roundedOutline(x, y, width, height, radius, .65,
                     new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 30f)));
+        } else if (musicFocus) {
+            // Music-focused card: the surface expands first, then the animated artwork and copy settle in.
+            roundedRect(x, y, width, height, radius, hexColor(.010f, .014f, .024f, alpha * .99f));
+            roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height - 2.0),
+                    Math.max(1.0, radius - 1.0), hexColor(.050f, .064f, .098f, alpha * .46f));
+            roundedRect(x + 1.2, y + 1.2, Math.max(1.0, width - 2.4), Math.max(1.0, height * .36),
+                    Math.max(1.0, radius - 1.2), RenderSystem.reAlpha(accentColor, alpha * .10f));
+            roundedOutline(x, y, width, height, radius, .80,
+                    new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 54f)));
+            roundedRect(x + 8.0, y + height - 5.0, Math.max(1.0, width - 16.0), 1.0, .5,
+                    RenderSystem.reAlpha(accentColor, alpha * .22f));
         } else if (systemCard) {
             // Dedicated content-driven system notification card inspired by the supplied reference project.
             roundedRect(x, y, width, height, radius, hexColor(.025f, .031f, .043f, alpha * .99f));
@@ -605,7 +620,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             roundedOutline(x, y, width, height, radius, .65,
                     new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 20f)));
         }
-        if (!systemCard) {
+        if (!systemCard && !musicFocus) {
             roundedRect(x + radius * .70, y + .8, Math.max(2.0, width - radius * 1.40), .75, .38,
                     hexColor(1f, 1f, 1f, alpha * (style == DynamicIslandStyle.GLASS ? .13f : .055f)));
         }
@@ -615,25 +630,30 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         // curved shoulder, making the left edge look incomplete.
         // SYSTEM_CARD reserves a 24px tile at x + 8, whose exact center is x + 20.
         // Keep the glyph center tied to that tile rather than its wider text gutter.
-        double iconInset = systemCard ? 20.0 : (style == DynamicIslandStyle.CARD ? 25.0 : 23.0);
+        double iconInset = systemCard ? 20.0 : (musicFocus ? 26.0 : (style == DynamicIslandStyle.CARD ? 25.0 : 23.0));
         double iconExpandedX = centerX - expandedWidth * .5 + iconInset;
         double iconX = DynamicIslandMath.lerp(centerX, iconExpandedX, expansionValue);
         double iconY = y + height * .5;
         double pulse = .5 + .5 * Math.sin(now / 260.0);
         float iconAlpha = alpha * (.87f + (float) pulse * .10f);
 
-        double iconPlate = systemCard ? 17.0 : 18.4;
         api.getGLStateManager().pushMatrix();
-        scaleAtPos(iconX, iconY, systemCard ? 1.0 : 1.08);
-        roundedRect(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
-                iconPlate * .5, RenderSystem.reAlpha(accentColor, iconAlpha * .22f));
-        roundedOutline(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
-                iconPlate * .5, .85, new Color(255, 255, 255, DynamicIslandMath.clamp255(iconAlpha * 76f)));
-        if (noticeMode) {
-            renderNoticeIcon(activeNoticeType, iconX, iconY, iconAlpha, iconAccentColor, now);
+        if (musicFocus) {
+            renderMusicFocusArtwork(iconX, iconY, height, iconAlpha, accentColor, iconAccentColor, now,
+                    preview, noticeMode, activeNoticeType, success);
         } else {
-            renderSpinner(iconX, iconY, iconAlpha * (1f - success), iconAccentColor, now, preview);
-            renderSuccess(iconX, iconY, alpha * success);
+            double iconPlate = systemCard ? 17.0 : 18.4;
+            scaleAtPos(iconX, iconY, systemCard ? 1.0 : 1.08);
+            roundedRect(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
+                    iconPlate * .5, RenderSystem.reAlpha(accentColor, iconAlpha * .22f));
+            roundedOutline(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
+                    iconPlate * .5, .85, new Color(255, 255, 255, DynamicIslandMath.clamp255(iconAlpha * 76f)));
+            if (noticeMode) {
+                renderNoticeIcon(activeNoticeType, iconX, iconY, iconAlpha, iconAccentColor, now);
+            } else {
+                renderSpinner(iconX, iconY, iconAlpha * (1f - success), iconAccentColor, now, preview);
+                renderSuccess(iconX, iconY, alpha * success);
+            }
         }
         api.getGLStateManager().popMatrix();
 
@@ -646,26 +666,28 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         float renderedTextAlpha = staticVolumeCopy
                 ? (expansionValue >= .74 ? alpha : 0f) : textAlpha;
         if (renderedTextAlpha > .01f) {
-            double textLeft = x + (systemCard ? 44.0 : (style == DynamicIslandStyle.CARD ? 39.0 : 37.0));
-            double textRight = x + width - (systemCard ? 12.0 : 9.0);
+            double textLeft = x + (systemCard ? 44.0 : (musicFocus ? 55.0 : (style == DynamicIslandStyle.CARD ? 39.0 : 37.0)));
+            double textRight = x + width - (systemCard ? 12.0 : (musicFocus ? 12.0 : 9.0));
             double textCenter = (textLeft + textRight) * .5;
             double copySlide = (1.0 - DynamicIslandMath.clamp01(contentFade)) * CONTENT_CHANGE_SLIDE;
-            double titleY = y + (systemCard ? 9.0 : 5.4) + copySlide;
-            double valueY = y + (systemCard ? 23.0 : 16.6) + copySlide;
+            double baseTitleY = y + (systemCard ? 9.0 : (musicFocus ? 10.0 : 5.4));
+            double baseValueY = y + (systemCard ? 23.0 : (musicFocus ? 25.0 : 16.6));
+            double titleY = baseTitleY + copySlide;
+            double valueY = baseValueY + copySlide;
 
             if (noticeMode) {
                 double availableWidth = Math.max(28.0, textRight - textLeft);
                 if (staticVolumeCopy) {
-                    double staticTitleY = y + (systemCard ? 9.0 : 5.4);
-                    double staticValueY = y + (systemCard ? 23.0 : 16.6);
+                    double staticTitleY = baseTitleY;
+                    double staticValueY = baseValueY;
                     drawCenteredIslandText(FontManager.pf12, layout.title, textCenter, staticTitleY,
                             availableWidth, layout.textScale,
                             hexColor(.62f, .67f, .76f, renderedTextAlpha * .96f));
                     drawCenteredIslandText(FontManager.pf14bold, layout.value, textCenter, staticValueY,
                             availableWidth, layout.textScale, hexColor(1f, 1f, 1f, renderedTextAlpha));
                 } else if (transcodeCopy) {
-                    double transcodeTitleY = y + (systemCard ? 9.0 : 5.4);
-                    double transcodeValueY = y + (systemCard ? 23.0 : 16.6);
+                    double transcodeTitleY = baseTitleY;
+                    double transcodeValueY = baseValueY;
                     drawCenteredIslandText(FontManager.pf12, layout.title, textCenter, transcodeTitleY,
                             availableWidth, layout.textScale,
                             hexColor(.62f, .67f, .76f, renderedTextAlpha * .96f));
@@ -711,8 +733,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 if (staticVolumeCopy || transcodeCopy) {
                     double progressX = textLeft;
                     double progressWidth = Math.max(28.0, textRight - textLeft);
-                    double progressHeight = systemCard ? 3.2 : 2.8;
-                    double progressY = y + height - (systemCard ? 8.2 : 6.0);
+                    double progressHeight = systemCard ? 3.2 : (musicFocus ? 2.6 : 2.8);
+                    double progressY = y + height - (systemCard ? 8.2 : (musicFocus ? 7.0 : 6.0));
                     double progressRadius = progressHeight * .5;
                     roundedRect(progressX, progressY, progressWidth, progressHeight, progressRadius,
                             hexColor(1f, 1f, 1f, renderedTextAlpha * .12f));
@@ -748,16 +770,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 int statusColor = success > .52f
                         ? hexColor(.58f, 1f, .68f, textAlpha)
                         : hexColor(.82f, .85f, .91f, textAlpha);
-                roundedRect(statusX, y + (systemCard ? 8.5 : 4.2), statusWidth, 12.5, 6.25,
+                roundedRect(statusX, y + (systemCard ? 8.5 : (musicFocus ? 11.0 : 4.2)), statusWidth, 12.5, 6.25,
                         success > .52f ? hexColor(.18f, .55f, .32f, textAlpha * .34f)
                                 : hexColor(1f, 1f, 1f, textAlpha * .10f));
                 drawCenteredIslandText(FontManager.pf12bold, status, statusX + statusWidth * .5,
-                        y + (systemCard ? 10.4 : 6.1), statusWidth - 4.0, layout.textScale, statusColor);
+                        y + (systemCard ? 10.4 : (musicFocus ? 12.9 : 6.1)), statusWidth - 4.0, layout.textScale, statusColor);
 
-                double progressX = x + (systemCard ? 8.0 : 9.0);
-                double progressY = y + height - (systemCard ? 7.0 : 3.7);
-                double progressWidth = width - (systemCard ? 16.0 : 18.0);
-                double progressHeight = Math.min(systemCard ? 3.8 : height * .22,
+                double progressX = x + (systemCard ? 8.0 : (musicFocus ? 10.0 : 9.0));
+                double progressY = y + height - (systemCard ? 7.0 : (musicFocus ? 6.8 : 3.7));
+                double progressWidth = width - (systemCard ? 16.0 : (musicFocus ? 20.0 : 18.0));
+                double progressHeight = Math.min(systemCard ? 3.8 : (musicFocus ? 3.0 : height * .22),
                         DynamicIslandMath.clamp(HudConfig.dynamicIslandProgressHeight, .75, 4.0));
                 double progressRadius = progressHeight * .5;
                 roundedRect(progressX, progressY, progressWidth, progressHeight, progressRadius,
@@ -947,6 +969,48 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
     }
 
+    /**
+     * Original music-card artwork for the MUSIC_FOCUS style. It deliberately uses primitive OpenGL
+     * shapes instead of Android assets: the rotating accent bands make the compact and expanded
+     * states feel connected while remaining safe for Minecraft 1.8.9's fixed-function pipeline.
+     */
+    private void renderMusicFocusArtwork(double centerX, double centerY, double islandHeight, float alpha,
+                                         int accentColor, int iconAccentColor, long now, boolean preview,
+                                         boolean noticeMode, IslandNoticeType noticeType, float success) {
+        double tileSize = Math.min(31.0, Math.max(21.0, islandHeight - 16.0));
+        double tileRadius = Math.min(8.0, tileSize * .28);
+        double beat = .985 + .025 * (.5 + .5 * Math.sin((preview ? now / 8.0 : now / 290.0)));
+        scaleAtPos(centerX, centerY, beat);
+        roundedRect(centerX - tileSize * .5, centerY - tileSize * .5, tileSize, tileSize, tileRadius,
+                RenderSystem.reAlpha(accentColor, alpha * .66f));
+        roundedRect(centerX - tileSize * .5 + 1.0, centerY - tileSize * .5 + 1.0,
+                Math.max(1.0, tileSize - 2.0), Math.max(1.0, tileSize - 2.0), Math.max(1.0, tileRadius - 1.0),
+                hexColor(.018f, .026f, .045f, alpha * .76f));
+        roundedOutline(centerX - tileSize * .5, centerY - tileSize * .5, tileSize, tileSize, tileRadius, .80,
+                new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 92f)));
+
+        api.getGLStateManager().pushMatrix();
+        api.getGLStateManager().translate(centerX, centerY, 0);
+        api.getGLStateManager().rotate((float) ((preview ? now / 7.0 : spinnerRotation * .75) % 360.0), 0, 0, 1);
+        roundedRect(-tileSize * .34, -1.25, tileSize * .68, 2.5, 1.25,
+                RenderSystem.reAlpha(iconAccentColor, alpha * .58f));
+        roundedRect(-1.25, -tileSize * .34, 2.5, tileSize * .68, 1.25,
+                RenderSystem.reAlpha(accentColor, alpha * .46f));
+        api.getGLStateManager().popMatrix();
+
+        double coreSize = Math.max(8.0, tileSize * .37);
+        roundedRect(centerX - coreSize * .5, centerY - coreSize * .5, coreSize, coreSize, coreSize * .5,
+                hexColor(.012f, .016f, .029f, alpha * .96f));
+        if (noticeMode) {
+            api.getGLStateManager().pushMatrix();
+            scaleAtPos(centerX, centerY, .64);
+            renderNoticeIcon(noticeType, centerX, centerY, alpha, iconAccentColor, now);
+            api.getGLStateManager().popMatrix();
+        } else {
+            renderSpinner(centerX, centerY, alpha * (1f - success) * .72f, iconAccentColor, now, preview);
+            renderSuccess(centerX, centerY, alpha * success);
+        }
+    }
     private void renderSuccess(double centerX, double centerY, float alpha) {
         if (alpha <= .01f) return;
         double scale = .78 + .22 * DynamicIslandMath.smoothStep(successMorph);

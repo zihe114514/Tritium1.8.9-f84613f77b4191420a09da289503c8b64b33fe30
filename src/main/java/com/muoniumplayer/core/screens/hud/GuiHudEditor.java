@@ -1,6 +1,6 @@
 package com.muoniumplayer.core.screens.hud;
 
-import net.minecraft.client.gui.FontRenderer;
+
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
@@ -9,6 +9,8 @@ import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
 import com.muoniumplayer.core.MuoniumPlayerExtension;
+import com.muoniumplayer.core.management.FontManager;
+import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.rendering.shader.Shaders;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
@@ -144,7 +146,10 @@ public class GuiHudEditor extends GuiScreen {
 
             MusicInfoWidget info = MuoniumPlayerExtension.getInstance().musicInfo;
             MusicLyricsWidget lyrics = MuoniumPlayerExtension.getInstance().musicLyrics;
-            FontRenderer fr = fontRendererObj;
+            CFontRenderer fr = getHudFont();
+            if (fr == null) {
+                return;
+            }
             int sw = width;
             int sh = height;
             int panelX = sw - SETTINGS_W - SETTINGS_MARGIN;
@@ -281,25 +286,25 @@ public class GuiHudEditor extends GuiScreen {
         }
     }
 
-    private void drawInfoPlaceholder(FontRenderer fr, int x, int y, int w, int h) {
+    private void drawInfoPlaceholder(CFontRenderer fr, int x, int y, int w, int h) {
         drawSoftCardShadow(x, y, w, h, 10);
         drawRoundedRect(x, y, w, h, 10, 0xC52B3543);
         drawRoundedRect(x + 1, y + 1, w - 2, 1, 1, 0x445E7188);
         drawRoundedRect(x + 12, y + 17, 26, 26, 7, 0x554C617B);
         drawRoundedRect(x + 18, y + 23, 14, 14, 7, 0x6689A8C9);
-        drawString(fr, "歌曲信息", x + 49, y + 17, 0xFFE7ECF4);
-        drawString(fr, "播放歌曲后实时展示", x + 49, y + 33, 0xFF8996A8);
+        drawExternalText(fr, "歌曲信息", x + 49, y + 17, 0xFFE7ECF4);
+        drawExternalText(fr, "播放歌曲后实时展示", x + 49, y + 33, 0xFF8996A8);
     }
 
-    private void drawLyricsPreview(FontRenderer fr, int x, int y, int w, int h) {
+    private void drawLyricsPreview(CFontRenderer fr, int x, int y, int w, int h) {
         drawSoftCardShadow(x, y, w, h, 12);
         drawRoundedRect(x, y, w, h, 12, 0x8C31283F);
         int center = x + w / 2;
-        drawCenteredString(fr, "桌面歌词", center, y + Math.max(8, h / 2 - 13), 0xFFDCCFFF);
-        drawCenteredString(fr, "平滑动画与逐字染色预览", center, y + Math.max(23, h / 2 + 3), 0xFF9C91B8);
+        drawCenteredExternalText(fr, "桌面歌词", center, y + Math.max(8, h / 2 - 13), 0xFFDCCFFF);
+        drawCenteredExternalText(fr, "平滑动画与逐字染色预览", center, y + Math.max(23, h / 2 + 3), 0xFF9C91B8);
     }
 
-    private void drawHudSelection(FontRenderer fr, String title, int x, int y, int w, int h,
+    private void drawHudSelection(CFontRenderer fr, String title, int x, int y, int w, int h,
                                   int accent) {
         drawDashedBorder(x, y, w, h, accent);
         // Use a small marker and plain text instead of status/title pills. The actual
@@ -307,10 +312,10 @@ public class GuiHudEditor extends GuiScreen {
         // or other floating badges on top of the game view.
         int labelY = Math.max(14, y - 5);
         drawRoundedRect(x + 10, labelY + 3, 5, 5, 2, accent);
-        drawString(fr, title, x + 21, labelY, 0xFFE8EDF6);
+        drawExternalText(fr, title, x + 21, labelY, 0xFFE8EDF6);
     }
 
-    private void drawBottomToolbar(FontRenderer fr, MusicInfoWidget info, MusicLyricsWidget lyrics,
+    private void drawBottomToolbar(CFontRenderer fr, MusicInfoWidget info, MusicLyricsWidget lyrics,
                                    int sw, int sh, int mouseX, int mouseY) {
         int barY = sh - 28;
         Gui.drawRect(0, barY, sw, sh, 0xD90D1119);
@@ -322,25 +327,25 @@ public class GuiHudEditor extends GuiScreen {
         boolean hoverReset = isInside(mouseX, mouseY, resetX, barY + 4, resetW, resetH);
         drawRoundedRect(resetX, barY + 4, resetW, resetH, 10,
                 hoverReset ? 0xFF48617D : 0xFF303B4A);
-        drawCenteredString(fr, "重置位置", resetX + resetW / 2, barY + 9, 0xFFF3F6FA);
+        drawCenteredExternalText(fr, "重置位置", resetX + resetW / 2, barY + 9, 0xFFF3F6FA);
 
         int togW = 14;
         int togH = 14;
         int tog1X = resetX + resetW + 16;
         drawRoundedRect(tog1X, barY + 6, togW, togH, 7,
                 info.isEnabled() ? 0xFF5AC18E : 0xFF4C5563);
-        drawString(fr, "信息栏", tog1X + togW + 4, barY + 8,
+        drawExternalText(fr, "信息栏", tog1X + togW + 4, barY + 8,
                 info.isEnabled() ? 0xFFBFFFE0 : 0xFF8B95A5);
         int tog2X = tog1X + togW + 4 + fr.getStringWidth("信息栏") + 16;
         drawRoundedRect(tog2X, barY + 6, togW, togH, 7,
                 lyrics.isEnabled() ? 0xFF5AC18E : 0xFF4C5563);
-        drawString(fr, "歌词", tog2X + togW + 4, barY + 8,
+        drawExternalText(fr, "歌词", tog2X + togW + 4, barY + 8,
                 lyrics.isEnabled() ? 0xFFBFFFE0 : 0xFF8B95A5);
 
         String infoText = "信息栏: " + pct(HudConfig.infoX, HudConfig.infoY, HudConfig.infoScale)
                 + "  歌词: " + pct(HudConfig.lyricX, HudConfig.lyricY, HudConfig.lyricScale)
                 + "  · 拖拽移动  · 滚轮缩放  · 设置实时预览  · ESC 退出";
-        drawString(fr, infoText, sw / 2 - fr.getStringWidth(infoText) / 2, barY - 12, 0xFF9EAABD);
+        drawExternalText(fr, infoText, sw / 2 - fr.getStringWidth(infoText) / 2, barY - 12, 0xFF9EAABD);
     }
 
     private void drawRoundedRect(double x, double y, double w, double h, double radius, int color) {
@@ -356,19 +361,19 @@ public class GuiHudEditor extends GuiScreen {
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
     }
-    private void drawLyricsSettings(FontRenderer fr, MusicLyricsWidget lyrics,
+    private void drawLyricsSettings(CFontRenderer fr, MusicLyricsWidget lyrics,
                                      int x, int y, int h, int mouseX, int mouseY) {
         drawRoundedRect(x, y, SETTINGS_W, h, 13, 0xF0171C26);
         drawRoundedRect(x + 1, y + 1, SETTINGS_W - 2, SETTINGS_HEADER_H, 11, 0xFF202A37);
         drawRoundedRect(x + 12, y + 9, 6, 6, 3, 0xFF8AD7FF);
-        drawString(fr, "音乐 HUD 设置", x + 27, y + 8, 0xFFF4F7FB);
-        drawString(fr, "实时调整 · 自动保存", x + 27, y + 18, 0xFF8E9BAE);
+        drawExternalText(fr, "音乐 HUD 设置", x + 27, y + 8, 0xFFF4F7FB);
+        drawExternalText(fr, "实时调整 · 自动保存", x + 27, y + 18, 0xFF8E9BAE);
         int toggleX = x + SETTINGS_W - SETTINGS_TOGGLE_W - 6;
         drawSmallButton(fr, settingsCollapsed ? "+" : "−", toggleX, y + 6, SETTINGS_TOGGLE_W, 17, mouseX, mouseY);
         drawSmallButton(fr, "恢复默认", x + SETTINGS_W - 96, y + 6, 60, 17, mouseX, mouseY);
 
         if (settingsCollapsed) {
-            drawString(fr, "设置面板已隐藏 · 点击右上角展开", x + 12, y + 31, 0xFF8996A8);
+            drawExternalText(fr, "设置面板已隐藏 · 点击右上角展开", x + 12, y + 31, 0xFF8996A8);
             return;
         }
 
@@ -444,33 +449,33 @@ public class GuiHudEditor extends GuiScreen {
             drawRoundedRect(x + SETTINGS_W - 7, thumbY, 5, thumbH, 3, 0xFF70839A);
         }
     }
-    private void drawSectionHeader(FontRenderer fr, String title, boolean expanded,
+    private void drawSectionHeader(CFontRenderer fr, String title, boolean expanded,
                                    int x, int y, int w, int mouseX, int mouseY, int accent) {
         boolean hover = isInside(mouseX, mouseY, x, y, w, SECTION_H);
         drawRoundedRect(x, y + 2, w, SECTION_H - 2, 8,
                 hover ? 0xFF2B3543 : 0xFF222A35);
         drawRoundedRect(x, y + 5, 3, SECTION_H - 8, 2, accent);
-        drawString(fr, expanded ? "⌄" : "›", x + 10, y + 7, 0xFFE9EEF6);
-        drawString(fr, title, x + 25, y + 7, 0xFFF4F6FA);
+        drawExternalText(fr, expanded ? "⌄" : "›", x + 10, y + 7, 0xFFE9EEF6);
+        drawExternalText(fr, title, x + 25, y + 7, 0xFFF4F6FA);
     }
-    private void drawColorRow(FontRenderer fr, String label, Color color, boolean selected,
+    private void drawColorRow(CFontRenderer fr, String label, Color color, boolean selected,
                               int x, int y, int mouseX, int mouseY) {
         int w = SETTINGS_W - 12;
         boolean hover = isInside(mouseX, mouseY, x, y, w, COLOR_ROW_H);
         if (hover) {
             drawRoundedRect(x, y, w, COLOR_ROW_H, 7, 0x332F4050);
         }
-        drawString(fr, label, x + 6, y + 9, 0xFFD7DEE8);
+        drawExternalText(fr, label, x + 6, y + 9, 0xFFD7DEE8);
         drawColorSwatch(x + w - 64, y + 5, 58, 17, color, selected);
     }
-    private void drawToggleRow(FontRenderer fr, String label, boolean enabled,
+    private void drawToggleRow(CFontRenderer fr, String label, boolean enabled,
                                int x, int y, int mouseX, int mouseY) {
         int width = SETTINGS_W - 12;
         boolean hover = isInside(mouseX, mouseY, x, y, width, COLOR_ROW_H);
         if (hover) {
             drawRoundedRect(x, y, width, COLOR_ROW_H, 7, 0x332F4050);
         }
-        drawString(fr, label, x + 6, y + 9, 0xFFD7DEE8);
+        drawExternalText(fr, label, x + 6, y + 9, 0xFFD7DEE8);
         int switchX = x + width - 43;
         int switchY = y + 6;
         drawRoundedRect(switchX, switchY, 34, 14, 7,
@@ -478,29 +483,29 @@ public class GuiHudEditor extends GuiScreen {
         int knobX = enabled ? switchX + 21 : switchX + 2;
         drawRoundedRect(knobX, switchY + 2, 11, 10, 5, 0xFFF5F7FA);
     }
-    private void drawChoiceRow(FontRenderer fr, String label, String value,
+    private void drawChoiceRow(CFontRenderer fr, String label, String value,
                                int x, int y, int mouseX, int mouseY) {
         int width = SETTINGS_W - 12;
         boolean hover = isInside(mouseX, mouseY, x, y, width, COLOR_ROW_H);
         if (hover) {
             drawRoundedRect(x, y, width, COLOR_ROW_H, 7, 0x332F4050);
         }
-        drawString(fr, label, x + 6, y + 9, 0xFFD7DEE8);
+        drawExternalText(fr, label, x + 6, y + 9, 0xFFD7DEE8);
         String safeValue = value == null ? "默认" : value;
         int pillW = Math.max(52, fr.getStringWidth(safeValue) + 20);
         int pillX = x + width - pillW - 6;
         drawRoundedRect(pillX, y + 5, pillW, 17, 8, hover ? 0xFF5A7391 : 0xFF435367);
-        drawCenteredString(fr, safeValue, pillX + pillW / 2, y + 9, 0xFFF7F9FC);
+        drawCenteredExternalText(fr, safeValue, pillX + pillW / 2, y + 9, 0xFFF7F9FC);
     }
-    private void drawSlider(FontRenderer fr, HudSetting setting, int x, int y, int w,
+    private void drawSlider(CFontRenderer fr, HudSetting setting, int x, int y, int w,
                             int mouseX, int mouseY) {
         boolean hover = isInside(mouseX, mouseY, x, y, w, SLIDER_ROW_H);
         if (hover || draggingSlider == setting) {
             drawRoundedRect(x, y, w, SLIDER_ROW_H, 7, 0x332F4050);
         }
-        drawString(fr, setting.getLabel(), x + 6, y + 5, 0xFFD4DCE7);
+        drawExternalText(fr, setting.getLabel(), x + 6, y + 5, 0xFFD4DCE7);
         String valueText = formatSliderValue(setting, setting.getValue());
-        drawString(fr, valueText, x + w - 6 - fr.getStringWidth(valueText), y + 5, 0xFFACB8C7);
+        drawExternalText(fr, valueText, x + w - 6 - fr.getStringWidth(valueText), y + 5, 0xFFACB8C7);
 
         int trackX = x + 7;
         int trackY = y + 20;
@@ -512,13 +517,13 @@ public class GuiHudEditor extends GuiScreen {
         drawRoundedRect(fillX - 3, trackY - 3, 7, 9, 4, 0xFFF5F7FC);
         drawRoundedRect(fillX - 1, trackY - 1, 3, 5, 2, 0xFFBDAFFF);
     }
-    private void drawColorPicker(FontRenderer fr, int panelX, int panelY, int mouseX, int mouseY) {
+    private void drawColorPicker(CFontRenderer fr, int panelX, int panelY, int mouseX, int mouseY) {
         int x = getSettingsLayout().pickerX(panelX);
         int y = getSettingsLayout().pickerY(panelY);
         drawSoftCardShadow(x, y, PICKER_W, PICKER_H, 12);
         drawRoundedRect(x, y, PICKER_W, PICKER_H, 12, 0xF51A202A);
         drawRoundedRect(x + 1, y + 1, PICKER_W - 2, 27, 10, 0xFF252E3B);
-        drawString(fr, editingColor == EditingColor.CURRENT ? "当前歌词颜色" : "普通歌词颜色",
+        drawExternalText(fr, editingColor == EditingColor.CURRENT ? "当前歌词颜色" : "普通歌词颜色",
                 x + 12, y + 10, 0xFFF5F7FA);
         drawSmallButton(fr, "×", x + PICKER_W - 26, y + 6, 18, 16, mouseX, mouseY);
 
@@ -544,14 +549,42 @@ public class GuiHudEditor extends GuiScreen {
                 hexColorInput.isFocused() ? 0xFF39495E : 0xFF2B3645);
         drawRoundedRect(inputX, inputY, HEX_INPUT_W, 1, 1,
                 hexColorInput.isFocused() ? 0xFF8AB9FF : 0xFF617187);
-        hexColorInput.drawTextBox();
-        drawString(fr, "输入 HEX", inputX + HEX_INPUT_W + 8, hueY + 28, 0xFF8F9BAD);
+        drawExternalText(fr, hexColorInput.getText(), inputX + 5, inputY + 4, 0xFFF4F7FB);
+        if (hexColorInput.isFocused()) {
+            int caretX = inputX + 6 + fr.getStringWidth(hexColorInput.getText());
+            drawRoundedRect(caretX, inputY + 4, 1, Math.max(8, (int) fr.getFontHeight() - 2), 1, 0xFFEAF3FF);
+        }
+        drawExternalText(fr, "输入 HEX", inputX + HEX_INPUT_W + 8, hueY + 28, 0xFF8F9BAD);
     }
-    private void drawSmallButton(FontRenderer fr, String text, int x, int y, int w, int h,
+    private void drawSmallButton(CFontRenderer fr, String text, int x, int y, int w, int h,
                                  int mouseX, int mouseY) {
         drawRoundedRect(x, y, w, h, h * 0.5, isInside(mouseX, mouseY, x, y, w, h)
                 ? 0xFF526680 : 0xFF364253);
-        drawCenteredString(fr, text, x + w / 2, y + 4, 0xFFF7F9FC);
+        drawCenteredExternalText(fr, text, x + w / 2, y + 4, 0xFFF7F9FC);
+    }
+    /**
+     * The HUD editor intentionally uses the same external font pipeline as the player UI.
+     * GuiTextField is retained only for keyboard/cursor handling; its vanilla draw pass is bypassed.
+     */
+    private static void drawExternalText(CFontRenderer font, String text, double x, double y, int color) {
+        if (font != null && text != null) {
+            font.drawString(text, x, y, color);
+        }
+    }
+
+    private static void drawCenteredExternalText(CFontRenderer font, String text, double centerX, double y, int color) {
+        if (font != null && text != null) {
+            font.drawString(text, centerX - font.getStringWidthD(text) * .5, y, color);
+        }
+    }
+
+    private static CFontRenderer getHudFont() {
+        return FontManager.pf12 != null ? FontManager.pf12 : FontManager.pf14;
+    }
+
+    private static int getHudFontWidth(String text) {
+        CFontRenderer font = getHudFont();
+        return font == null ? 0 : font.getStringWidth(text == null ? "" : text);
     }
     private void drawColorSwatch(int x, int y, int w, int h, Color color, boolean selected) {
         drawRoundedRect(x, y, w, h, 7, color.getRGB() | 0xFF000000);
@@ -861,7 +894,7 @@ public class GuiHudEditor extends GuiScreen {
         if (isInside(mouseX, mouseY, tog1X, barY + 6, togW, togH)) {
             info.setEnabled(!info.isEnabled());
         }
-        int tog2X = tog1X + togW + 4 + fontRendererObj.getStringWidth("信息栏") + 16;
+        int tog2X = tog1X + togW + 4 + getHudFontWidth("信息栏") + 16;
         if (isInside(mouseX, mouseY, tog2X, barY + 6, togW, togH)) {
             lyrics.setEnabled(!lyrics.isEnabled());
         }
@@ -913,7 +946,7 @@ public class GuiHudEditor extends GuiScreen {
         super.keyTyped(typedChar, keyCode);
     }
 
-    private void drawResetConfirmation(FontRenderer fr, int mouseX, int mouseY) {
+    private void drawResetConfirmation(CFontRenderer fr, int mouseX, int mouseY) {
         // A translucent dark mask preserves the live game preview without introducing the old white canvas.
         Gui.drawRect(0, 0, width, height, 0x6D000000);
         int dialogW = Math.min(310, Math.max(238, width - 32));
@@ -923,9 +956,9 @@ public class GuiHudEditor extends GuiScreen {
         drawSoftCardShadow(dialogX, dialogY, dialogW, dialogH, 12);
         drawRoundedRect(dialogX, dialogY, dialogW, dialogH, 12, 0xF01A202A);
         drawRoundedRect(dialogX + 16, dialogY + 17, 20, 20, 10, 0xFFD96B53);
-        drawCenteredString(fr, "!", dialogX + 26, dialogY + 22, 0xFFFFFFFF);
-        drawString(fr, "恢复默认设置？", dialogX + 47, dialogY + 18, 0xFFF4F7FB);
-        drawString(fr, "歌词与灵动岛外观将恢复为默认值。", dialogX + 17, dialogY + 49, 0xFFABB6C5);
+        drawCenteredExternalText(fr, "!", dialogX + 26, dialogY + 22, 0xFFFFFFFF);
+        drawExternalText(fr, "恢复默认设置？", dialogX + 47, dialogY + 18, 0xFFF4F7FB);
+        drawExternalText(fr, "歌词与灵动岛外观将恢复为默认值。", dialogX + 17, dialogY + 49, 0xFFABB6C5);
 
         int cancelW = 74;
         int confirmW = 106;
@@ -936,8 +969,8 @@ public class GuiHudEditor extends GuiScreen {
         boolean hoverConfirm = isInside(mouseX, mouseY, confirmX, buttonY, confirmW, 23);
         drawRoundedRect(cancelX, buttonY, cancelW, 23, 8, hoverCancel ? 0xFF465363 : 0xFF303B49);
         drawRoundedRect(confirmX, buttonY, confirmW, 23, 8, hoverConfirm ? 0xFFEC665D : 0xFFD94F4D);
-        drawCenteredString(fr, "取消", cancelX + cancelW / 2, buttonY + 7, 0xFFF4F7FB);
-        drawCenteredString(fr, "恢复默认", confirmX + confirmW / 2, buttonY + 7, 0xFFFFFFFF);
+        drawCenteredExternalText(fr, "取消", cancelX + cancelW / 2, buttonY + 7, 0xFFF4F7FB);
+        drawCenteredExternalText(fr, "恢复默认", confirmX + confirmW / 2, buttonY + 7, 0xFFFFFFFF);
     }
 
     private void handleResetConfirmationClick(int mouseX, int mouseY) {
