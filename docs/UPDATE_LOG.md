@@ -1,5 +1,52 @@
 # 更新日志
 
+## 2026-08-20：LX 自定义源平台接入与官方协议适配
+
+### 自定义平台独立搜索与播放链路
+
+- “音乐来源 → 浏览自定义平台”进入后，按用户点选的平台执行搜索；搜索只使用该平台，不会自动跨平台聚合或换源。
+- 搜索与播放解析分离：
+  - **搜索**由项目内置平台接口负责，返回歌曲元数据（`songmid` / `hash` / `strMediaMid` / `albumMid` / `copyrightId` 等）。
+  - **播放 URL**由用户选用的 LX 脚本通过 `musicUrl` 解析。
+- 当前平台检索映射：`WY` 网易云、`TX` QQ、`KW` 酷我、`KG` 酷狗、`MG` 咪咕。
+
+### 搜索相关修复
+
+- 自定义 `TX` 搜索改用 QQ 公共歌曲搜索接口，规避 Cadence QQ Desktop 搜索返回 `code=2001` 导致的自定义平台搜索失败。
+- 修复“0 条搜索结果”时临时搜索歌单未标记加载完成、界面无限显示“正在加载曲目”的问题。
+- 搜索完成通知改回主线程刷新，避免后台线程直接重建 GUI 组件。
+
+### LX Desktop 官方协议适配
+
+- `globalThis.lx.env` 对齐为官方桌面值 `desktop`。
+- 补齐 `lx.utils`：`buffer.from` / `buffer.bufToString`、`crypto.md5` / `randomBytes` / `aesEncrypt` / `rsaEncrypt`、`zlib.inflate` / `zlib.deflate`。
+- HTTP 请求回调对齐为官方 `(err, resp, body)`，并继续保留 `resp.body` 兼容旧写法。
+- 响应对象补充 `statusCode`、`statusMessage`、`body`、`headers`；响应头同时保留原始名与全小写别名，兼容 `set-cookie` 读取。
+- `request` 支持 `method` / `headers` / `body` / `form` / `timeout`；`form` 自动按 `application/x-www-form-urlencoded` 编码。
+- 音质映射对齐 LX 官方词汇：`128k` / `320k` / `flac` / `flac24bit`。
+
+### 现代 JavaScript 兼容与初始化修复
+
+- 转译级别由 `WHITESPACE_ONLY` 调整为 `SIMPLE_OPTIMIZATIONS`，使 Closure 自动注入 `$jscomp` 运行时，修复 `ReferenceError: "$jscomp" is not defined`。
+- 调整 BigInt 占位符为 `globalThis["@muonium_lx_bigint_N@"]`，避免 SIMPLE 变量重命名破坏还原。
+- 补齐 Rhino 缺失的 ES6 库方法：`Object.assign` / `Object.keys`、`Array.from` / `find` / `findIndex` / `includes`、`String.includes` / `startsWith` / `endsWith` / `repeat` / `trim`、`Number.isFinite` / `isNaN` / `isInteger`。
+- 补齐 `console` 方法（含 `group` / `groupEnd`），修复脚本因 `console.group` 缺失而在解析前崩溃的问题。
+- 初始化改为两阶段等待，支持脚本通过异步 HTTP 回调后再发送 `lx.inited`；同步音源行为不变。
+
+### 灵动岛自定义源反馈
+
+- 新增自定义平台选择、搜索加载中、搜索完成、搜索失败、播放解析中、解析完成、解析失败等状态反馈。
+- 反馈仅展示平台与接口可读名称，不暴露 Cookie、Token 或完整请求 URL。
+- 修复“加载中”持久状态会阻塞完成通知的问题，完成/失败会立即替换加载动画。
+
+### 验证
+
+```powershell
+.\gradlew.bat build --no-daemon
+```
+
+结果：`BUILD SUCCESSFUL`。
+
 ## 2026-08-19：LX 自定义音源导入与备用解析
 ### 自定义音源管理
 
@@ -25,6 +72,13 @@
 - 脚本初始化、单次 URL 解析与脚本 HTTP 请求均有超时保护。
 - 脚本发生异常、返回非法 URL 或连续失败时，不会阻塞切歌或影响下一首播放。
 
+### 自定义音源现代脚本兼容修复
+
+- 修复当前 LX 音源中默认参数、`async / await`、空值合并 `??`、可选链 `?.` 等现代 JavaScript 语法在 Java 8 Rhino 中报 `missing formal parameter`、无法初始化的问题。
+- 在脚本进入 Rhino 前，新增 Java 8 兼容的 ECMAScript 降级转换；BigInt 字面量会保留给 Rhino 原生执行，避免转换器错误改写数值语义。
+- 对 Closure 转换产生的顶层 `arguments` 辅助变量增加函数作用域保护，修复部分压缩脚本的 `ReferenceError: "arguments" is not defined`。
+- 初始化失败会记录 `[LX Source] Initialization failed for ...` 日志，并把可读原因保存在音源管理界面。
+- 已针对当前导入的 Huibq 音源完成初始化验证；六音音源已通过语法/运行时兼容验证，但其脚本自身会在无法获取远程授权/更新信息时主动拒绝初始化。
 ### LX JavaScript 兼容层
 
 - 新增 Rhino 运行时，并按 Java **8u502** 兼容目标接入。
@@ -68,6 +122,12 @@ musicUrl
 | `kw` / `kg` / `mg` 等 | 不会自动转换 | 不进行跨平台搜索或匹配 |
 
 - 自定义音源失败后会继续保留现有播放失败处理与下一首兜底逻辑。
+### 自定义源独立内容浏览
+
+- 音乐来源二级菜单增加“**浏览自定义平台**”，与“官方音乐源”的网易云音乐、QQ 音乐卡片独立分区，避免误认为是官方账号或歌单入口。
+- 进入任意已就绪的“自定义脚本 + 平台”后，顶部搜索框会切换为该平台搜索；搜索结果以原有歌曲列表样式展示，点击即可加入临时队列并直接交给所选 LX 脚本的 `musicUrl` 播放。
+- 当前支持脚本声明的 `WY`、`TX`、`KW`、`KG`、`MG` 平台检索；一次搜索和播放只使用用户点选的平台，不会自动轮询、聚合或切换到其他平台。
+- 返回网易云或 QQ 官方音乐源时会退出自定义内容模式，官方主页、账号、歌单、排行榜与搜索逻辑维持原实现。
 ### 自定义源平台手动选择
 
 - 每个已导入音源会显示脚本实际声明的 `WY`、`TX`、`KW`、`KG`、`MG` 等平台按钮。

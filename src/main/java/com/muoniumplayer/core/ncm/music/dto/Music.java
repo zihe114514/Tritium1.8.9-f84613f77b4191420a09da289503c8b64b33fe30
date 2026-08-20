@@ -19,6 +19,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -109,7 +111,10 @@ public class Music {
     /** Highest provider tier advertised by song/privilege metadata; empty means not supplied. */
     private transient String highestQualityLabel = "";
     private transient Track cadenceTrack;
-
+    /** True for songs returned by the selected custom source platform search. */
+    private transient boolean customSourceTrack;
+    private transient String customSourcePlatform = "";
+    private transient Map<String, Object> customSourceInfo;
     /** Actual stream quality resolved for the current playback request. */
     private transient volatile PlaybackQuality playbackQuality = PlaybackQuality.UNKNOWN;
 
@@ -289,6 +294,35 @@ public class Music {
         return music;
     }
 
+    /** Creates a queue item returned by a manually selected custom-source platform. */
+    public static Music fromCustomSourceResult(Map<String, Object> info, String sourcePlatform) {
+        if (info == null) return null;
+        String name = mapString(info, "name");
+        String singer = mapString(info, "singer");
+        String idText = mapString(info, "id");
+        long stableId = stableLong("custom:" + sourcePlatform + ":" + idText + ":" + name);
+        List<Artist> artistList = new ArrayList<>();
+        artistList.add(new Artist(stableLong("custom:artist:" + singer), singer.isEmpty() ? "Unknown" : singer,
+                Collections.emptyList(), Collections.emptyList()));
+        Album itemAlbum = new Album(stableLong("custom:album:" + mapString(info, "albumId")),
+                mapString(info, "albumName"), mapString(info, "img"), Collections.emptyList());
+        Music music = new Music(name, name, "", stableId, artistList, Collections.emptyList(), itemAlbum,
+                mapLong(info, "duration"), 0L, 0L, Collections.emptyList());
+        music.source = "tx".equalsIgnoreCase(sourcePlatform) ? MusicPlatform.QQ : MusicPlatform.NETEASE;
+        music.sourceId = idText;
+        music.sourceMid = mapString(info, "strMediaMid");
+        music.externalCoverUrl = mapString(info, "img");
+        music.customSourceTrack = true;
+        music.customSourcePlatform = sourcePlatform == null ? "" : sourcePlatform.toLowerCase(Locale.ROOT);
+        music.customSourceInfo = new HashMap<>(info);
+        return music;
+    }
+
+    public boolean isCustomSourceTrack() { return customSourceTrack; }
+    public String getCustomSourcePlatform() { return customSourcePlatform == null ? "" : customSourcePlatform; }
+    public Map<String, Object> getCustomSourceInfo() { return customSourceInfo; }
+    private static String mapString(Map<String, Object> info, String key) { Object value = info.get(key); return value == null ? "" : String.valueOf(value); }
+    private static long mapLong(Map<String, Object> info, String key) { try { Object value = info.get(key); return value instanceof Number ? ((Number) value).longValue() : Long.parseLong(String.valueOf(value)); } catch (Throwable ignored) { return 0L; } }
     public Track toCadenceTrack() {
         if (cadenceTrack != null) return cadenceTrack;
         cadenceTrack = new Track(source.toCadenceSource(), getSourceId(), sourceMid, nonNull(name),
@@ -310,7 +344,7 @@ public class Music {
     }
 
     public boolean isNetease() {
-        return getSource() == MusicPlatform.NETEASE;
+        return !customSourceTrack && getSource() == MusicPlatform.NETEASE;
     }
 
     /**
@@ -327,6 +361,7 @@ public class Music {
     }
 
     public String getStableKey() {
+        if (customSourceTrack) return "custom_" + getCustomSourcePlatform() + "_" + Long.toUnsignedString(id);
         return getSource().name().toLowerCase() + '_' + Long.toUnsignedString(id);
     }
 
@@ -401,6 +436,7 @@ public class Music {
     public Tuple<String, String> getPlayUrl() {
         // Never show a quality badge carried over from a previous failed resolve.
         this.playbackQuality = PlaybackQuality.UNKNOWN;
+        if (customSourceTrack) return resolveCustomSourceFallback();
         if (isQQ()) {
             Tuple<String, String> result = resolveCadenceWithStandardFallback();
             return result != null ? result : resolveCustomSourceFallback();

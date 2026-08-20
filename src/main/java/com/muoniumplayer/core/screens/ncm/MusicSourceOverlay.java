@@ -6,6 +6,7 @@ import com.muoniumplayer.core.ncm.customsource.CustomSourceManager;
 import com.muoniumplayer.core.ncm.music.CadenceMusicService;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.rendering.FontelloIcons;
+import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.MusicBrandIcons;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.ui.container.Panel;
@@ -17,6 +18,8 @@ import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.TextFieldWidget;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
+import java.awt.FileDialog;
+import java.awt.Frame;
 import java.util.List;
 
 /**
@@ -29,6 +32,7 @@ public final class MusicSourceOverlay extends NCMPanel {
     private boolean closing;
     private boolean managing;
     private boolean importRunning;
+    private boolean choosingCustomContent;
     private String statusText = "选择官方音乐源，或选用一个用于播放回退的自定义音源";
     private int statusColor = 0xAEB5C4;
     private double presentation;
@@ -41,7 +45,7 @@ public final class MusicSourceOverlay extends NCMPanel {
     public void dispose() { closing = true; }
 
     public void handleEscape() {
-        if (managing) showOverview(); else dispose();
+        if (managing || choosingCustomContent) showOverview(); else dispose();
     }
 
     private void showOverview() {
@@ -74,6 +78,21 @@ public final class MusicSourceOverlay extends NCMPanel {
             resolverSummary.setPosition(16, 242);
         });
 
+        RoundedButtonWidget browse = new RoundedButtonWidget("浏览自定义平台", FontManager.pf12bold);
+        dialog.addChild(browse);
+        browse.setRadius(7);
+        browse.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            showCustomContentSources();
+            return true;
+        });
+        browse.setBeforeRenderCallback(() -> {
+            browse.setBounds(132, 28);
+            browse.setPosition(16, 267);
+            browse.setColor(browse.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            browse.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+        });
         RoundedButtonWidget manage = new RoundedButtonWidget("管理音源", FontManager.pf12bold);
         dialog.addChild(manage);
         manage.setRadius(7);
@@ -84,7 +103,7 @@ public final class MusicSourceOverlay extends NCMPanel {
         });
         manage.setBeforeRenderCallback(() -> {
             manage.setBounds(112, 28);
-            manage.setPosition(Math.max(16, dialog.getWidth() - 128), 231);
+            manage.setPosition(Math.max(16, dialog.getWidth() - 128), 267);
             manage.setColor(manage.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
             manage.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
@@ -97,7 +116,7 @@ public final class MusicSourceOverlay extends NCMPanel {
             detail.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             detail.setMaxWidth(Math.max(1, dialog.getWidth() - 32));
             detail.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-            detail.setPosition(16, dialog.getHeight() - 38);
+            detail.setPosition(16, dialog.getHeight() - 22);
         });
     }
 
@@ -107,6 +126,7 @@ public final class MusicSourceOverlay extends NCMPanel {
         card.setRadius(10);
         card.setOnClickCallback((x, yy, button) -> {
             if (button != 0) return false;
+            CustomSourceManager.deactivateContentSource();
             if (CadenceMusicService.getCurrentPlatform() != platform) {
                 CadenceMusicService.setCurrentPlatform(platform);
                 NCMScreen.getInstance().markDirty();
@@ -152,6 +172,109 @@ public final class MusicSourceOverlay extends NCMPanel {
         });
     }
 
+    /** Separate browser: these are user-selected LX platform searches, not official providers. */
+    private void showCustomContentSources() {
+        choosingCustomContent = true;
+        managing = false;
+        importRunning = false;
+        getChildren().clear();
+        Panel dialog = createDialog(510, 430);
+        addBackButton(dialog, this::showOverview);
+        addDetailTitle(dialog, "自定义平台", "仅展示已导入脚本声明的平台；搜索和播放都使用你选择的该脚本");
+
+        ScrollPanel list = new ScrollPanel();
+        dialog.addChild(list);
+        list.setSpacing(6);
+        list.setScrollStrength(20);
+        list.setBeforeRenderCallback(() -> {
+            list.setBounds(Math.max(1, dialog.getWidth() - 32), Math.max(42, dialog.getHeight() - 82));
+            list.setPosition(16, 66);
+        });
+
+        List<CustomSourceInfo> sources = CustomSourceManager.getSources();
+        boolean hasReady = false;
+        for (CustomSourceInfo info : sources) {
+            if (!info.enabled || !"已就绪".equals(info.runtimeStatus) || info.getDeclaredSources().isEmpty()) continue;
+            hasReady = true;
+            addCustomContentRow(list, info);
+        }
+        if (!hasReady) {
+            LabelWidget empty = new LabelWidget("没有已就绪的自定义平台。请先在“管理音源”导入并等待脚本初始化。", FontManager.pf12);
+            list.addChild(empty);
+            empty.setClickable(false);
+            empty.setBeforeRenderCallback(() -> {
+                empty.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+                empty.setMaxWidth(Math.max(1, list.getWidth() - 8));
+                empty.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+                empty.setPosition(6, 12);
+            });
+        }
+    }
+
+    private void addCustomContentRow(ScrollPanel list, CustomSourceInfo info) {
+        Panel row = new Panel();
+        list.addChild(row);
+        row.setBeforeRenderCallback(() -> row.setBounds(Math.max(1, list.getWidth()), 68));
+        RoundedRectWidget background = new RoundedRectWidget();
+        row.addChild(background);
+        background.setClickable(false);
+        background.setRadius(8);
+        background.setBeforeRenderCallback(() -> {
+            background.setMargin(0);
+            background.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+        LabelWidget title = new LabelWidget(info.name, FontManager.pf12bold);
+        row.addChild(title);
+        title.setClickable(false);
+        title.setBeforeRenderCallback(() -> {
+            title.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            title.setMaxWidth(Math.max(1, row.getWidth() - 20));
+            title.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            title.setPosition(10, 8);
+        });
+        LabelWidget hint = new LabelWidget("自定义内容源 · 点击平台后使用顶部搜索框搜索歌曲", FontManager.pf12);
+        row.addChild(hint);
+        hint.setClickable(false);
+        hint.setBeforeRenderCallback(() -> {
+            hint.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            hint.setMaxWidth(Math.max(1, row.getWidth() - 20));
+            hint.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            hint.setPosition(10, 29);
+        });
+        int index = 0;
+        for (String sourceKey : info.getDeclaredSources()) {
+            final String platform = sourceKey;
+            final int buttonIndex = index++;
+            RoundedButtonWidget button = new RoundedButtonWidget(() -> platform.toUpperCase(), FontManager.pf12bold);
+            row.addChild(button);
+            button.setRadius(6);
+            button.setOnClickCallback((x, y, mouseButton) -> {
+                if (mouseButton != 0) return false;
+if (CustomSourceManager.activateContentSource(info.id, platform)) {
+                    DownloadDynamicIsland.showCustomContentSourceEntered(info.name, platform,
+                            CustomSourceManager.getPlatformEndpointLabel(platform));
+                    statusText = "已进入自定义「" + info.name + " · " + platform.toUpperCase() + "」";
+                    statusColor = 0x75D8A0;
+                    NCMScreen.getInstance().markDirty();
+                    dispose();
+                } else {
+                    statusText = "该自定义平台尚未就绪";
+                    statusColor = 0xF1767D;
+                    showCustomContentSources();
+                }
+                return true;
+            });
+            button.setBeforeRenderCallback(() -> {
+                boolean active = CustomSourceManager.isCustomContentMode()
+                        && info.selected && platform.equalsIgnoreCase(info.selectedPlatform);
+                button.setBounds(42, 20);
+                button.setPosition(10 + buttonIndex * 47, 45);
+                button.setColor(button.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                        : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
+                button.setTextColor(active ? 0x75D8A0 : NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+            });
+        }
+    }
     private void showManagement() {
         managing = true;
         getChildren().clear();
@@ -164,11 +287,20 @@ public final class MusicSourceOverlay extends NCMPanel {
         localPath.setPlaceholder("本地 .js 音源路径，例如 D:\\source.js");
         localPath.drawUnderline(false);
         localPath.setBeforeRenderCallback(() -> {
-            localPath.setBounds(Math.max(1, dialog.getWidth() - 132), 24);
+            localPath.setBounds(Math.max(1, dialog.getWidth() - 148), 24);
             localPath.setPosition(16, 68);
             localPath.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
-        RoundedButtonWidget importLocal = new RoundedButtonWidget("导入本地", FontManager.pf12bold);
+        RoundedButtonWidget browseLocal = new RoundedButtonWidget("浏览…", FontManager.pf12bold);
+        dialog.addChild(browseLocal);
+        browseLocal.setRadius(6);
+        browseLocal.setOnClickCallback((x, y, button) -> {
+            if (button != 0 || importRunning) return false;
+            browseLocalFile(localPath);
+            return true;
+        });
+        browseLocal.setBeforeRenderCallback(() -> layoutSmallImportButton(browseLocal, dialog, 68, dialog.getWidth() - 124));
+        RoundedButtonWidget importLocal = new RoundedButtonWidget("导入", FontManager.pf12bold);
         dialog.addChild(importLocal);
         importLocal.setRadius(6);
         importLocal.setOnClickCallback((x, y, button) -> {
@@ -176,7 +308,7 @@ public final class MusicSourceOverlay extends NCMPanel {
             importSource(false, localPath.getText());
             return true;
         });
-        importLocal.setBeforeRenderCallback(() -> layoutImportButton(importLocal, dialog, 68));
+        importLocal.setBeforeRenderCallback(() -> layoutSmallImportButton(importLocal, dialog, 68, dialog.getWidth() - 68));
 
         TextFieldWidget url = new TextFieldWidget(FontManager.pf12);
         dialog.addChild(url);
@@ -371,6 +503,39 @@ public final class MusicSourceOverlay extends NCMPanel {
                 statusColor = result.success ? 0x75D8A0 : 0xF1767D;
                 showManagement();
             });
+        });
+    }
+
+    private void layoutSmallImportButton(RoundedButtonWidget button, Panel dialog, double y, double x) {
+        button.setBounds(52, 24);
+        button.setPosition(Math.max(16, x), y);
+        button.setColor(importRunning ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)
+                : (button.isHovering() ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT_HOVER)
+                : NCMScreen.getColor(NCMScreen.ColorType.ACCENT)));
+        button.setTextColor(0xFFFFFF);
+    }
+
+    private void browseLocalFile(TextFieldWidget target) {
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                FileDialog dialog = new FileDialog((Frame) null, "选择 LX 音源脚本 (.js)", FileDialog.LOAD);
+                dialog.setFilenameFilter((dir, name) -> name != null && name.toLowerCase().endsWith(".js"));
+                dialog.setVisible(true);
+                String directory = dialog.getDirectory();
+                String file = dialog.getFile();
+                dialog.dispose();
+                if (directory == null || file == null) return;
+                final String selected = directory + file;
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    target.setText(selected);
+                    importSource(false, selected);
+                });
+            } catch (Throwable ignored) {
+                MultiThreadingUtil.runOnMainThread(() -> {
+                    statusText = "无法打开系统文件选择器，请手动输入完整路径";
+                    statusColor = 0xF1767D;
+                });
+            }
         });
     }
 

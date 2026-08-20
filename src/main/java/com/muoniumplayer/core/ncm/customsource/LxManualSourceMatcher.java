@@ -31,10 +31,10 @@ final class LxManualSourceMatcher {
     static Map<String, Object> find(Music music, String platform) throws Exception {
         String key = safe(platform).toLowerCase(Locale.ROOT);
         if ("wy".equals(key)) return official(music, MusicPlatform.NETEASE, key);
-        if ("tx".equals(key)) return official(music, MusicPlatform.QQ, key);
-        if ("kw".equals(key)) return choose(music, kuwo(music));
-        if ("kg".equals(key)) return choose(music, kugou(music));
-        if ("mg".equals(key)) return choose(music, migu(music));
+        if ("tx".equals(key)) return choose(music, qq(keyword(music), LIMIT));
+        if ("kw".equals(key)) return choose(music, kuwo(keyword(music), LIMIT));
+        if ("kg".equals(key)) return choose(music, kugou(keyword(music), LIMIT));
+        if ("mg".equals(key)) return choose(music, migu(keyword(music), LIMIT));
         throw new IllegalArgumentException("不支持的平台：" + key);
     }
 
@@ -47,29 +47,84 @@ final class LxManualSourceMatcher {
         return best == null || score < 60 ? null : info(key, best.getSourceId(), best.getName(), best.getArtistsName(), best.getDuration(), best.getAlbum() == null ? "" : String.valueOf(best.getAlbum().getId()), best.getAlbum() == null ? "" : best.getAlbum().getName(), "", safe(best.getSourceMid()), "");
     }
 
-    private static List<Map<String, Object>> kuwo(Music music) throws Exception {
-        String url = "http://search.kuwo.cn/r.s?client=kt&all=" + enc(keyword(music)) + "&pn=0&rn=" + LIMIT + "&uid=794762570&ver=kwplayer_ar_9.2.2.1&vipver=1&show_copyright_off=1&newver=1&ft=music&cluster=0&strategy=2012&encoding=utf8&rformat=json&vermerge=1&mobi=1&issubtitle=1";
+    /**
+     * QQ's Cadence desktop-search endpoint can reject anonymous clients with code 2001.  The
+     * legacy public search endpoint is intentionally used only for the user-selected custom TX
+     * platform; it does not alter the standalone official QQ provider or its account flow.
+     */
+private static List<Map<String, Object>> qq(String query, int limit) throws Exception {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Referer", "https://y.qq.com/");
+        headers.put("Origin", "https://y.qq.com");
+        String url = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?p=1&n=" + limit
+                + "&w=" + enc(query) + "&format=json";
+        JsonObject root = json(url, headers);
+        if (number(root, "code") != 0L) {
+            throw new IllegalStateException("QQ 搜索接口返回 code=" + number(root, "code"));
+        }
+        JsonArray items = array(obj(obj(root, "data"), "song"), "list");
+        List<Map<String, Object>> list = new ArrayList<>();
+        if (items == null) return list;
+        for (JsonElement value : items) {
+            JsonObject item = obj(value);
+            if (item == null) continue;
+            String songMid = text(item, "songmid");
+            if (songMid.isEmpty()) songMid = text(item, "songid");
+            if (songMid.isEmpty()) continue;
+            String mediaMid = text(item, "strMediaMid");
+            if (mediaMid.isEmpty()) mediaMid = text(item, "media_mid");
+            Map<String, Object> entry = info("tx", songMid, text(item, "songname"), singers(array(item, "singer")),
+                    seconds(item, "interval"), text(item, "albumid"), text(item, "albumname"), "", mediaMid, "");
+            entry.put("albumMid", text(item, "albummid"));
+            list.add(entry);
+        }
+        return list;
+    }
+
+    private static List<Map<String, Object>> kuwo(String query, int limit) throws Exception {
+        String url = "http://search.kuwo.cn/r.s?client=kt&all=" + enc(query) + "&pn=0&rn=" + limit + "&uid=794762570&ver=kwplayer_ar_9.2.2.1&vipver=1&show_copyright_off=1&newver=1&ft=music&cluster=0&strategy=2012&encoding=utf8&rformat=json&vermerge=1&mobi=1&issubtitle=1";
         List<Map<String, Object>> list = new ArrayList<>(); JsonArray items = array(json(url, null), "abslist"); if (items == null) return list;
         for (JsonElement value : items) { JsonObject item = obj(value); if (item == null) continue; String id = text(item, "MUSICRID").replace("MUSIC_", ""); if (!id.isEmpty()) list.add(info("kw", id, text(item, "SONGNAME"), text(item, "ARTIST"), seconds(item, "DURATION"), text(item, "ALBUMID"), text(item, "ALBUM"), "", "", "")); }
         return list;
     }
 
-    private static List<Map<String, Object>> kugou(Music music) throws Exception {
-        String url = "https://songsearch.kugou.com/song_search_v2?keyword=" + enc(keyword(music)) + "&page=1&pagesize=" + LIMIT + "&userid=0&clientver=&platform=WebFilter&filter=2&iscorrection=1&privilege_filter=0&area_code=1";
+    private static List<Map<String, Object>> kugou(String query, int limit) throws Exception {
+        String url = "https://songsearch.kugou.com/song_search_v2?keyword=" + enc(query) + "&page=1&pagesize=" + limit + "&userid=0&clientver=&platform=WebFilter&filter=2&iscorrection=1&privilege_filter=0&area_code=1";
         List<Map<String, Object>> list = new ArrayList<>(); JsonArray items = array(obj(json(url, null), "data"), "lists"); if (items == null) return list;
         for (JsonElement value : items) { JsonObject item = obj(value); if (item == null) continue; String id = text(item, "Audioid"), hash = text(item, "FileHash"); if (!id.isEmpty() && !hash.isEmpty()) list.add(info("kg", id, text(item, "SongName"), singers(array(item, "Singers")), seconds(item, "Duration"), text(item, "AlbumID"), text(item, "AlbumName"), hash, "", "")); }
         return list;
     }
 
-    private static List<Map<String, Object>> migu(Music music) throws Exception {
-        String query = keyword(music), stamp = String.valueOf(System.currentTimeMillis()), device = "963B7AA0D21511ED807EE5846EC87D20";
+    private static List<Map<String, Object>> migu(String query, int limit) throws Exception {
+        String stamp = String.valueOf(System.currentTimeMillis()), device = "963B7AA0D21511ED807EE5846EC87D20";
         String switches = "{\"song\":1,\"album\":0,\"singer\":0,\"tagSong\":1,\"mvSong\":0,\"bestShow\":1,\"songlist\":0,\"lyricSong\":0}";
         String sign = md5(query + "6cdc72a439cef99a3418d2a78aa28c73yyapp2d16148780a1dcc7408e06336b98cfd50" + device + stamp);
         Map<String, String> headers = new HashMap<>(); headers.put("uiVersion", "A_music_3.6.1"); headers.put("deviceId", device); headers.put("timestamp", stamp); headers.put("sign", sign); headers.put("channel", "0146921");
-        String url = "https://jadeite.migu.cn/music_search/v3/search/searchAll?isCorrect=0&isCopyright=1&searchSwitch=" + enc(switches) + "&pageSize=" + LIMIT + "&text=" + enc(query) + "&pageNo=1&sort=0&sid=USS";
+        String url = "https://jadeite.migu.cn/music_search/v3/search/searchAll?isCorrect=0&isCopyright=1&searchSwitch=" + enc(switches) + "&pageSize=" + limit + "&text=" + enc(query) + "&pageNo=1&sort=0&sid=USS";
         List<Map<String, Object>> list = new ArrayList<>(); JsonArray groups = array(obj(json(url, headers), "songResultData"), "resultList"); if (groups == null) return list;
         for (JsonElement group : groups) { if (!group.isJsonArray()) continue; for (JsonElement value : group.getAsJsonArray()) { JsonObject item = obj(value); if (item == null) continue; String id = text(item, "songId"), copyright = text(item, "copyrightId"); if (!id.isEmpty() && !copyright.isEmpty()) list.add(info("mg", id, text(item, "name"), singers(array(item, "singerList")), number(item, "duration"), text(item, "albumId"), text(item, "album"), "", "", copyright)); } }
         return list;
+    }
+
+    static List<Map<String, Object>> search(String platform, String keyword, int limit) throws Exception {
+        String key = safe(platform).toLowerCase(Locale.ROOT);
+        int bounded = Math.max(1, Math.min(30, limit));
+        String query = safe(keyword);
+        if (query.isEmpty()) return new ArrayList<>();
+        if ("wy".equals(key)) {
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (Music item : CadenceMusicService.search(MusicPlatform.NETEASE, query, bounded)) {
+                result.add(info(key, item.getSourceId(), item.getName(), item.getArtistsName(), item.getDuration(),
+                        item.getAlbum() == null ? "" : String.valueOf(item.getAlbum().getId()),
+                        item.getAlbum() == null ? "" : item.getAlbum().getName(), "", item.getSourceMid(), ""));
+            }
+            return result;
+        }
+        if ("tx".equals(key)) return qq(query, bounded);
+        if ("kw".equals(key)) return kuwo(query, bounded);
+        if ("kg".equals(key)) return kugou(query, bounded);
+        if ("mg".equals(key)) return migu(query, bounded);
+        throw new IllegalArgumentException("不支持的平台：" + key);
     }
 
     private static Map<String, Object> choose(Music music, List<Map<String, Object>> values) {

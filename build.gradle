@@ -129,6 +129,8 @@ dependencies {
     // LX 自定义音源：Rhino 1.7.15 支持 Java 8，且比 JDK 8u502 自带 Nashorn 更能兼容
     // 现代 LX 音源脚本的 Promise / ES6 语法。最终会 relocation，避免与其他 Mod 的 Rhino 冲突。
     shade 'org.mozilla:rhino:1.7.15'
+    // Closure Compiler：将 LX 音源脚本的现代 ECMAScript 语法降级到 Rhino/Java 8 可执行的 ES5。
+    shade 'com.google.javascript:closure-compiler:v20210202'
     // Cadence 由 Kotlin 编写，运行时必须携带 stdlib；与其他 MOD 隔离后打入最终 JAR。
     shade files(forgeKotlinStdlib)
     // Cadence 使用 Gson 2.11 API；统一迁移避免与 Minecraft 1.8.9 自带旧版 Gson 冲突。
@@ -209,6 +211,8 @@ shadowJar {
     relocate 'kotlin', 'repackage.kotlin'
     relocate 'com.sun.jna', 'repackage.com.sun.jna'
     relocate 'org.mozilla.javascript', 'repackage.org.mozilla.javascript'
+    relocate 'com.google.javascript', 'repackage.com.google.javascript'
+
 }
 
 // ForgeGradle 2.1 对 shadowJar 做 SRG 重映射（MCP → SRG），保证 mod 类能在 obf 客户端运行。

@@ -40,6 +40,8 @@ public final class CustomSourceManager {
     private static final List<CustomSourceInfo> SOURCES = new ArrayList<>();
     private static final Map<String, LxScriptRuntime> RUNTIMES = new HashMap<>();
     private static volatile boolean loaded;
+    /** UI content mode is session-scoped; selected source/platform itself is persisted. */
+    private static volatile boolean customContentMode;
 
     private CustomSourceManager() {
     }
@@ -85,9 +87,34 @@ public final class CustomSourceManager {
     }
 
     /** Returns the manually selected platform key for the current custom source, or an empty string. */
-    public static String getSelectedPlatform() {
+public static String getSelectedPlatform() {
         CustomSourceInfo source = getSelectedSource();
         return source == null ? "" : safe(source.selectedPlatform).toLowerCase(Locale.ROOT);
+    }
+
+    /** Human-readable name for a platform key declared by an imported LX-compatible script. */
+    public static String getPlatformDisplayName(String platform) {
+        String key = safe(platform).toLowerCase(Locale.ROOT);
+        if ("wy".equals(key)) return "网易云音乐";
+        if ("tx".equals(key)) return "QQ 音乐";
+        if ("kw".equals(key)) return "酷我音乐";
+        if ("kg".equals(key)) return "酷狗音乐";
+        if ("mg".equals(key)) return "咪咕音乐";
+        return key.isEmpty() ? "自定义音乐" : key.toUpperCase(Locale.ROOT);
+    }
+
+    /**
+     * A safe UI label for the actual endpoint category currently used. It intentionally omits
+     * the raw URL and any potentially sensitive query, cookie or authorization data.
+     */
+    public static String getPlatformEndpointLabel(String platform) {
+        String key = safe(platform).toLowerCase(Locale.ROOT);
+        if ("wy".equals(key)) return "网易云歌曲搜索 / 播放接口";
+        if ("tx".equals(key)) return "QQ 音乐歌曲搜索 / 播放接口";
+        if ("kw".equals(key)) return "酷我歌曲搜索 / 播放接口";
+        if ("kg".equals(key)) return "酷狗歌曲搜索 / 播放接口";
+        if ("mg".equals(key)) return "咪咕歌曲搜索 / 播放接口";
+        return "自定义歌曲搜索 / 播放接口";
     }
 
     /** Selects a source using its first declared platform. Kept for simple toggle interactions. */
@@ -148,17 +175,47 @@ public final class CustomSourceManager {
         if (changed) saveLocked();
         return true;
     }
+    /** Enables the standalone custom-source search/play view for the selected source/platform. */
+    public static boolean activateContentSource(String id, String platform) {
+        if (!select(id, platform)) return false;
+        customContentMode = getSelectedSource() != null;
+        return customContentMode;
+    }
+
+    /** Returns whether the player search bar currently targets the separate custom source view. */
+    public static boolean isCustomContentMode() {
+        return customContentMode && getSelectedSource() != null;
+    }
+
+    /** Leaves custom browsing without changing the saved source/platform fallback choice. */
+    public static void deactivateContentSource() {
+        customContentMode = false;
+    }
     public static ImportResult importLocal(String pathText) {
-        if (pathText == null || pathText.trim().isEmpty()) return ImportResult.failure("请选择本地 .js 音源文件");
+        String normalized = normalizeLocalPath(pathText);
+        if (normalized.isEmpty()) return ImportResult.failure("请选择本地 .js 音源文件");
         try {
-            File file = new File(pathText.trim());
-            if (!file.isFile()) return ImportResult.failure("本地音源文件不存在");
+            File file = new File(normalized);
+            if (!file.isFile()) return ImportResult.failure("本地音源文件不存在：" + normalized);
             if (file.length() > MAX_SCRIPT_BYTES) return ImportResult.failure("音源脚本超过 9 MB 限制");
             byte[] bytes = readLimited(new FileInputStream(file), MAX_SCRIPT_BYTES);
             return importScript(new String(bytes, StandardCharsets.UTF_8), "file:" + file.getAbsolutePath());
         } catch (Throwable throwable) {
             return ImportResult.failure(messageOf(throwable, "读取本地音源失败"));
         }
+    }
+
+    /** Removes surrounding quotes, optional file:// prefix and stray whitespace from a pasted path. */
+    private static String normalizeLocalPath(String pathText) {
+        String raw = pathText == null ? "" : pathText.trim();
+        if (raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"")) {
+            raw = raw.substring(1, raw.length() - 1).trim();
+        }
+        String lower = raw.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("file:///")) raw = raw.substring("file:///".length());
+        else if (lower.startsWith("file://")) raw = raw.substring("file://".length());
+        else if (lower.startsWith("file:")) raw = raw.substring("file:".length());
+        return raw.trim();
     }
 
     public static ImportResult importFromUrl(String address) {
@@ -268,6 +325,40 @@ public final class CustomSourceManager {
      * Called after official provider resolution fails. The script and target platform are both
      * explicit user choices; matching runs only for that target and never tries another platform.
      */
+/** Searches only the custom script/platform that the user explicitly selected. */
+    public static List<Music> searchCurrent(String keyword, int limit) {
+        CustomSourceInfo source = getSelectedSource();
+        String platform = getSelectedPlatform();
+        if (source == null || platform.isEmpty()) return Collections.emptyList();
+        synchronized (LOCK) {
+            LxScriptRuntime runtime = RUNTIMES.get(source.id);
+            if (runtime == null || !runtime.isReady()) {
+                DownloadDynamicIsland.showCustomContentSearchFailure(source.name, platform,
+                        getPlatformEndpointLabel(platform), "音源尚未就绪", 0L);
+                return Collections.emptyList();
+            }
+        }
+        String endpointLabel = getPlatformEndpointLabel(platform);
+        long startedAt = System.currentTimeMillis();
+        DownloadDynamicIsland.showCustomContentSearchLoading(source.name, platform, endpointLabel, keyword);
+        try {
+            List<Music> result = new ArrayList<>();
+            for (Map<String, Object> info : LxManualSourceMatcher.search(platform, keyword, limit)) {
+                Music music = Music.fromCustomSourceResult(info, platform);
+                if (music != null) result.add(music);
+            }
+            DownloadDynamicIsland.showCustomContentSearchSuccess(source.name, platform, endpointLabel,
+                    result.size(), System.currentTimeMillis() - startedAt);
+            return result;
+        } catch (Throwable throwable) {
+            String message = messageOf(throwable, "搜索失败");
+            long elapsedMillis = System.currentTimeMillis() - startedAt;
+            System.err.println("[LX Source] Search failed for " + source.name + " / " + platform + ": " + message);
+            DownloadDynamicIsland.showCustomContentSearchFailure(source.name, platform, endpointLabel,
+                    message, elapsedMillis);
+            return Collections.emptyList();
+        }
+    }
     public static Tuple<String, String> resolvePlaybackUrl(Music music, Quality requestedQuality) {
         if (music == null) return null;
         CustomSourceInfo source = getSelectedSource();
@@ -281,22 +372,34 @@ public final class CustomSourceManager {
             return null;
         }
 
+long startedAt = System.currentTimeMillis();
         try {
-            String nativeKey = music.getSource() == MusicPlatform.QQ ? "tx" : "wy";
-            Map<String, Object> musicInfo = nativeKey.equals(sourceKey)
-                    ? buildMusicInfo(music) : LxManualSourceMatcher.find(music, sourceKey);
+            Map<String, Object> musicInfo;
+            if (music.isCustomSourceTrack()) {
+                if (!sourceKey.equalsIgnoreCase(music.getCustomSourcePlatform())) {
+                    throw new IllegalStateException("当前歌曲属于其他自定义平台");
+                }
+                musicInfo = music.getCustomSourceInfo();
+            } else {
+                String nativeKey = music.getSource() == MusicPlatform.QQ ? "tx" : "wy";
+                musicInfo = nativeKey.equals(sourceKey)
+                        ? buildMusicInfo(music) : LxManualSourceMatcher.find(music, sourceKey);
+            }
             if (musicInfo == null) throw new IllegalStateException("未找到与手动选择平台匹配的歌曲");
-            DownloadDynamicIsland.showCustomSourceResolving(source.name + " · " + sourceKey.toUpperCase(Locale.ROOT));
+            String endpointLabel = getPlatformEndpointLabel(sourceKey);
+            DownloadDynamicIsland.showCustomContentResolving(source.name, sourceKey, endpointLabel, music.getName());
             String url = runtime.resolveMusicUrl(sourceKey, musicInfo, qualityToLx(requestedQuality));
             if (!isHttpUrl(url)) throw new IllegalStateException("音源返回了无效 URL");
             String format = inferFormat(url);
-            DownloadDynamicIsland.showCustomSourceResolved(source.name, format);
+            DownloadDynamicIsland.showCustomContentResolved(source.name, sourceKey, endpointLabel, format,
+                    System.currentTimeMillis() - startedAt);
             return new Tuple<>(url, format);
         } catch (Throwable throwable) {
             String message = messageOf(throwable, "解析失败");
             System.err.println("[LX Source] Selected source " + source.name + " / " + sourceKey + " failed for "
                     + music.getName() + ": " + message);
-            DownloadDynamicIsland.showCustomSourceFailure(source.name, message);
+            DownloadDynamicIsland.showCustomContentResolveFailure(source.name, sourceKey,
+                    getPlatformEndpointLabel(sourceKey), message, System.currentTimeMillis() - startedAt);
             return null;
         }
     }
@@ -334,7 +437,9 @@ public final class CustomSourceManager {
                 DownloadDynamicIsland.showCustomSourceReady(source.name);
                 System.out.println("[LX Source] Ready: " + source.name + " -> " + declared);
             } catch (Throwable throwable) {
-                markRuntimeFailure(id, messageOf(throwable, "初始化失败"), true);
+                String message = messageOf(throwable, "初始化失败");
+                System.err.println("[LX Source] Initialization failed for " + source.name + ": " + message);
+                markRuntimeFailure(id, message, true);
             }
         });
     }
@@ -374,8 +479,10 @@ public final class CustomSourceManager {
         return info;
     }
 
+/** Maps the player preference to the official LX Desktop quality vocabulary. */
     private static String qualityToLx(Quality quality) {
-        if (quality == Quality.LOSSLESS || quality == Quality.HIRES || quality == Quality.JYEFFECT || quality == Quality.JYMASTER) return "flac";
+        if (quality == Quality.HIRES || quality == Quality.JYEFFECT || quality == Quality.JYMASTER) return "flac24bit";
+        if (quality == Quality.LOSSLESS) return "flac";
         if (quality == Quality.HIGHER || quality == Quality.EXHIGH || quality == Quality.SKY) return "320k";
         return "128k";
     }

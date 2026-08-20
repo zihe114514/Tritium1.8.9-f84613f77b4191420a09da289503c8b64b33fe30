@@ -257,15 +257,19 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         + safeNoticeValue(reason, "请求失败"));
     }
 
-    /** Shows a cumulative listening-duration checkpoint result and request latency. */
+    /**
+     * Listening-duration results have intentionally low display priority. They are deferred behind
+     * active download/transcode progress and other live notices so a background upload result
+     * cannot be visually lost under real-time playback work.
+     */
     public static void showListeningDurationUploadSuccess(int playedSeconds, long elapsedMillis) {
-        publishNotice(IslandNoticeType.LISTENING_DURATION_SUCCESS, "听歌时长上报",
+        publishLowPriorityNotice(IslandNoticeType.LISTENING_DURATION_SUCCESS, "听歌时长上报",
                 "听歌时长上报成功 时长" + Math.max(0, playedSeconds) + "秒 "
                         + Math.max(0L, elapsedMillis) + "ms");
     }
 
     public static void showListeningDurationUploadFailure(int playedSeconds, long elapsedMillis, String reason) {
-        publishNotice(IslandNoticeType.LISTENING_DURATION_ERROR, "听歌时长上报",
+        publishLowPriorityNotice(IslandNoticeType.LISTENING_DURATION_ERROR, "听歌时长上报",
                 "听歌时长上报失败 时长" + Math.max(0, playedSeconds) + "秒 "
                         + Math.max(0L, elapsedMillis) + "ms · "
                         + safeNoticeValue(reason, "请求失败"));
@@ -296,6 +300,70 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 safeNoticeValue(sourceName, "音源") + " · " + safeNoticeValue(reason, "初始化或解析失败"));
     }
 
+    /** Announces the exact user-selected custom platform without exposing credentials or raw request URLs. */
+    public static void showCustomContentSourceEntered(String sourceName, String platform, String endpointLabel) {
+        publishNotice(IslandNoticeType.CUSTOM_SOURCE_SUCCESS, "自定义 "
+                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 已选择",
+                safeNoticeValue(sourceName, "自定义音源") + " · 接口："
+                        + safeNoticeValue(endpointLabel, "歌曲搜索接口"));
+    }
+
+    /** Keeps the island open while the explicitly selected custom platform performs a song search. */
+    public static void showCustomContentSearchLoading(String sourceName, String platform,
+                                                      String endpointLabel, String keyword) {
+        publishNotice(IslandNoticeType.CUSTOM_SOURCE_LOADING, "自定义 "
+                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 加载中",
+                safeNoticeValue(sourceName, "自定义音源") + " · "
+                        + safeNoticeValue(endpointLabel, "歌曲搜索接口") + " · 搜索「"
+                        + safeNoticeValue(keyword, "歌曲") + "」", true);
+    }
+
+    /** Shows how many tracks the selected custom platform actually returned and its request latency. */
+    public static void showCustomContentSearchSuccess(String sourceName, String platform,
+                                                      String endpointLabel, int resultCount, long elapsedMillis) {
+        publishCustomSourceCompletion(IslandNoticeType.CUSTOM_SOURCE_SUCCESS, "自定义 "
+                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 加载完成",
+                safeNoticeValue(endpointLabel, "歌曲搜索接口") + " · " + Math.max(0, resultCount)
+                        + " 首 · " + Math.max(0L, elapsedMillis) + " ms");
+    }
+
+    /** Differentiates a content-search failure from importing or initializing an LX script. */
+    public static void showCustomContentSearchFailure(String sourceName, String platform,
+                                                      String endpointLabel, String reason, long elapsedMillis) {
+        publishCustomSourceCompletion(IslandNoticeType.CUSTOM_SOURCE_ERROR, "自定义 "
+                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 加载失败",
+                safeNoticeValue(endpointLabel, "歌曲搜索接口") + " · "
+                        + safeNoticeValue(reason, "请求失败") + " · " + Math.max(0L, elapsedMillis) + " ms");
+    }
+
+    /** Reports which selected platform endpoint is resolving the track before playback begins. */
+    public static void showCustomContentResolving(String sourceName, String platform,
+                                                  String endpointLabel, String songName) {
+        publishNotice(IslandNoticeType.CUSTOM_SOURCE_LOADING, "自定义 "
+                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 正在加载",
+                safeNoticeValue(endpointLabel, "歌曲播放接口") + " · 正在解析「"
+                        + safeNoticeValue(songName, "当前歌曲") + "」", true);
+    }
+
+    /** Confirms that the selected custom platform returned a usable playback URL. */
+    public static void showCustomContentResolved(String sourceName, String platform,
+                                                 String endpointLabel, String format, long elapsedMillis) {
+        publishCustomSourceCompletion(IslandNoticeType.CUSTOM_SOURCE_SUCCESS, "自定义 "
+                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 已加载",
+                safeNoticeValue(endpointLabel, "歌曲播放接口") + " · "
+                        + safeNoticeValue(format, "未知").toUpperCase(java.util.Locale.ROOT) + " · "
+                        + Math.max(0L, elapsedMillis) + " ms");
+    }
+
+    /** Reports a playback URL resolution failure for the exact selected custom platform. */
+    public static void showCustomContentResolveFailure(String sourceName, String platform,
+                                                       String endpointLabel, String reason, long elapsedMillis) {
+        publishCustomSourceCompletion(IslandNoticeType.CUSTOM_SOURCE_ERROR, "自定义 "
+                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 加载失败",
+                safeNoticeValue(endpointLabel, "歌曲播放接口") + " · "
+                        + safeNoticeValue(reason, "解析失败") + " · " + Math.max(0L, elapsedMillis) + " ms");
+    }
+
     /** Gives login and account validation a distinct, non-download success feedback. */
     public static void showNetworkConnectionSuccess(String target) {
         publishNotice(IslandNoticeType.NETWORK_SUCCESS, "网络连接成功",
@@ -307,10 +375,54 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         publishNotice(IslandNoticeType.NETWORK_ERROR, "网络连接失败",
                 safeNoticeValue(target, "音乐服务") + " · " + safeNoticeValue(reason, "请检查网络后重试"));
     }
+/**
+     * A custom search/resolve status is persistent while the request runs. Its completion must
+     * replace that exact spinner rather than wait behind it in the ordinary notice queue; otherwise
+     * a completed request looks as if it is still parsing forever.
+     */
+    private static void publishCustomSourceCompletion(IslandNoticeType type, String title, String value) {
+        IslandNoticeType safeType = type == null ? IslandNoticeType.CUSTOM_SOURCE_ERROR : type;
+        String safeTitle = safeNoticeValue(title, "自定义音源");
+        String safeValue = safeNoticeValue(value, "请求完成");
+        long now = System.currentTimeMillis();
+        synchronized (NOTICE_QUEUE_LOCK) {
+            if (noticeType == IslandNoticeType.CUSTOM_SOURCE_LOADING && noticePersistent) {
+                publishActiveNoticeLocked(safeType, safeTitle, safeValue, false, false, now);
+                return;
+            }
+        }
+        publishNotice(safeType, safeTitle, safeValue);
+    }
+
     private static long noticeHoldMillis(boolean queueMode) {
         return DynamicIslandMath.completionHoldMillis(queueMode
                 ? HudConfig.dynamicIslandQueueIntervalSeconds
                 : HudConfig.dynamicIslandCompletionHoldSeconds);
+    }
+
+    /** Adds a background result to the tail of the notice queue whenever live work is active. */
+    private static void publishLowPriorityNotice(IslandNoticeType type, String title, String value) {
+        IslandNoticeType safeType = type == null ? IslandNoticeType.NONE : type;
+        if (safeType == IslandNoticeType.NONE) return;
+        String safeTitle = safeNoticeValue(title, "状态");
+        String safeValue = safeNoticeValue(value, "—");
+        long now = System.currentTimeMillis();
+        synchronized (NOTICE_QUEUE_LOCK) {
+            boolean canShowImmediately = noticeType == IslandNoticeType.NONE
+                    && NOTICE_QUEUE.isEmpty() && !hasRealtimePresentationLocked(now);
+            if (canShowImmediately) {
+                publishActiveNoticeLocked(safeType, safeTitle, safeValue, false, false, now);
+                return;
+            }
+
+            // A duration result must never shorten or replace a visible real-time presentation.
+            // Queued messages always use the user-configured queue interval.
+            if (noticeType != IslandNoticeType.NONE && !bypassesNoticeQueue(noticeType, noticePersistent)) {
+                noticeUsesQueueInterval = true;
+            }
+            markQueuedNoticesUseQueueIntervalLocked();
+            NOTICE_QUEUE.addLast(new QueuedNotice(safeType, safeTitle, safeValue, false, true));
+        }
     }
 
     private static void publishNotice(IslandNoticeType type, String title, String value) {
@@ -362,6 +474,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         return persistent || type == IslandNoticeType.VOLUME || type == IslandNoticeType.TRANSCODING;
     }
 
+    /**
+     * Download/transcode visuals own the island until their configured completion hold ends.
+     * This prevents a deferred upload result from aging out behind the download success animation.
+     */
+    private static boolean hasRealtimePresentationLocked(long now) {
+        return downloading || transcoding
+                || (downloadCompletedAt > 0L && now - downloadCompletedAt
+                < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds));
+    }
+
     /** Preserves an interrupted ordinary notice so a live volume/status update cannot discard it. */
     private static void preserveActiveQueuedNoticeLocked() {
         if (noticeType == IslandNoticeType.NONE || bypassesNoticeQueue(noticeType, noticePersistent)) return;
@@ -389,7 +511,20 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     /** Advances queued ordinary notices after their configured display interval. */
     private static void advanceQueuedNotice(long now) {
         synchronized (NOTICE_QUEUE_LOCK) {
-            if (noticeType == IslandNoticeType.NONE || noticePersistent) return;
+            // Do not consume low-priority queue entries while download/transcode UI is active.
+            if (hasRealtimePresentationLocked(now)) return;
+
+            // A duration result can arrive while a progress presentation is active and no normal
+            // notice exists. Once the live presentation is gone, start the oldest queued result.
+            if (noticeType == IslandNoticeType.NONE) {
+                if (!NOTICE_QUEUE.isEmpty()) {
+                    QueuedNotice next = NOTICE_QUEUE.removeFirst();
+                    publishActiveNoticeLocked(next.type, next.title, next.value, next.persistent,
+                            next.useQueueInterval, now);
+                }
+                return;
+            }
+            if (noticePersistent) return;
             if (noticeShownAt <= 0L || now - noticeShownAt < noticeHoldMillis(noticeUsesQueueInterval)) return;
 
             if (!NOTICE_QUEUE.isEmpty()) {

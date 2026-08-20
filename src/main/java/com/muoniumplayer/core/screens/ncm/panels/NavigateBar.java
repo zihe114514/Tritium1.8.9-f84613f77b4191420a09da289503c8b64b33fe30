@@ -180,7 +180,8 @@ public class NavigateBar extends NCMPanel {
                         }
                     });
 
-                    final boolean searchPlaylists = playlistSearchMode
+                    final boolean customSearch = CustomSourceManager.isCustomContentMode();
+                    final boolean searchPlaylists = !customSearch && playlistSearchMode
                             && CadenceMusicService.getCurrentPlatform() == MusicPlatform.NETEASE;
                     if (searchPlaylists) {
                         MultiThreadingUtil.runAsync(() -> {
@@ -196,9 +197,15 @@ public class NavigateBar extends NCMPanel {
                         PlaylistPanel panel = new PlaylistPanel(playList);
                         NCMScreen.getInstance().setCurrentPanel(panel);
                         MultiThreadingUtil.runAsync(() -> {
-                            List<Music> search = CloudMusic.search(keyword);
+                            List<Music> search = customSearch
+                                    ? CustomSourceManager.searchCurrent(keyword, 60) : CloudMusic.search(keyword);
+                            // A temporary search playlist has no remote playlist request to finish it.
+                            // Mark zero-result searches as loaded as well; otherwise PlayList waits for a
+                            // callback that can never arrive and leaves the panel spinner running forever.
                             playList.musics.addAll(search);
-                            panel.onInit();
+                            playList.musicsQueried = true;
+                            playList.musicsLoaded = true;
+                            MultiThreadingUtil.runOnMainThread(panel::onInit);
                         });
                     }
                 }
@@ -232,7 +239,10 @@ public class NavigateBar extends NCMPanel {
 
         RoundedButtonWidget sourceMenu = new RoundedButtonWidget(() -> {
             String provider = CadenceMusicService.getCurrentPlatform().getDisplayName();
-            return "音乐来源 · " + provider + (CustomSourceManager.getSelectedSource() != null ? "  ·  自定义 " + CustomSourceManager.getSelectedPlatform().toUpperCase() : "");
+            return CustomSourceManager.isCustomContentMode()
+                    ? "音乐来源 · 自定义 " + CustomSourceManager.getSelectedPlatform().toUpperCase()
+                    + "  ·  " + CustomSourceManager.getSelectedSource().name
+                    : "音乐来源 · " + provider;
         }, FontManager.pf12bold);
         sourceSwitcher.addChild(sourceMenu);
         sourceMenu.setRadius(7);
