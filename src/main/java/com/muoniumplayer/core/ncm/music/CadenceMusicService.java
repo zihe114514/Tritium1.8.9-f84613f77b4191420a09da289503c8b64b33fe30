@@ -98,7 +98,20 @@ public final class CadenceMusicService {
             return Collections.emptyList();
         }
     }
-
+    /**
+     * Performs a caller-selected official-provider search without changing the visible provider.
+     * Custom-source manual platform matching uses this only for the platform chosen by the user.
+     */
+    public static List<Music> search(MusicPlatform platform, String keyword, int limit) {
+        if (isBlank(keyword) || platform == null) return Collections.emptyList();
+        initialize(OptionsUtil.getCookie());
+        try {
+            return adaptTracks(SERVICE.search(platform.toCadenceSource(), keyword.trim(), Math.max(1, limit)));
+        } catch (Throwable throwable) {
+            System.err.println("[Music/Cadence] Manual source search failed for " + platform + ": " + throwable.getMessage());
+            return Collections.emptyList();
+        }
+    }
     public static List<Music> getQQTopTracks(int limit) {
         initialize(OptionsUtil.getCookie());
         try {

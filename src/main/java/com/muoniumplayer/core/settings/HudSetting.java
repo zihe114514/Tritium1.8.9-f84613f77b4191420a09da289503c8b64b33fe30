@@ -31,7 +31,8 @@ public enum HudSetting {
     DYNAMIC_ISLAND_TEXT_SCALE("灵动岛字体", 0.82f, 1.18f),
     DYNAMIC_ISLAND_MAX_WIDTH("灵动岛基础宽度", 160.0f, 720.0f),
     DYNAMIC_ISLAND_PROGRESS_HEIGHT("进度条粗细", 0.75f, 4.00f),
-    DYNAMIC_ISLAND_COMPLETION_HOLD("完成停留", 0.50f, 6.00f);
+    DYNAMIC_ISLAND_COMPLETION_HOLD("完成停留", 0.50f, 6.00f),
+    DYNAMIC_ISLAND_QUEUE_INTERVAL("排队间隔", 0.50f, 6.00f);
 
     private final String label;
     private final float min;
@@ -82,6 +83,7 @@ public enum HudSetting {
             case DYNAMIC_ISLAND_MAX_WIDTH: return HudConfig.dynamicIslandMaxWidth;
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT: return HudConfig.dynamicIslandProgressHeight;
             case DYNAMIC_ISLAND_COMPLETION_HOLD: return HudConfig.dynamicIslandCompletionHoldSeconds;
+            case DYNAMIC_ISLAND_QUEUE_INTERVAL: return HudConfig.dynamicIslandQueueIntervalSeconds;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
@@ -114,6 +116,7 @@ public enum HudSetting {
             case DYNAMIC_ISLAND_MAX_WIDTH: HudConfig.dynamicIslandMaxWidth = clamped; break;
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT: HudConfig.dynamicIslandProgressHeight = clamped; break;
             case DYNAMIC_ISLAND_COMPLETION_HOLD: HudConfig.dynamicIslandCompletionHoldSeconds = clamped; break;
+            case DYNAMIC_ISLAND_QUEUE_INTERVAL: HudConfig.dynamicIslandQueueIntervalSeconds = clamped; break;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }

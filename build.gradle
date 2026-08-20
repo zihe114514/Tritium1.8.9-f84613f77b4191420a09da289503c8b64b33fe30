@@ -123,6 +123,12 @@ dependencies {
 
     // Cadence：统一网易云/QQ 音乐 API。使用本地构建产物以保证 Java 8/Forge 1.8.9 环境可复现。
     shade files('libs/music-api-0.1.1.jar')
+    // NCBL client-log payloads use Zstandard; this filtered jar omits module-info for Forge 1.8.9.
+    shade files('libs/zstd-jni-1.5.6-9-forge189.jar')
+
+    // LX 自定义音源：Rhino 1.7.15 支持 Java 8，且比 JDK 8u502 自带 Nashorn 更能兼容
+    // 现代 LX 音源脚本的 Promise / ES6 语法。最终会 relocation，避免与其他 Mod 的 Rhino 冲突。
+    shade 'org.mozilla:rhino:1.7.15'
     // Cadence 由 Kotlin 编写，运行时必须携带 stdlib；与其他 MOD 隔离后打入最终 JAR。
     shade files(forgeKotlinStdlib)
     // Cadence 使用 Gson 2.11 API；统一迁移避免与 Minecraft 1.8.9 自带旧版 Gson 冲突。
@@ -202,6 +208,7 @@ shadowJar {
     relocate 'top.fpsmaster.music', 'repackage.top.fpsmaster.music'
     relocate 'kotlin', 'repackage.kotlin'
     relocate 'com.sun.jna', 'repackage.com.sun.jna'
+    relocate 'org.mozilla.javascript', 'repackage.org.mozilla.javascript'
 }
 
 // ForgeGradle 2.1 对 shadowJar 做 SRG 重映射（MCP → SRG），保证 mod 类能在 obf 客户端运行。

@@ -8,6 +8,7 @@ import lombok.Setter;
 import org.lwjgl.input.Keyboard;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
+import com.muoniumplayer.core.ncm.customsource.CustomSourceManager;
 import com.muoniumplayer.core.ncm.music.CadenceMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
@@ -219,30 +220,34 @@ public class NavigateBar extends NCMPanel {
             searchField.setDisabledTextColor(RenderSystem.reAlpha(this.getColor(NCMScreen.ColorType.PRIMARY_TEXT), .4f));
 //            Rect.draw(searchField.getX(), searchField.getY(), searchField.getWidth(), searchField.getHeight(), 0x800090ff);
         });
-
+        // A single second-level entry replaces the old two-button NetEase/QQ switcher. Imported
+        // LX scripts can be numerous, so they are managed in the same source center instead of
+        // crowding this navigation rail.
         Panel sourceSwitcher = new Panel();
         this.addChild(sourceSwitcher);
         sourceSwitcher.setBeforeRenderCallback(() -> {
-            sourceSwitcher.setBounds(Math.max(1, this.getWidth() - 16), 18);
+            sourceSwitcher.setBounds(Math.max(1, this.getWidth() - 16), 24);
             sourceSwitcher.setPosition(8, searchBar.getRelativeY() + searchBar.getHeight() + 5);
         });
 
-        RoundedRectWidget sourceTrack = new RoundedRectWidget();
-        sourceTrack.setClickable(false);
-        sourceSwitcher.addChild(sourceTrack);
-        sourceTrack.setBeforeRenderCallback(() -> {
-            sourceTrack.setBounds(0, 0, sourceSwitcher.getWidth(), sourceSwitcher.getHeight());
-            sourceTrack.setRadius(6);
-            sourceTrack.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
-            sourceTrack.setAlpha(.72f);
+        RoundedButtonWidget sourceMenu = new RoundedButtonWidget(() -> {
+            String provider = CadenceMusicService.getCurrentPlatform().getDisplayName();
+            return "音乐来源 · " + provider + (CustomSourceManager.getSelectedSource() != null ? "  ·  自定义 " + CustomSourceManager.getSelectedPlatform().toUpperCase() : "");
+        }, FontManager.pf12bold);
+        sourceSwitcher.addChild(sourceMenu);
+        sourceMenu.setRadius(7);
+        sourceMenu.setOnClickCallback((x, y, button) -> {
+            if (button != 0) return false;
+            NCMScreen.getInstance().openMusicSourceManager();
+            return true;
         });
-
-        SourceButton neteaseSource = createSourceButton(MusicPlatform.NETEASE);
-        SourceButton qqSource = createSourceButton(MusicPlatform.QQ);
-        sourceSwitcher.addChild(neteaseSource);
-        sourceSwitcher.addChild(qqSource);
-        neteaseSource.setBeforeRenderCallback(() -> layoutSourceButton(neteaseSource, sourceSwitcher, MusicPlatform.NETEASE, false));
-        qqSource.setBeforeRenderCallback(() -> layoutSourceButton(qqSource, sourceSwitcher, MusicPlatform.QQ, true));
+        sourceMenu.setBeforeRenderCallback(() -> {
+            sourceMenu.setMargin(0);
+            sourceMenu.setColor(sourceMenu.isHovering()
+                    ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                    : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+            sourceMenu.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
+        });
 
         this.addChild(playlistPanel);
         this.playlistPanel.setBeforeRenderCallback(() -> {

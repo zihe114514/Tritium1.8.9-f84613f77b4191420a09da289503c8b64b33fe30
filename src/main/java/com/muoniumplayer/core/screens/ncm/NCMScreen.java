@@ -83,6 +83,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     /** 双平台账号管理（含二维码登录二级页面）的模态覆盖层。 */
     public AccountManagerOverlay accountManagerOverlay = null;
 
+    /** 二级音乐来源菜单：固定内容平台与 LX 备用解析音源统一在此处管理。 */
+    public MusicSourceOverlay musicSourceOverlay = null;
+
     /** 对取消收藏等破坏性操作的二次确认层。 */
     public ConfirmationOverlay confirmationOverlay = null;
 
@@ -384,6 +387,19 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             StencilClipManager.endClip();
         }
 
+        // 音乐来源菜单是侧栏来源按钮的二级入口，阻止其下方歌单和搜索控件接收输入。
+        if (this.musicSourceOverlay != null) {
+            StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            this.musicSourceOverlay.setBounds(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight());
+            this.musicSourceOverlay.setAlpha(alpha);
+            this.musicSourceOverlay.renderWidget(mouseX, mouseY, dWheel);
+            if (this.musicSourceOverlay.shouldClose()) {
+                this.musicSourceOverlay.dispose();
+                this.musicSourceOverlay = null;
+            }
+            StencilClipManager.endClip();
+        }
         // 账号管理始终位于最上层，并独占鼠标/滚轮输入。
         if (this.accountManagerOverlay != null) {
             StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
@@ -554,6 +570,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.accountManagerOverlay.onInit();
     }
 
+    /** Opens the second-level source center without changing the current content page. */
+    public void openMusicSourceManager() {
+        if (this.musicSourceOverlay != null) this.musicSourceOverlay.dispose();
+        this.musicSourceOverlay = new MusicSourceOverlay();
+        this.musicSourceOverlay.onInit();
+    }
+
     @Override
     public void keyTyped(char typedChar, int keyCode) {
 
@@ -564,6 +587,15 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             return;
         }
 
+        if (this.musicSourceOverlay != null) {
+            if (this.musicSourceOverlay.onKeyTypedReceived(typedChar, keyCode)) {
+                return;
+            }
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.musicSourceOverlay.handleEscape();
+            }
+            return;
+        }
         if (this.accountManagerOverlay != null) {
             // The account overlay contains editable Cookie fields. Previously this
             // modal consumed every key before its widget tree could see it, so both
@@ -623,6 +655,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             return;
         }
 
+        if (this.musicSourceOverlay != null) {
+            this.musicSourceOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
         if (this.accountManagerOverlay != null) {
             this.accountManagerOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
             return;

@@ -7,6 +7,7 @@ import top.fpsmaster.music.Track;
 import com.muoniumplayer.core.ncm.RequestUtil;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.CadenceMusicService;
+import com.muoniumplayer.core.ncm.customsource.CustomSourceManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.Quality;
@@ -401,19 +402,21 @@ public class Music {
         // Never show a quality badge carried over from a previous failed resolve.
         this.playbackQuality = PlaybackQuality.UNKNOWN;
         if (isQQ()) {
-            return resolveCadenceWithStandardFallback();
+            Tuple<String, String> result = resolveCadenceWithStandardFallback();
+            return result != null ? result : resolveCustomSourceFallback();
         }
 
         // Cadence 搜索得到的网易云歌曲仍优先保持原来源，且该来源内部先尝试无损。
         if (cadenceTrack != null) {
             Tuple<String, String> result = resolveCadenceWithStandardFallback();
             if (result != null) return result;
-            return resolveWithTimeout(new Callable<Tuple<String, String>>() {
+            result = resolveWithTimeout(new Callable<Tuple<String, String>>() {
                 @Override
                 public Tuple<String, String> call() {
                     return resolveWithBuiltInNeteaseApi();
                 }
             }, "built-in NetEase API");
+            return result != null ? result : resolveCustomSourceFallback();
         }
 
         Tuple<String, String> result = resolveWithTimeout(new Callable<Tuple<String, String>>() {
@@ -423,7 +426,19 @@ public class Music {
             }
         }, "built-in NetEase API");
         if (result != null) return result;
-        return resolveCadenceWithStandardFallback();
+        result = resolveCadenceWithStandardFallback();
+        return result != null ? result : resolveCustomSourceFallback();
+    }
+
+    /** Resolves only after the built-in provider paths failed; custom scripts never replace them. */
+    private Tuple<String, String> resolveCustomSourceFallback() {
+        Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
+        Tuple<String, String> resolved = CustomSourceManager.resolvePlaybackUrl(this, requestedQuality);
+        if (resolved != null) {
+            this.playbackQuality = detectCadencePlaybackQuality(resolved.getB(), requestedQuality);
+            considerHighestQuality(resolved.getB(), 0L);
+        }
+        return resolved;
     }
 
     /**

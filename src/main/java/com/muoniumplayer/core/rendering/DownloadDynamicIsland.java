@@ -11,6 +11,8 @@ import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.settings.HudConfig;
 
 import java.awt.Color;
+import java.util.ArrayDeque;
+import java.util.Deque;
 
 /**
  * Global, screen-independent download activity island.
@@ -80,6 +82,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static volatile long noticeShownAt;
     private static volatile long noticeRevision;
     private static volatile boolean noticePersistent;
+    /** Serializes notices arriving from async network/playback workers. */
+    private static final Object NOTICE_QUEUE_LOCK = new Object();
+    private static final Deque<QueuedNotice> NOTICE_QUEUE = new ArrayDeque<QueuedNotice>();
+    /** True only for ordinary notices that are part of a multi-message queue. */
+    private static volatile boolean noticeUsesQueueInterval;
 
     private float visibility;
     private double expansion;
@@ -263,6 +270,31 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         + Math.max(0L, elapsedMillis) + "ms · "
                         + safeNoticeValue(reason, "请求失败"));
     }
+    /** Feedback for source management and the optional LX-compatible URL resolver chain. */
+    public static void showCustomSourceImportSuccess(String sourceName) {
+        publishNotice(IslandNoticeType.CUSTOM_SOURCE_SUCCESS, "自定义音源已导入",
+                safeNoticeValue(sourceName, "新音源") + " · 正在初始化");
+    }
+
+    public static void showCustomSourceReady(String sourceName) {
+        publishNotice(IslandNoticeType.CUSTOM_SOURCE_SUCCESS, "自定义音源已就绪",
+                safeNoticeValue(sourceName, "音源") + " · 可作为备用解析");
+    }
+
+    public static void showCustomSourceResolving(String sourceName) {
+        publishNotice(IslandNoticeType.CUSTOM_SOURCE_LOADING, "自定义音源解析",
+                "正在尝试 " + safeNoticeValue(sourceName, "备用音源"), true);
+    }
+
+    public static void showCustomSourceResolved(String sourceName, String format) {
+        publishNotice(IslandNoticeType.CUSTOM_SOURCE_SUCCESS, "自定义音源解析成功",
+                safeNoticeValue(sourceName, "备用音源") + " · " + safeNoticeValue(format, "未知").toUpperCase(java.util.Locale.ROOT));
+    }
+
+    public static void showCustomSourceFailure(String sourceName, String reason) {
+        publishNotice(IslandNoticeType.CUSTOM_SOURCE_ERROR, "自定义音源不可用",
+                safeNoticeValue(sourceName, "音源") + " · " + safeNoticeValue(reason, "初始化或解析失败"));
+    }
 
     /** Gives login and account validation a distinct, non-download success feedback. */
     public static void showNetworkConnectionSuccess(String target) {
@@ -275,17 +307,117 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         publishNotice(IslandNoticeType.NETWORK_ERROR, "网络连接失败",
                 safeNoticeValue(target, "音乐服务") + " · " + safeNoticeValue(reason, "请检查网络后重试"));
     }
+    private static long noticeHoldMillis(boolean queueMode) {
+        return DynamicIslandMath.completionHoldMillis(queueMode
+                ? HudConfig.dynamicIslandQueueIntervalSeconds
+                : HudConfig.dynamicIslandCompletionHoldSeconds);
+    }
+
     private static void publishNotice(IslandNoticeType type, String title, String value) {
         publishNotice(type, title, value, false);
     }
 
     private static void publishNotice(IslandNoticeType type, String title, String value, boolean persistent) {
-        noticeType = type == null ? IslandNoticeType.NONE : type;
-        noticeTitle = safeNoticeValue(title, "状态");
-        noticeValue = safeNoticeValue(value, "—");
+        IslandNoticeType safeType = type == null ? IslandNoticeType.NONE : type;
+        String safeTitle = safeNoticeValue(title, "状态");
+        String safeValue = safeNoticeValue(value, "—");
+        long now = System.currentTimeMillis();
+        synchronized (NOTICE_QUEUE_LOCK) {
+            if (safeType == IslandNoticeType.NONE) {
+                NOTICE_QUEUE.clear();
+                publishActiveNoticeLocked(safeType, safeTitle, safeValue, persistent, false, now);
+                return;
+            }
+
+            // Real-time notices such as volume adjustments must keep the original immediate,
+            // coalescing behaviour. They never enter the ordinary notification queue.
+            if (bypassesNoticeQueue(safeType, persistent)) {
+                preserveActiveQueuedNoticeLocked();
+                publishActiveNoticeLocked(safeType, safeTitle, safeValue, persistent, false, now);
+                return;
+            }
+
+            if (noticeType == IslandNoticeType.NONE) {
+                publishActiveNoticeLocked(safeType, safeTitle, safeValue, persistent, false, now);
+                return;
+            }
+
+            if (bypassesNoticeQueue(noticeType, noticePersistent)) {
+                boolean alreadyQueued = !NOTICE_QUEUE.isEmpty();
+                if (alreadyQueued) markQueuedNoticesUseQueueIntervalLocked();
+                NOTICE_QUEUE.addLast(new QueuedNotice(safeType, safeTitle, safeValue, persistent, alreadyQueued));
+                return;
+            }
+
+            // A second ordinary notice means the current notice and all queued notices use the
+            // user-configured queue interval instead of the single-notice completion hold.
+            noticeUsesQueueInterval = true;
+            markQueuedNoticesUseQueueIntervalLocked();
+            NOTICE_QUEUE.addLast(new QueuedNotice(safeType, safeTitle, safeValue, persistent, true));
+        }
+    }
+
+    /** Volume and persistent progress/status cards stay immediate rather than being queued. */
+    private static boolean bypassesNoticeQueue(IslandNoticeType type, boolean persistent) {
+        return persistent || type == IslandNoticeType.VOLUME || type == IslandNoticeType.TRANSCODING;
+    }
+
+    /** Preserves an interrupted ordinary notice so a live volume/status update cannot discard it. */
+    private static void preserveActiveQueuedNoticeLocked() {
+        if (noticeType == IslandNoticeType.NONE || bypassesNoticeQueue(noticeType, noticePersistent)) return;
+        NOTICE_QUEUE.addFirst(new QueuedNotice(noticeType, noticeTitle, noticeValue,
+                noticePersistent, noticeUsesQueueInterval));
+    }
+
+    private static void markQueuedNoticesUseQueueIntervalLocked() {
+        for (QueuedNotice notice : NOTICE_QUEUE) {
+            notice.useQueueInterval = true;
+        }
+    }
+
+    private static void publishActiveNoticeLocked(IslandNoticeType type, String title, String value,
+                                                   boolean persistent, boolean useQueueInterval, long shownAt) {
+        noticeType = type;
+        noticeTitle = title;
+        noticeValue = value;
         noticePersistent = persistent;
-        noticeShownAt = System.currentTimeMillis();
+        noticeUsesQueueInterval = useQueueInterval;
+        noticeShownAt = shownAt;
         noticeRevision++;
+    }
+
+    /** Advances queued ordinary notices after their configured display interval. */
+    private static void advanceQueuedNotice(long now) {
+        synchronized (NOTICE_QUEUE_LOCK) {
+            if (noticeType == IslandNoticeType.NONE || noticePersistent) return;
+            if (noticeShownAt <= 0L || now - noticeShownAt < noticeHoldMillis(noticeUsesQueueInterval)) return;
+
+            if (!NOTICE_QUEUE.isEmpty()) {
+                QueuedNotice next = NOTICE_QUEUE.removeFirst();
+                publishActiveNoticeLocked(next.type, next.title, next.value, next.persistent,
+                        next.useQueueInterval, now);
+                return;
+            }
+
+            publishActiveNoticeLocked(IslandNoticeType.NONE, "", "", false, false, now);
+        }
+    }
+
+    private static final class QueuedNotice {
+        private final IslandNoticeType type;
+        private final String title;
+        private final String value;
+        private final boolean persistent;
+        private boolean useQueueInterval;
+
+        private QueuedNotice(IslandNoticeType type, String title, String value,
+                             boolean persistent, boolean useQueueInterval) {
+            this.type = type;
+            this.title = title;
+            this.value = value;
+            this.persistent = persistent;
+            this.useQueueInterval = useQueueInterval;
+        }
     }
 
     private static String safeNoticeValue(String value, String fallback) {
@@ -331,6 +463,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     private void renderInternal() {
         long now = System.currentTimeMillis();
+        advanceQueuedNotice(now);
         double rawProgress = DynamicIslandMath.clamp01(downloadProgress);
         boolean activeDownload = downloading;
         double sourceTranscodeProgress = DynamicIslandMath.clamp01(transcodeProgress);
@@ -342,6 +475,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         String sourceNoticeTitle = noticeTitle;
         String sourceNoticeValue = noticeValue;
         boolean sourceNoticePersistent = noticePersistent;
+        boolean sourceNoticeQueueMode = noticeUsesQueueInterval;
 
         if (!initialized) {
             initialized = true;
@@ -362,7 +496,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 completeAt = sourceCompletedAt;
                 animatedProgress = 1.0;
             } else if (sourceNoticeType != IslandNoticeType.NONE
-                    && (sourceNoticePersistent || now - sourceNoticeShownAt < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds))) {
+                    && (sourceNoticePersistent || now - sourceNoticeShownAt < noticeHoldMillis(sourceNoticeQueueMode))) {
                 shownAt = sourceNoticeShownAt;
             }
         }
@@ -451,7 +585,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         boolean activeNotice = sourceNoticeType != IslandNoticeType.NONE
                 && sourceNoticeShownAt > 0L
                 && now >= sourceNoticeShownAt
-                && (sourceNoticePersistent || now - sourceNoticeShownAt < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds));
+                && (sourceNoticePersistent || now - sourceNoticeShownAt < noticeHoldMillis(sourceNoticeQueueMode));
         boolean noticeMode = !activeDownload && !holdingCompletion && activeNotice;
         boolean enabled = HudConfig.dynamicIslandEnabled;
         boolean shouldShow = enabled && (activeDownload || holdingCompletion || activeNotice);
@@ -884,14 +1018,14 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         if (alpha <= .01f) return;
         int foreground = hexColor(.94f, .95f, .98f, alpha);
         if (type == IslandNoticeType.REFRESHING || type == IslandNoticeType.PLAYLIST_TRACK_ADDING
-                || type == IslandNoticeType.TRANSCODING) {
+                || type == IslandNoticeType.TRANSCODING || type == IslandNoticeType.CUSTOM_SOURCE_LOADING) {
             renderSpinner(centerX, centerY, alpha, accentColor, now, false);
             return;
         }
         if (type == IslandNoticeType.REFRESH_SUCCESS
                 || type == IslandNoticeType.PLAYLIST_TRACK_ADD_SUCCESS
                 || type == IslandNoticeType.PLAYLIST_TRACK_ALREADY_EXISTS
-                || type == IslandNoticeType.TRANSCODE_SUCCESS) {
+                || type == IslandNoticeType.TRANSCODE_SUCCESS || type == IslandNoticeType.CUSTOM_SOURCE_SUCCESS) {
             drawRotatedPill(centerX - 1.8, centerY + .8, 3.8, 1.25, 43f,
                     hexColor(.70f, 1f, .77f, alpha));
             drawRotatedPill(centerX + 1.6, centerY - .4, 6.2, 1.25, -47f,
@@ -909,7 +1043,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             return;
         }
         if (type == IslandNoticeType.REFRESH_ERROR || type == IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR
-                || type == IslandNoticeType.PLAYBACK_ERROR) {
+                || type == IslandNoticeType.PLAYBACK_ERROR || type == IslandNoticeType.CUSTOM_SOURCE_ERROR) {
             drawRotatedPill(centerX, centerY, 10.0, 1.25, 45f,
                     hexColor(1f, .48f, .50f, alpha));
             drawRotatedPill(centerX, centerY, 10.0, 1.25, -45f,
@@ -1080,7 +1214,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         RECENT_PLAY_SUCCESS,
         RECENT_PLAY_ERROR,
         LISTENING_DURATION_SUCCESS,
-        LISTENING_DURATION_ERROR
+        LISTENING_DURATION_ERROR,
+        CUSTOM_SOURCE_LOADING,
+        CUSTOM_SOURCE_SUCCESS,
+        CUSTOM_SOURCE_ERROR
     }
 
 

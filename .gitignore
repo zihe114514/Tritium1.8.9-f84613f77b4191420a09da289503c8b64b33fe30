@@ -26,11 +26,6 @@ run
 
 # original Muonium reference source — not part of this mod's distribution
 Muonium/
-# The NCBL uploader ships its native Zstandard codec as a real mod resource.
-!src/main/resources/muonium/
-!src/main/resources/muonium/native/
-!src/main/resources/muonium/native/win64/
-!src/main/resources/muonium/native/win64/zstd.dll
 
 # Codex/local agent state
 .codex/

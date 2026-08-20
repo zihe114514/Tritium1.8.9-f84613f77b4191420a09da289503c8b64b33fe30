@@ -82,7 +82,8 @@ public class GuiHudEditor extends GuiScreen {
             HudSetting.DYNAMIC_ISLAND_TEXT_SCALE,
             HudSetting.DYNAMIC_ISLAND_MAX_WIDTH,
             HudSetting.DYNAMIC_ISLAND_PROGRESS_HEIGHT,
-            HudSetting.DYNAMIC_ISLAND_COMPLETION_HOLD
+            HudSetting.DYNAMIC_ISLAND_COMPLETION_HOLD,
+            HudSetting.DYNAMIC_ISLAND_QUEUE_INTERVAL
     };
 
     private boolean draggingInfo;
@@ -1124,6 +1125,7 @@ public class GuiHudEditor extends GuiScreen {
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT:
                 return String.format("%.1f px", value);
             case DYNAMIC_ISLAND_COMPLETION_HOLD:
+            case DYNAMIC_ISLAND_QUEUE_INTERVAL:
                 return String.format("%.1f s", value);
             case CURRENT_TRANSITION:
             case OSD_TRANSITION:

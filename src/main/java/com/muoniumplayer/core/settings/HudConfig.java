@@ -88,6 +88,8 @@ public final class HudConfig {
     public static float dynamicIslandProgressHeight = 1.35f;
     /** Seconds to keep the completed state visible before hiding. */
     public static float dynamicIslandCompletionHoldSeconds = 1.80f;
+    /** When multiple notices are queued, seconds to show each queued notice. */
+    public static float dynamicIslandQueueIntervalSeconds = 1.00f;
     /** Visual preset for the global island: 0 pill, 1 glass, 2 compact, 3 card, 4 system card, 5 music focus. */
     public static int dynamicIslandStyle = 0;
 
@@ -132,6 +134,7 @@ public final class HudConfig {
         dynamicIslandMaxWidth = 250.0f;
         dynamicIslandProgressHeight = 1.35f;
         dynamicIslandCompletionHoldSeconds = 1.80f;
+        dynamicIslandQueueIntervalSeconds = 1.00f;
         dynamicIslandStyle = 0;
     }
 
@@ -189,6 +192,7 @@ public final class HudConfig {
             dynamicIslandMaxWidth = clamp(getFloat(o, "dynamicIslandMaxWidth", dynamicIslandMaxWidth), 160.0f, 720.0f);
             dynamicIslandProgressHeight = clamp(getFloat(o, "dynamicIslandProgressHeight", dynamicIslandProgressHeight), 0.75f, 4.0f);
             dynamicIslandCompletionHoldSeconds = clamp(getFloat(o, "dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds), 0.5f, 6.0f);
+            dynamicIslandQueueIntervalSeconds = clamp(getFloat(o, "dynamicIslandQueueIntervalSeconds", dynamicIslandQueueIntervalSeconds), 0.5f, 6.0f);
             dynamicIslandStyle = clampInt(getInt(o, "dynamicIslandStyle", dynamicIslandStyle), 0, 5);
         } catch (Throwable ignored) {
         }
@@ -240,6 +244,7 @@ public final class HudConfig {
             o.addProperty("dynamicIslandMaxWidth", dynamicIslandMaxWidth);
             o.addProperty("dynamicIslandProgressHeight", dynamicIslandProgressHeight);
             o.addProperty("dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds);
+            o.addProperty("dynamicIslandQueueIntervalSeconds", dynamicIslandQueueIntervalSeconds);
             o.addProperty("dynamicIslandStyle", dynamicIslandStyle);
 
             JsonConfigStorage.writeObject(FILE, GSON, o);

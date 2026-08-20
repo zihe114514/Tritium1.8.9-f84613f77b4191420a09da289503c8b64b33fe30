@@ -1,11 +1,8 @@
 package com.muoniumplayer.core.ncm.music;
 
 import com.google.gson.JsonArray;
+import com.github.luben.zstd.Zstd;
 import com.google.gson.JsonObject;
-import com.sun.jna.Library;
-import com.sun.jna.Native;
-import com.sun.jna.Pointer;
-import com.muoniumplayer.core.ncm.DeviceIdGenerator;
 import com.muoniumplayer.core.ncm.OptionsUtil;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
@@ -15,19 +12,19 @@ import com.muoniumplayer.core.utils.json.JsonUtils;
 
 import javax.net.ssl.HttpsURLConnection;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.math.BigInteger;
+import java.net.NetworkInterface;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -66,7 +63,6 @@ final class NeteaseClientLogUploader {
     private static final String CLIENT_ID = "muonium-player";
 
     private static volatile String deviceId;
-    private static volatile ZstdNative zstd;
 
     private NeteaseClientLogUploader() {
     }
@@ -364,57 +360,21 @@ final class NeteaseClientLogUploader {
     }
 
     /**
-     * The provided API requires Zstandard, but this Java 8 / Forge 1.8.9 project
-     * cannot use Node's built-in zlib implementation from the reference project.
-     * We use the already bundled, relocated JNA runtime and package the 64-bit
-     * zstd DLL with the mod instead of depending on an incompatible modern JVM API.
+     * zstd-jni is bundled as a filtered Java 8-compatible JAR. Unlike the previous JNA bridge,
+     * it ships and loads its own native codec without touching Forge's relocated JNA runtime.
      */
     private static byte[] compressZstd(byte[] source) throws IOException {
-        ZstdNative nativeLibrary = getZstd();
-        long capacity = nativeLibrary.ZSTD_compressBound(source.length);
-        if (capacity <= 0L || capacity > Integer.MAX_VALUE) {
-            throw new IOException("Invalid Zstandard compression bound: " + capacity);
-        }
-        byte[] target = new byte[(int) capacity];
-        long written = nativeLibrary.ZSTD_compress(target, target.length, source, source.length, 3);
-        if (nativeLibrary.ZSTD_isError(written) != 0 || written < 0L || written > target.length) {
-            Pointer error = nativeLibrary.ZSTD_getErrorName(written);
-            throw new IOException("Zstandard compression failed: "
-                    + (error == null ? String.valueOf(written) : error.getString(0)));
-        }
-        byte[] compressed = new byte[(int) written];
-        System.arraycopy(target, 0, compressed, 0, compressed.length);
-        return compressed;
-    }
-
-    private static ZstdNative getZstd() throws IOException {
-        ZstdNative current = zstd;
-        if (current != null) return current;
-        synchronized (NeteaseClientLogUploader.class) {
-            if (zstd != null) return zstd;
-            String architecture = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
-            if (!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")
-                    || (!architecture.contains("amd64") && !architecture.contains("x86_64"))) {
-                throw new IOException("NCBL listening-history upload currently requires 64-bit Windows");
+        try {
+            byte[] compressed = Zstd.compress(source);
+            if (compressed == null || compressed.length == 0) {
+                throw new IOException("Zstandard compression returned no data");
             }
-
-            InputStream resource = NeteaseClientLogUploader.class.getResourceAsStream("/muonium/native/win64/zstd.dll");
-            if (resource == null) {
-                throw new IOException("Bundled zstd.dll is missing");
-            }
-            File nativeFile = Files.createTempFile("muonium-zstd-", ".dll").toFile();
-            nativeFile.deleteOnExit();
-            try (InputStream input = resource; OutputStream output = new FileOutputStream(nativeFile)) {
-                byte[] buffer = new byte[8192];
-                int read;
-                while ((read = input.read(buffer)) >= 0) {
-                    output.write(buffer, 0, read);
-                }
-            }
-            zstd = Native.load(nativeFile.getAbsolutePath(), ZstdNative.class);
-            return zstd;
+            return compressed;
+        } catch (Throwable failure) {
+            throw new IOException("Zstandard compression failed: " + messageOf(failure), failure);
         }
     }
+
     private static byte[] rsaWrap(byte[] keyA) {
         BigInteger value = new BigInteger(1, keyA).modPow(RSA_E, RSA_N);
         byte[] source = value.toByteArray();
@@ -524,13 +484,44 @@ final class NeteaseClientLogUploader {
         return profile == null ? 0 : profile.getVip();
     }
 
+    /**
+     * Creates a stable, Java-only client identifier. The previous implementation reused
+     * DeviceIdGenerator, which accesses Windows registry information through relocated JNA.
+     * In Forge clients that JNA class may fail during initialization, preventing every upload.
+     */
     private static String resolveDeviceId() {
         String current = deviceId;
         if (current != null && !current.isEmpty()) return current;
         synchronized (NeteaseClientLogUploader.class) {
             if (deviceId == null || deviceId.isEmpty()) {
                 try {
-                    deviceId = DeviceIdGenerator.generate();
+                    StringBuilder fingerprint = new StringBuilder();
+                    fingerprint.append("MuoniumPlayer-NCBL\n")
+                            .append(System.getProperty("os.name", "")).append('\n')
+                            .append(System.getProperty("os.version", "")).append('\n')
+                            .append(System.getProperty("os.arch", "")).append('\n');
+                    Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+                    if (interfaces != null) {
+                        while (interfaces.hasMoreElements()) {
+                            NetworkInterface network = interfaces.nextElement();
+                            try {
+                                byte[] mac = network.getHardwareAddress();
+                                if (mac == null || mac.length == 0 || network.isLoopback()) continue;
+                                fingerprint.append(network.getName()).append('=');
+                                for (byte value : mac) {
+                                    fingerprint.append(String.format("%02X", value & 0xFF));
+                                }
+                                fingerprint.append('\n');
+                            } catch (Throwable ignored) {
+                                // One inaccessible adapter must not make logging unavailable.
+                            }
+                        }
+                    }
+                    byte[] digest = MessageDigest.getInstance("SHA-256")
+                            .digest(fingerprint.toString().getBytes(StandardCharsets.UTF_8));
+                    StringBuilder encoded = new StringBuilder(64);
+                    for (byte value : digest) encoded.append(String.format("%02X", value & 0xFF));
+                    deviceId = encoded.substring(0, 51);
                 } catch (Throwable ignored) {
                     deviceId = UUID.randomUUID().toString().replace("-", "").toUpperCase(Locale.ROOT);
                 }
@@ -562,17 +553,6 @@ final class NeteaseClientLogUploader {
         return message == null || message.trim().isEmpty() ? failure.getClass().getSimpleName() : message;
     }
 
-    /** Native zstd C API; Java long is used for the size_t arguments on Win64. */
-    private interface ZstdNative extends Library {
-        long ZSTD_compressBound(long sourceSize);
-
-        long ZSTD_compress(byte[] destination, long destinationCapacity,
-                           byte[] source, long sourceSize, int compressionLevel);
-
-        int ZSTD_isError(long code);
-
-        Pointer ZSTD_getErrorName(long code);
-    }
     static final class UploadResult {
         private final boolean success;
         private final long elapsedMillis;

@@ -6,6 +6,7 @@ import com.muoniumplayer.core.management.AbstractManager;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.module.impl.OpenNCMScreen;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.customsource.CustomSourceManager;
 import com.muoniumplayer.core.reflection.Reflection;
 import com.muoniumplayer.core.rendering.Framebuffer;
 import com.muoniumplayer.core.rendering.OpenGlHelper;
@@ -52,6 +53,7 @@ public class MuoniumPlayerExtension {
         HudConfig.load();
         this.musicInfo.volume.setValue((double) HudConfig.playerVolume);
         NCMPlayerConfig.load();
+        CustomSourceManager.load();
         CloudMusic.quality = NCMPlayerConfig.getAudioQuality();
         MultiThreadingUtil.runAsync(CloudMusic::initNCM);
         Reflection.init(api);

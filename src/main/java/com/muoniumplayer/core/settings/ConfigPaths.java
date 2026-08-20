@@ -22,6 +22,10 @@ public final class ConfigPaths {
     public static final Path MUSIC_AUTH = Paths.get("config", "muonium", "music_auth.json");
     public static final File NETEASE_ACCOUNTS = new File("config", "muonium/netease_accounts.json");
 
+    /** Metadata index and separate JavaScript files for user-imported LX-compatible sources. */
+    public static final File CUSTOM_SOURCES = new File("config", "muonium/custom_sources.json");
+    public static final File CUSTOM_SOURCE_DIRECTORY = new File("config", "muonium/custom_sources");
+
     static {
         migrateLegacyFiles();
     }
