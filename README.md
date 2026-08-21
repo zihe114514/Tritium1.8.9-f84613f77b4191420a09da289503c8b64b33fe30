@@ -19,7 +19,7 @@ gradlew.bat build --no-daemon
 The development artifact is generated at:
 
 ```text
-build/libs/MuoniumPlayer-1.0.0-dev.jar
+build/libs/MuoniumPlayer-1.0.1-dev.jar
 ```
 
 ## Development notes

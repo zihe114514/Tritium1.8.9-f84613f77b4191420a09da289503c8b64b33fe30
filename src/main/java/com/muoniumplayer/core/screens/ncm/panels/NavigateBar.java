@@ -240,6 +240,12 @@ public class NavigateBar extends NCMPanel {
             return true;
         });
         sourceMenu.setBeforeRenderCallback(() -> {
+            // The menu lives inside a plain Panel, so give it an explicit hit box.
+            // Without this it can render with a zero-sized interactive area after the
+            // navigation bar is rebuilt, making it impossible to switch back to an
+            // official source from a GD source.
+            sourceMenu.setBounds(Math.max(1, sourceSwitcher.getWidth()), sourceSwitcher.getHeight());
+            sourceMenu.setPosition(0, 0);
             sourceMenu.setMargin(0);
             sourceMenu.setColor(sourceMenu.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
@@ -449,10 +455,6 @@ public class NavigateBar extends NCMPanel {
 
         btnRefresh.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             if (mouseButton != 0) return mouseButton == 1;
-            if (CadenceMusicService.getCurrentPlatform() != MusicPlatform.NETEASE) {
-                DownloadDynamicIsland.showPlaylistRefreshFailure("QQ 音乐暂不支持歌单刷新");
-                return true;
-            }
             if (!CloudMusic.beginNeteaseRefresh()) {
                 btnRefresh.setSpinning(true);
                 DownloadDynamicIsland.showPlaylistRefreshInProgress();
@@ -509,9 +511,10 @@ public class NavigateBar extends NCMPanel {
             btnRefresh.setBounds(actionWidth, 28);
             btnRefresh.setPosition(6 + actionWidth * 2, 2);
             btnRefresh.setRadius(7);
-            boolean enabled = CadenceMusicService.getCurrentPlatform() == MusicPlatform.NETEASE;
-            btnRefresh.setAlpha(enabled ? 1f : .36f);
-            btnRefresh.setColor(btnRefresh.isHovering() && enabled
+            // This refreshes the signed-in NetEase account and its playlists, which is
+            // independent from the currently selected search/content provider.
+            btnRefresh.setAlpha(1f);
+            btnRefresh.setColor(btnRefresh.isHovering()
                     ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                     : NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
@@ -565,8 +568,11 @@ public class NavigateBar extends NCMPanel {
         SourceButton button = new SourceButton(platform);
         button.setOnClickCallback((x, y, mouseButton) -> {
             if (mouseButton != 0) return false;
-            if (CadenceMusicService.getCurrentPlatform() != platform) {
-                CadenceMusicService.setCurrentPlatform(platform);
+            boolean changed = CadenceMusicService.getCurrentPlatform() != platform;
+            // The setter also clears any stale persisted GD selection when an official source
+            // is chosen, even if the visible source already says NetEase/QQ.
+            CadenceMusicService.setCurrentPlatform(platform);
+            if (changed) {
                 NCMScreen.getInstance().markDirty();
             }
             return true;

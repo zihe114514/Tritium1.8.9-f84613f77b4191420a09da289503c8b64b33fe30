@@ -17,14 +17,15 @@ import java.io.FileInputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Decodes the AAC streams that are commonly returned as ADTS (.aac) or
- * ISO-BMFF/M4A (.m4a) into a standard 16-bit PCM WAV cache. Generic MP4
- * payloads are intentionally excluded: they can be video, DRM-protected or
- * use an unsupported audio codec, and are rejected by the playback pipeline
- * before this decoder is invoked.
+ * ISO-BMFF/M4A (.m4a) and audio-bearing MP4/DASH (.m4s) payloads into a standard
+ * 16-bit PCM WAV cache. Files without a decodable AAC audio track fail closed.
  */
 final class AacAudioDecoder {
     private static final int WAV_HEADER_SIZE = 44;
@@ -45,7 +46,7 @@ final class AacAudioDecoder {
         if (input == null || !input.isFile()) {
             throw new IOException("AAC input file does not exist");
         }
-        if (!"aac".equals(container) && !"m4a".equals(container)) {
+        if (!"aac".equals(container) && !"m4a".equals(container) && !"mp4".equals(container)) {
             throw new IOException("Unsupported AAC container: " + container);
         }
 
@@ -55,12 +56,19 @@ final class AacAudioDecoder {
         }
 
         boolean completed = false;
+        File decoderInput = input;
         reportProgress(progressListener, 0.0);
         try (PcmWaveWriter writer = new PcmWaveWriter(temporary)) {
             if ("aac".equals(container)) {
                 decodeAdts(input, writer, progressListener);
             } else {
-                decodeIsoBaseMedia(input, writer, progressListener);
+                // Some JOOX M4A files contain a legacy QuickTime "tags" atom. JAAD's MP4
+                // demuxer miscalculates that atom's consumed length and seeks indefinitely.
+                // Re-labeling only this metadata atom as a same-sized free atom preserves every
+                // audio byte and every sample offset, while letting the embedded AAC decoder
+                // process the stream normally.
+                decoderInput = sanitizeJaadIncompatibleMetadata(input, destination);
+                decodeIsoBaseMedia(decoderInput, writer, progressListener);
             }
             writer.finish();
             reportProgress(progressListener, 1.0);
@@ -68,6 +76,9 @@ final class AacAudioDecoder {
         } catch (AACException e) {
             throw new IOException("AAC decoder rejected the audio stream", e);
         } finally {
+            if (!decoderInput.equals(input) && decoderInput.exists() && !decoderInput.delete()) {
+                System.err.println("[Music] Unable to remove temporary sanitized AAC input: " + decoderInput.getName());
+            }
             if (!completed && temporary.exists()) {
                 temporary.delete();
             }
@@ -132,6 +143,89 @@ final class AacAudioDecoder {
                         ? 0.0 : (double) endOffset / (double) input.length());
             }
         }
+    }
+
+    /**
+     * Produces a temporary MP4/M4A copy only when the file contains JAAD's problematic legacy
+     * {@code udta/tags} metadata atom. The atom is metadata-only, so replacing its type with
+     * {@code free} leaves the ISO-BMFF layout, media data and all chunk offsets unchanged.
+     */
+    private static File sanitizeJaadIncompatibleMetadata(File input, File destination) throws IOException {
+        List<Long> tagsBoxes = new ArrayList<>();
+        try (RandomAccessFile source = new RandomAccessFile(input, "r")) {
+            collectLegacyTagsBoxes(source, 0L, source.length(), false, 0, tagsBoxes);
+        }
+        if (tagsBoxes.isEmpty()) {
+            return input;
+        }
+
+        File sanitized = new File(destination.getParentFile(), destination.getName() + ".jaad-input");
+        Files.copy(input.toPath(), sanitized.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        boolean completed = false;
+        try (RandomAccessFile output = new RandomAccessFile(sanitized, "rw")) {
+            for (Long boxOffset : tagsBoxes) {
+                output.seek(boxOffset + 4L);
+                output.write(new byte[]{'f', 'r', 'e', 'e'});
+            }
+            completed = true;
+            return sanitized;
+        } finally {
+            if (!completed && sanitized.exists()) {
+                sanitized.delete();
+            }
+        }
+    }
+
+    private static void collectLegacyTagsBoxes(RandomAccessFile file, long start, long end,
+                                               boolean insideUserData, int depth,
+                                               List<Long> tagsBoxes) throws IOException {
+        if (depth > 16 || start < 0L || end < start || end > file.length()) {
+            return;
+        }
+        long offset = start;
+        while (offset + 8L <= end) {
+            file.seek(offset);
+            long size = readUnsignedInt(file);
+            String type = readBoxType(file);
+            long headerSize = 8L;
+            if (size == 1L) {
+                if (offset + 16L > end) return;
+                size = file.readLong();
+                headerSize = 16L;
+            } else if (size == 0L) {
+                size = end - offset;
+            }
+            if (size < headerSize || size > end - offset) {
+                return;
+            }
+
+            if (insideUserData && "tags".equals(type)) {
+                tagsBoxes.add(offset);
+            } else if (isMp4ContainerBox(type)) {
+                collectLegacyTagsBoxes(file, offset + headerSize, offset + size,
+                        insideUserData || "udta".equals(type), depth + 1, tagsBoxes);
+            }
+            offset += size;
+        }
+    }
+
+    private static long readUnsignedInt(RandomAccessFile file) throws IOException {
+        return ((long) file.readUnsignedByte() << 24)
+                | ((long) file.readUnsignedByte() << 16)
+                | ((long) file.readUnsignedByte() << 8)
+                | (long) file.readUnsignedByte();
+    }
+
+    private static String readBoxType(RandomAccessFile file) throws IOException {
+        byte[] value = new byte[4];
+        file.readFully(value);
+        return new String(value, "ISO-8859-1");
+    }
+
+    private static boolean isMp4ContainerBox(String type) {
+        return "moov".equals(type) || "trak".equals(type) || "mdia".equals(type)
+                || "minf".equals(type) || "stbl".equals(type) || "edts".equals(type)
+                || "dinf".equals(type) || "udta".equals(type);
     }
 
     private static void reportProgress(ProgressListener progressListener, double progress) {

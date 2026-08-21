@@ -87,8 +87,16 @@ public final class CadenceMusicService {
         return currentPlatform;
     }
 
-    public static void setCurrentPlatform(MusicPlatform platform) {
-        currentPlatform = platform == null ? MusicPlatform.NETEASE : platform;
+    public static synchronized void setCurrentPlatform(MusicPlatform platform) {
+        MusicPlatform selected = platform == null ? MusicPlatform.NETEASE : platform;
+        if (selected != MusicPlatform.GD) {
+            // GD is an optional persisted provider. Selecting an official source must also
+            // disable the persisted GD choice; otherwise initialize() restores GD before every
+            // search and the UI appears to switch back to the official source while requests
+            // still go to the third-party GD API.
+            GdStudioSourceSettings.setPlatform("");
+        }
+        currentPlatform = selected;
     }
 
     public static List<Music> search(String keyword, int limit) {

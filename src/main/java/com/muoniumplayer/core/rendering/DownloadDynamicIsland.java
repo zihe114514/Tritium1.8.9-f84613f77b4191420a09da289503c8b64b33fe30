@@ -85,6 +85,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     /** Serializes notices arriving from async network/playback workers. */
     private static final Object NOTICE_QUEUE_LOCK = new Object();
     private static final Deque<QueuedNotice> NOTICE_QUEUE = new ArrayDeque<QueuedNotice>();
+    /** A missing refresh callback must not leave the island in a permanent loading state. */
+    private static final long PLAYLIST_REFRESH_NOTICE_TIMEOUT_MILLIS = 30_000L;
     /** True only for ordinary notices that are part of a multi-message queue. */
     private static volatile boolean noticeUsesQueueInterval;
 
@@ -432,7 +434,18 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     /** Advances queued ordinary notices after their configured display interval. */
     private static void advanceQueuedNotice(long now) {
         synchronized (NOTICE_QUEUE_LOCK) {
-            if (noticeType == IslandNoticeType.NONE || noticePersistent) return;
+            if (noticeType == IslandNoticeType.NONE) return;
+
+            if (noticePersistent) {
+                if (isPersistentNoticeTimedOut(now)) {
+                    boolean queueMode = !NOTICE_QUEUE.isEmpty();
+                    if (queueMode) markQueuedNoticesUseQueueIntervalLocked();
+                    publishActiveNoticeLocked(IslandNoticeType.REFRESH_ERROR, "歌单同步超时",
+                            "30 秒内未收到结果 · 请稍后重试", false, queueMode, now);
+                }
+                return;
+            }
+
             if (noticeShownAt <= 0L || now - noticeShownAt < noticeHoldMillis(noticeUsesQueueInterval)) return;
 
             if (!NOTICE_QUEUE.isEmpty()) {
@@ -444,6 +457,12 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
             publishActiveNoticeLocked(IslandNoticeType.NONE, "", "", false, false, now);
         }
+    }
+
+    /** Refresh is the only persistent notice without an independent progress/completion channel. */
+    private static boolean isPersistentNoticeTimedOut(long now) {
+        return noticeType == IslandNoticeType.REFRESHING && noticeShownAt > 0L
+                && now - noticeShownAt >= PLAYLIST_REFRESH_NOTICE_TIMEOUT_MILLIS;
     }
 
     private static final class QueuedNotice {

@@ -53,17 +53,32 @@ public final class GdStudioMusicService {
     private GdStudioMusicService() {
     }
 
+    /** Runtime guidance shown in the source menu; entries remain selectable if upstream recovers. */
+    public enum PlatformStatus {
+        RECOMMENDED("稳定 · 搜索、封面、播放、歌词", 0x75D8A0),
+        PLAYABLE("可播放 · 歌词可能为空", 0x82C7FF),
+        EXPERIMENTAL("实验性 · 播放链接可能为空", 0xE7C26B),
+        UNAVAILABLE("暂未开放 · 接口恢复后可直接重试", 0xAEB5C4);
+
+        public final String description;
+        public final int color;
+
+        PlatformStatus(String description, int color) {
+            this.description = description;
+            this.color = color;
+        }
+    }
+
     /** One selectable platform exposed by the GD Studio API. */
     public static final class Platform {
         public final String key;
         public final String displayName;
-        /** Verified working/stable sources according to the upstream service notes. */
-        public final boolean stable;
+        public final PlatformStatus status;
 
-        private Platform(String key, String displayName, boolean stable) {
+        private Platform(String key, String displayName, PlatformStatus status) {
             this.key = key;
             this.displayName = displayName;
-            this.stable = stable;
+            this.status = status == null ? PlatformStatus.UNAVAILABLE : status;
         }
     }
 
@@ -398,16 +413,18 @@ public final class GdStudioMusicService {
 
     private static List<Platform> buildPlatforms() {
         List<Platform> platforms = new ArrayList<>();
-        platforms.add(new Platform("netease", "网易云音乐", true));
-        platforms.add(new Platform("joox", "JOOX", true));
-        platforms.add(new Platform("bilibili", "哔哩哔哩", true));
-        platforms.add(new Platform("kuwo", "酷我音乐", false));
-        platforms.add(new Platform("tencent", "QQ音乐", false));
-        platforms.add(new Platform("apple", "Apple Music", false));
-        platforms.add(new Platform("spotify", "Spotify", false));
-        platforms.add(new Platform("ytmusic", "YouTube Music", false));
-        platforms.add(new Platform("tidal", "Tidal", false));
-        platforms.add(new Platform("qobuz", "Qobuz", false));
+        // Ordered by current end-to-end verification. All documented parameters are kept so a
+        // source that the upstream service restores becomes selectable without a client update.
+        platforms.add(new Platform("netease", "网易云音乐", PlatformStatus.RECOMMENDED));
+        platforms.add(new Platform("joox", "JOOX", PlatformStatus.RECOMMENDED));
+        platforms.add(new Platform("bilibili", "哔哩哔哩", PlatformStatus.PLAYABLE));
+        platforms.add(new Platform("kuwo", "酷我音乐", PlatformStatus.EXPERIMENTAL));
+        platforms.add(new Platform("tencent", "QQ音乐", PlatformStatus.UNAVAILABLE));
+        platforms.add(new Platform("tidal", "Tidal", PlatformStatus.UNAVAILABLE));
+        platforms.add(new Platform("qobuz", "Qobuz", PlatformStatus.UNAVAILABLE));
+        platforms.add(new Platform("apple", "Apple Music", PlatformStatus.UNAVAILABLE));
+        platforms.add(new Platform("ytmusic", "YouTube Music", PlatformStatus.UNAVAILABLE));
+        platforms.add(new Platform("spotify", "Spotify", PlatformStatus.UNAVAILABLE));
         return platforms;
     }
 
@@ -417,4 +434,3 @@ public final class GdStudioMusicService {
         return result;
     }
 }
-

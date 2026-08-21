@@ -1,6 +1,7 @@
 package com.muoniumplayer.core.screens.ncm;
 
 import com.muoniumplayer.core.management.FontManager;
+import com.muoniumplayer.core.screens.ncm.panels.HomePanel;
 import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.CadenceMusicService;
 import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
@@ -185,11 +186,13 @@ public final class MusicSourceOverlay extends NCMPanel {
             name.setPosition(10, 9);
         });
 
-        LabelWidget description = new LabelWidget(platform.key + (platform.stable ? " · 稳定" : ""), FontManager.pf12);
+        LabelWidget description = new LabelWidget(platform.key + " · " + platform.status.description, FontManager.pf12);
         row.addChild(description);
         description.setClickable(false);
         description.setBeforeRenderCallback(() -> {
-            description.setColor(platform.stable ? 0x75D8A0 : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            description.setColor(platform.status.color);
+            description.setMaxWidth(Math.max(1, row.getWidth() - 96));
+            description.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             description.setPosition(10, 30);
         });
 
@@ -213,7 +216,7 @@ public final class MusicSourceOverlay extends NCMPanel {
                 statusText = "已关闭 GD音乐台 内容源";
                 statusColor = 0xAEB5C4;
             }
-            NCMScreen.getInstance().markDirty();
+            resetToHomeForCurrentSource();
             showGdPlatforms();
             return true;
         });
@@ -245,9 +248,12 @@ public final class MusicSourceOverlay extends NCMPanel {
         card.setRadius(10);
         card.setOnClickCallback((x, yy, button) -> {
             if (button != 0) return false;
-            if (CadenceMusicService.getCurrentPlatform() != platform) {
-                CadenceMusicService.setCurrentPlatform(platform);
-                NCMScreen.getInstance().markDirty();
+            boolean changed = CadenceMusicService.getCurrentPlatform() != platform;
+            // Always call the setter: it also clears a stale persisted GD selection when the
+            // user clicks the already-selected official source.
+            CadenceMusicService.setCurrentPlatform(platform);
+            if (changed) {
+                resetToHomeForCurrentSource();
             }
             dispose();
             return true;
@@ -298,6 +304,17 @@ public final class MusicSourceOverlay extends NCMPanel {
             label.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             label.setPosition(16, y);
         });
+    }
+
+    /**
+     * A provider switch changes the type of content that the current panel can render.
+     * Always return to Home before rebuilding the navigation rail instead of leaving a
+     * stale search/discovery panel from the previous provider on screen.
+     */
+    private void resetToHomeForCurrentSource() {
+        NCMScreen screen = NCMScreen.getInstance();
+        screen.setCurrentPanel(new HomePanel());
+        screen.markDirty();
     }
 
     private Panel createDialog(double preferredWidth, double preferredHeight) {

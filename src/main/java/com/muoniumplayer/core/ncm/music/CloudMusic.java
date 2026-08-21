@@ -88,6 +88,8 @@ public class CloudMusic implements SharedConstants {
      */
     public static volatile PlayList currentPlaylistContext;
     public static Thread playThread;
+    /** True after URL resolution, download, decode or player initialization fails for the current track. */
+    private static volatile boolean awaitingPlaybackAction;
 
     public static volatile User profile;
     public static volatile List<PlayList> playLists;
@@ -364,11 +366,17 @@ public class CloudMusic implements SharedConstants {
         if (personalFmActive && curIdx <= 0) return;
         updatePlayCountIfNeeded();
 
-        if (!canPlayPrevious()) {
+        if (!canPlayPrevious() || playList.isEmpty()) {
             return;
         }
 
-        if (player != null && !playList.isEmpty()) {
+        if (awaitingPlaybackAction) {
+            curIdx--;
+            restartFromUserTrackSelection();
+            return;
+        }
+
+        if (player != null) {
             prepareForTrackChange();
             curIdx--;
             stopCurrentPlayback();
@@ -393,11 +401,17 @@ public class CloudMusic implements SharedConstants {
             PersonalFmManager.requestNextBatchAsync();
             return;
         }
-        if (!canPlayNext()) {
+        if (!canPlayNext() || playList.isEmpty()) {
             return;
         }
 
-        if (player != null && !playList.isEmpty()) {
+        if (awaitingPlaybackAction) {
+            curIdx++;
+            restartFromUserTrackSelection();
+            return;
+        }
+
+        if (player != null) {
             updatePlayCountIfNeeded();
             prepareForTrackChange();
             curIdx++;
@@ -522,6 +536,12 @@ public class CloudMusic implements SharedConstants {
     private static void stopCurrentPlayback() {
         player.close();
         playing.set(false);
+    }
+
+    /** Restarts the queue only after an explicit next/previous action following a failed track. */
+    private static void restartFromUserTrackSelection() {
+        awaitingPlaybackAction = false;
+        startPlaybackList(playList, curIdx);
     }
 
     /**
@@ -658,6 +678,7 @@ public class CloudMusic implements SharedConstants {
 
     private static void startNewPlayThread(List<Music> songs, int startIdx) {
         playThread = new PlayThread(songs, startIdx);
+        awaitingPlaybackAction = false;
         doBreak = false;
         playing.set(false);
         playThread.start();
@@ -683,7 +704,6 @@ public class CloudMusic implements SharedConstants {
         @Override
         public void run() {
             curIdx = startIdx;
-            int consecutiveLoadFailures = 0;
 
             while (shouldContinuePlayback()) {
                 if (playListChanged()) {
@@ -694,17 +714,14 @@ public class CloudMusic implements SharedConstants {
                 prepareForPlayback();
 
                 if (!playSong(currentSong)) {
-                    // 乱序播放更容易首先命中无版权、下架或临时无法获取 URL 的曲目。
-                    // 旧实现会因为一首歌失败就直接结束整个播放线程，表现为“随机播放偶尔无法加载”。
-                    consecutiveLoadFailures++;
-                    if (shouldStopAfterLoadFailure(consecutiveLoadFailures)) {
-                        break;
-                    }
-                    updateCurrentIndex();
-                    continue;
+                    // Never skip a failed track automatically. Keep the failed song selected and
+                    // wait for the user to retry it, choose next/previous, or select another song.
+                    awaitingPlaybackAction = !isPlaybackCancelled() && !playListChanged() && !doBreak;
+                    playing.set(false);
+                    break;
                 }
 
-                consecutiveLoadFailures = 0;
+                awaitingPlaybackAction = false;
                 preloadNextCover();
                 waitForPlaybackCompletion();
                 if (isPlaybackCancelled() || playListChanged() || session == null || !session.isActive()) {
@@ -717,25 +734,6 @@ public class CloudMusic implements SharedConstants {
                     break;
                 }
             }
-        }
-
-        private boolean shouldStopAfterLoadFailure(int consecutiveLoadFailures) {
-            if (doBreak || isPlaybackCancelled() || playListChanged()) {
-                return true;
-            }
-
-            if (personalFmActive && consecutiveLoadFailures >= playList.size()) {
-                PersonalFmManager.requestNextBatchAsync();
-                return true;
-            }
-            if (consecutiveLoadFailures < playList.size()) {
-                return false;
-            }
-
-            System.err.println("[NCM] No playable songs were found in the current playlist.");
-            api.printMessage(EnumChatColor.RED + "当前歌单没有可播放的歌曲");
-            DownloadDynamicIsland.showPlaybackFailure("当前歌单", "没有可播放的歌曲");
-            return true;
         }
 
         private boolean shouldContinuePlayback() {
@@ -820,11 +818,7 @@ public class CloudMusic implements SharedConstants {
                 musicFile = getMusicFile(playUrl, song);
             } catch (Exception e) {
                 if (!isPlaybackCancelled() && isSessionUsable(targetSession)) {
-                    if (e instanceof UnsupportedMp4ContainerException) {
-                        System.err.println("[NCM] " + e.getMessage());
-                    } else {
-                        handlePlayerInitializationError(song, e);
-                    }
+                    handlePlayerInitializationError(song, e);
                 }
                 return false;
             }
@@ -1071,22 +1065,15 @@ public class CloudMusic implements SharedConstants {
         }
 
         /**
-         * JSyn can directly stream MP3, FLAC and WAV. AAC/ADTS and explicitly audio-branded M4A
-         * streams are decoded once into a validated WAV sidecar. Generic MP4 payloads are detected
-         * from their file header but never transcoded: they can be video-only, DRM-protected or
-         * otherwise unsuitable for this player, so the caller can use its existing NetEase MP3
-         * fallback instead.
+         * JSyn can directly stream MP3, FLAC and WAV. AAC/ADTS and ISO-BMFF payloads are decoded
+         * once into a validated WAV sidecar. The decoder accepts only AAC audio tracks, so video-only,
+         * DRM-protected or unsupported MP4 streams still fail safely.
          */
         private File resolvePlayableAudioFile(File sourceFile) {
             String container = AudioContainerSupport.detectContainer(sourceFile);
             if (!AudioContainerSupport.isSupportedContainer(container)) {
                 throw new IllegalStateException("Cached audio has an unsupported or invalid container: "
                         + sourceFile.getName());
-            }
-            if (AudioContainerSupport.isMp4Container(container)) {
-                discardLegacyDecodedWav(sourceFile);
-                DownloadDynamicIsland.showUnsupportedMp4Container(sourceFile.getName());
-                throw new UnsupportedMp4ContainerException(sourceFile.getName());
             }
             if (!AudioContainerSupport.requiresAacDecode(container)) {
                 return sourceFile;
@@ -1235,11 +1222,6 @@ public class CloudMusic implements SharedConstants {
         return MusicCoverService.gaussianBlur(imgIn, blur);
     }
 
-    private static final class UnsupportedMp4ContainerException extends IllegalStateException {
-        private UnsupportedMp4ContainerException(String sourceName) {
-            super("Detected unsupported MP4 container from file header: " + sourceName);
-        }
-    }
 
     private static void downloadMusic(String playUrl, File music) {
         MusicDownloadService.downloadMusic(playUrl, music);

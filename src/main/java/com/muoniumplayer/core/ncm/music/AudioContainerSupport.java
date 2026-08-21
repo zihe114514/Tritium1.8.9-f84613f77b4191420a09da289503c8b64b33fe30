@@ -30,11 +30,7 @@ final class AudioContainerSupport {
     }
 
     static boolean requiresAacDecode(String container) {
-        return "aac".equals(container) || "m4a".equals(container);
-    }
-
-    static boolean isMp4Container(String container) {
-        return "mp4".equals(container);
+        return "aac".equals(container) || "m4a".equals(container) || "mp4".equals(container);
     }
 
     /**
