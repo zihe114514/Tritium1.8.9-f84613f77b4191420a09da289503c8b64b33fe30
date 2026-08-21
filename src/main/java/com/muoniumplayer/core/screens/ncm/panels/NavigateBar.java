@@ -8,7 +8,6 @@ import lombok.Setter;
 import org.lwjgl.input.Keyboard;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
-import com.muoniumplayer.core.ncm.customsource.CustomSourceManager;
 import com.muoniumplayer.core.ncm.music.CadenceMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
@@ -180,8 +179,7 @@ public class NavigateBar extends NCMPanel {
                         }
                     });
 
-                    final boolean customSearch = CustomSourceManager.isCustomContentMode();
-                    final boolean searchPlaylists = !customSearch && playlistSearchMode
+                    final boolean searchPlaylists = playlistSearchMode
                             && CadenceMusicService.getCurrentPlatform() == MusicPlatform.NETEASE;
                     if (searchPlaylists) {
                         MultiThreadingUtil.runAsync(() -> {
@@ -197,15 +195,9 @@ public class NavigateBar extends NCMPanel {
                         PlaylistPanel panel = new PlaylistPanel(playList);
                         NCMScreen.getInstance().setCurrentPanel(panel);
                         MultiThreadingUtil.runAsync(() -> {
-                            List<Music> search = customSearch
-                                    ? CustomSourceManager.searchCurrent(keyword, 60) : CloudMusic.search(keyword);
-                            // A temporary search playlist has no remote playlist request to finish it.
-                            // Mark zero-result searches as loaded as well; otherwise PlayList waits for a
-                            // callback that can never arrive and leaves the panel spinner running forever.
+                            List<Music> search = CloudMusic.search(keyword);
                             playList.musics.addAll(search);
-                            playList.musicsQueried = true;
-                            playList.musicsLoaded = true;
-                            MultiThreadingUtil.runOnMainThread(panel::onInit);
+                            panel.onInit();
                         });
                     }
                 }
@@ -227,9 +219,8 @@ public class NavigateBar extends NCMPanel {
             searchField.setDisabledTextColor(RenderSystem.reAlpha(this.getColor(NCMScreen.ColorType.PRIMARY_TEXT), .4f));
 //            Rect.draw(searchField.getX(), searchField.getY(), searchField.getWidth(), searchField.getHeight(), 0x800090ff);
         });
-        // A single second-level entry replaces the old two-button NetEase/QQ switcher. Imported
-        // LX scripts can be numerous, so they are managed in the same source center instead of
-        // crowding this navigation rail.
+        // A single second-level entry replaces the old two-button NetEase/QQ switcher and also
+        // exposes the GD Studio aggregated platforms without crowding this navigation rail.
         Panel sourceSwitcher = new Panel();
         this.addChild(sourceSwitcher);
         sourceSwitcher.setBeforeRenderCallback(() -> {
@@ -239,10 +230,7 @@ public class NavigateBar extends NCMPanel {
 
         RoundedButtonWidget sourceMenu = new RoundedButtonWidget(() -> {
             String provider = CadenceMusicService.getCurrentPlatform().getDisplayName();
-            return CustomSourceManager.isCustomContentMode()
-                    ? "音乐来源 · 自定义 " + CustomSourceManager.getSelectedPlatform().toUpperCase()
-                    + "  ·  " + CustomSourceManager.getSelectedSource().name
-                    : "音乐来源 · " + provider;
+            return "音乐来源 · " + provider;
         }, FontManager.pf12bold);
         sourceSwitcher.addChild(sourceMenu);
         sourceMenu.setRadius(7);

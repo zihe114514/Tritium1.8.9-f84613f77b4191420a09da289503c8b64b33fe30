@@ -83,7 +83,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     /** 双平台账号管理（含二维码登录二级页面）的模态覆盖层。 */
     public AccountManagerOverlay accountManagerOverlay = null;
 
-    /** 二级音乐来源菜单：固定内容平台与 LX 备用解析音源统一在此处管理。 */
+    /** 二级音乐来源菜单：固定内容平台与 GD音乐台 聚合音源统一在此处管理。 */
     public MusicSourceOverlay musicSourceOverlay = null;
 
     /** 对取消收藏等破坏性操作的二次确认层。 */

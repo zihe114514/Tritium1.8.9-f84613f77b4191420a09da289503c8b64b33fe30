@@ -5,7 +5,8 @@ package com.muoniumplayer.core.ncm.music;
  */
 public enum MusicPlatform {
     NETEASE("网易云", 0xE94747),
-    QQ("QQ音乐", 0x31C27C);
+    QQ("QQ音乐", 0x31C27C),
+    GD("GD音乐台", 0x3D5AFE);
 
     private final String displayName;
     private final int brandColor;

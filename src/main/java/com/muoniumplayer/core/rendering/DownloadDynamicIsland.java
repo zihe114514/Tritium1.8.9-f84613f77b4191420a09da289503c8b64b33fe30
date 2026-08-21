@@ -257,112 +257,42 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         + safeNoticeValue(reason, "请求失败"));
     }
 
-    /**
-     * Listening-duration results have intentionally low display priority. They are deferred behind
-     * active download/transcode progress and other live notices so a background upload result
-     * cannot be visually lost under real-time playback work.
-     */
+    /** Shows a cumulative listening-duration checkpoint result and request latency. */
     public static void showListeningDurationUploadSuccess(int playedSeconds, long elapsedMillis) {
-        publishLowPriorityNotice(IslandNoticeType.LISTENING_DURATION_SUCCESS, "听歌时长上报",
+        publishNotice(IslandNoticeType.LISTENING_DURATION_SUCCESS, "听歌时长上报",
                 "听歌时长上报成功 时长" + Math.max(0, playedSeconds) + "秒 "
                         + Math.max(0L, elapsedMillis) + "ms");
     }
 
     public static void showListeningDurationUploadFailure(int playedSeconds, long elapsedMillis, String reason) {
-        publishLowPriorityNotice(IslandNoticeType.LISTENING_DURATION_ERROR, "听歌时长上报",
+        publishNotice(IslandNoticeType.LISTENING_DURATION_ERROR, "听歌时长上报",
                 "听歌时长上报失败 时长" + Math.max(0, playedSeconds) + "秒 "
                         + Math.max(0L, elapsedMillis) + "ms · "
                         + safeNoticeValue(reason, "请求失败"));
     }
-    /** Feedback for source management and the optional LX-compatible URL resolver chain. */
-    public static void showCustomSourceImportSuccess(String sourceName) {
-        publishNotice(IslandNoticeType.CUSTOM_SOURCE_SUCCESS, "自定义音源已导入",
-                safeNoticeValue(sourceName, "新音源") + " · 正在初始化");
+    /** Feedback for GD Studio API URL resolution. */
+    public static void showGdSourceResolving(String sourceName) {
+        publishNotice(IslandNoticeType.GD_SOURCE_LOADING, "GD音乐台获取链接",
+                "正在连接 " + safeNoticeValue(sourceName, "GD 音乐源"), true);
     }
 
-    public static void showCustomSourceReady(String sourceName) {
-        publishNotice(IslandNoticeType.CUSTOM_SOURCE_SUCCESS, "自定义音源已就绪",
-                safeNoticeValue(sourceName, "音源") + " · 可作为备用解析");
+    public static void showGdSourceResolved(String sourceName, String format) {
+        String source = safeNoticeValue(sourceName, "GD 音乐源");
+        String streamFormat = safeNoticeValue(format, "未知").toUpperCase(java.util.Locale.ROOT);
+        completePersistentNotice(IslandNoticeType.GD_SOURCE_LOADING, IslandNoticeType.GD_SOURCE_SUCCESS,
+                "音频直链已获取", source + " · " + streamFormat + " · 可开始播放");
+        // This ordinary follow-up intentionally enters the existing notice queue. It provides a
+        // clear health confirmation without interrupting any notice preserved by the live loader.
+        publishNotice(IslandNoticeType.GD_SOURCE_HEALTHY, "当前音源正常",
+                source + " · 当前 API 已返回可播放链接");
     }
 
-    public static void showCustomSourceResolving(String sourceName) {
-        publishNotice(IslandNoticeType.CUSTOM_SOURCE_LOADING, "自定义音源解析",
-                "正在尝试 " + safeNoticeValue(sourceName, "备用音源"), true);
+    public static void showGdSourceFailure(String sourceName, String reason) {
+        completePersistentNotice(IslandNoticeType.GD_SOURCE_LOADING, IslandNoticeType.GD_SOURCE_ERROR,
+                "GD音乐台链接获取失败", safeNoticeValue(sourceName, "GD 音乐源") + " · "
+                        + safeNoticeValue(reason, "解析失败"));
     }
 
-    public static void showCustomSourceResolved(String sourceName, String format) {
-        publishNotice(IslandNoticeType.CUSTOM_SOURCE_SUCCESS, "自定义音源解析成功",
-                safeNoticeValue(sourceName, "备用音源") + " · " + safeNoticeValue(format, "未知").toUpperCase(java.util.Locale.ROOT));
-    }
-
-    public static void showCustomSourceFailure(String sourceName, String reason) {
-        publishNotice(IslandNoticeType.CUSTOM_SOURCE_ERROR, "自定义音源不可用",
-                safeNoticeValue(sourceName, "音源") + " · " + safeNoticeValue(reason, "初始化或解析失败"));
-    }
-
-    /** Announces the exact user-selected custom platform without exposing credentials or raw request URLs. */
-    public static void showCustomContentSourceEntered(String sourceName, String platform, String endpointLabel) {
-        publishNotice(IslandNoticeType.CUSTOM_SOURCE_SUCCESS, "自定义 "
-                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 已选择",
-                safeNoticeValue(sourceName, "自定义音源") + " · 接口："
-                        + safeNoticeValue(endpointLabel, "歌曲搜索接口"));
-    }
-
-    /** Keeps the island open while the explicitly selected custom platform performs a song search. */
-    public static void showCustomContentSearchLoading(String sourceName, String platform,
-                                                      String endpointLabel, String keyword) {
-        publishNotice(IslandNoticeType.CUSTOM_SOURCE_LOADING, "自定义 "
-                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 加载中",
-                safeNoticeValue(sourceName, "自定义音源") + " · "
-                        + safeNoticeValue(endpointLabel, "歌曲搜索接口") + " · 搜索「"
-                        + safeNoticeValue(keyword, "歌曲") + "」", true);
-    }
-
-    /** Shows how many tracks the selected custom platform actually returned and its request latency. */
-    public static void showCustomContentSearchSuccess(String sourceName, String platform,
-                                                      String endpointLabel, int resultCount, long elapsedMillis) {
-        publishCustomSourceCompletion(IslandNoticeType.CUSTOM_SOURCE_SUCCESS, "自定义 "
-                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 加载完成",
-                safeNoticeValue(endpointLabel, "歌曲搜索接口") + " · " + Math.max(0, resultCount)
-                        + " 首 · " + Math.max(0L, elapsedMillis) + " ms");
-    }
-
-    /** Differentiates a content-search failure from importing or initializing an LX script. */
-    public static void showCustomContentSearchFailure(String sourceName, String platform,
-                                                      String endpointLabel, String reason, long elapsedMillis) {
-        publishCustomSourceCompletion(IslandNoticeType.CUSTOM_SOURCE_ERROR, "自定义 "
-                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 加载失败",
-                safeNoticeValue(endpointLabel, "歌曲搜索接口") + " · "
-                        + safeNoticeValue(reason, "请求失败") + " · " + Math.max(0L, elapsedMillis) + " ms");
-    }
-
-    /** Reports which selected platform endpoint is resolving the track before playback begins. */
-    public static void showCustomContentResolving(String sourceName, String platform,
-                                                  String endpointLabel, String songName) {
-        publishNotice(IslandNoticeType.CUSTOM_SOURCE_LOADING, "自定义 "
-                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 正在加载",
-                safeNoticeValue(endpointLabel, "歌曲播放接口") + " · 正在解析「"
-                        + safeNoticeValue(songName, "当前歌曲") + "」", true);
-    }
-
-    /** Confirms that the selected custom platform returned a usable playback URL. */
-    public static void showCustomContentResolved(String sourceName, String platform,
-                                                 String endpointLabel, String format, long elapsedMillis) {
-        publishCustomSourceCompletion(IslandNoticeType.CUSTOM_SOURCE_SUCCESS, "自定义 "
-                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 已加载",
-                safeNoticeValue(endpointLabel, "歌曲播放接口") + " · "
-                        + safeNoticeValue(format, "未知").toUpperCase(java.util.Locale.ROOT) + " · "
-                        + Math.max(0L, elapsedMillis) + " ms");
-    }
-
-    /** Reports a playback URL resolution failure for the exact selected custom platform. */
-    public static void showCustomContentResolveFailure(String sourceName, String platform,
-                                                       String endpointLabel, String reason, long elapsedMillis) {
-        publishCustomSourceCompletion(IslandNoticeType.CUSTOM_SOURCE_ERROR, "自定义 "
-                        + safeNoticeValue(platform, "音源").toUpperCase(java.util.Locale.ROOT) + " 加载失败",
-                safeNoticeValue(endpointLabel, "歌曲播放接口") + " · "
-                        + safeNoticeValue(reason, "解析失败") + " · " + Math.max(0L, elapsedMillis) + " ms");
-    }
 
     /** Gives login and account validation a distinct, non-download success feedback. */
     public static void showNetworkConnectionSuccess(String target) {
@@ -375,54 +305,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         publishNotice(IslandNoticeType.NETWORK_ERROR, "网络连接失败",
                 safeNoticeValue(target, "音乐服务") + " · " + safeNoticeValue(reason, "请检查网络后重试"));
     }
-/**
-     * A custom search/resolve status is persistent while the request runs. Its completion must
-     * replace that exact spinner rather than wait behind it in the ordinary notice queue; otherwise
-     * a completed request looks as if it is still parsing forever.
-     */
-    private static void publishCustomSourceCompletion(IslandNoticeType type, String title, String value) {
-        IslandNoticeType safeType = type == null ? IslandNoticeType.CUSTOM_SOURCE_ERROR : type;
-        String safeTitle = safeNoticeValue(title, "自定义音源");
-        String safeValue = safeNoticeValue(value, "请求完成");
-        long now = System.currentTimeMillis();
-        synchronized (NOTICE_QUEUE_LOCK) {
-            if (noticeType == IslandNoticeType.CUSTOM_SOURCE_LOADING && noticePersistent) {
-                publishActiveNoticeLocked(safeType, safeTitle, safeValue, false, false, now);
-                return;
-            }
-        }
-        publishNotice(safeType, safeTitle, safeValue);
-    }
-
     private static long noticeHoldMillis(boolean queueMode) {
         return DynamicIslandMath.completionHoldMillis(queueMode
                 ? HudConfig.dynamicIslandQueueIntervalSeconds
                 : HudConfig.dynamicIslandCompletionHoldSeconds);
-    }
-
-    /** Adds a background result to the tail of the notice queue whenever live work is active. */
-    private static void publishLowPriorityNotice(IslandNoticeType type, String title, String value) {
-        IslandNoticeType safeType = type == null ? IslandNoticeType.NONE : type;
-        if (safeType == IslandNoticeType.NONE) return;
-        String safeTitle = safeNoticeValue(title, "状态");
-        String safeValue = safeNoticeValue(value, "—");
-        long now = System.currentTimeMillis();
-        synchronized (NOTICE_QUEUE_LOCK) {
-            boolean canShowImmediately = noticeType == IslandNoticeType.NONE
-                    && NOTICE_QUEUE.isEmpty() && !hasRealtimePresentationLocked(now);
-            if (canShowImmediately) {
-                publishActiveNoticeLocked(safeType, safeTitle, safeValue, false, false, now);
-                return;
-            }
-
-            // A duration result must never shorten or replace a visible real-time presentation.
-            // Queued messages always use the user-configured queue interval.
-            if (noticeType != IslandNoticeType.NONE && !bypassesNoticeQueue(noticeType, noticePersistent)) {
-                noticeUsesQueueInterval = true;
-            }
-            markQueuedNoticesUseQueueIntervalLocked();
-            NOTICE_QUEUE.addLast(new QueuedNotice(safeType, safeTitle, safeValue, false, true));
-        }
     }
 
     private static void publishNotice(IslandNoticeType type, String title, String value) {
@@ -438,6 +324,26 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             if (safeType == IslandNoticeType.NONE) {
                 NOTICE_QUEUE.clear();
                 publishActiveNoticeLocked(safeType, safeTitle, safeValue, persistent, false, now);
+                return;
+            }
+
+            if (noticeType != IslandNoticeType.NONE && isLowestPriorityNotice(safeType)) {
+                // NetEase listening-duration reports are background telemetry. Keep them behind
+                // every visible/user-facing notification rather than allowing them to interrupt it.
+                noticeUsesQueueInterval = noticeUsesQueueInterval || !noticePersistent;
+                markQueuedNoticesUseQueueIntervalLocked();
+                NOTICE_QUEUE.addLast(new QueuedNotice(safeType, safeTitle, safeValue, persistent, true));
+                return;
+            }
+
+            if (noticeType != IslandNoticeType.NONE && isLowestPriorityNotice(noticeType)) {
+                // A later user-facing notification takes the active slot; defer the telemetry card
+                // to the tail so it remains strictly lowest priority even when it arrived first.
+                NOTICE_QUEUE.addLast(new QueuedNotice(noticeType, noticeTitle, noticeValue,
+                        noticePersistent, true));
+                markQueuedNoticesUseQueueIntervalLocked();
+                publishActiveNoticeLocked(safeType, safeTitle, safeValue, persistent,
+                        !bypassesNoticeQueue(safeType, persistent), now);
                 return;
             }
 
@@ -469,19 +375,34 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
     }
 
+    /**
+     * Replaces a matching live status card with its terminal result without clearing the queued
+     * notices that the live card may have temporarily interrupted.
+     */
+    private static void completePersistentNotice(IslandNoticeType loadingType, IslandNoticeType resultType,
+                                                 String title, String value) {
+        long now = System.currentTimeMillis();
+        synchronized (NOTICE_QUEUE_LOCK) {
+            if (noticeType == loadingType && noticePersistent) {
+                boolean queueMode = !NOTICE_QUEUE.isEmpty();
+                if (queueMode) markQueuedNoticesUseQueueIntervalLocked();
+                publishActiveNoticeLocked(resultType, safeNoticeValue(title, "状态"),
+                        safeNoticeValue(value, "—"), false, queueMode, now);
+                return;
+            }
+        }
+        publishNotice(resultType, title, value);
+    }
+
+    /** NetEase cumulative listening-duration uploads are non-interactive telemetry. */
+    private static boolean isLowestPriorityNotice(IslandNoticeType type) {
+        return type == IslandNoticeType.LISTENING_DURATION_SUCCESS
+                || type == IslandNoticeType.LISTENING_DURATION_ERROR;
+    }
+
     /** Volume and persistent progress/status cards stay immediate rather than being queued. */
     private static boolean bypassesNoticeQueue(IslandNoticeType type, boolean persistent) {
         return persistent || type == IslandNoticeType.VOLUME || type == IslandNoticeType.TRANSCODING;
-    }
-
-    /**
-     * Download/transcode visuals own the island until their configured completion hold ends.
-     * This prevents a deferred upload result from aging out behind the download success animation.
-     */
-    private static boolean hasRealtimePresentationLocked(long now) {
-        return downloading || transcoding
-                || (downloadCompletedAt > 0L && now - downloadCompletedAt
-                < DynamicIslandMath.completionHoldMillis(HudConfig.dynamicIslandCompletionHoldSeconds));
     }
 
     /** Preserves an interrupted ordinary notice so a live volume/status update cannot discard it. */
@@ -511,20 +432,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     /** Advances queued ordinary notices after their configured display interval. */
     private static void advanceQueuedNotice(long now) {
         synchronized (NOTICE_QUEUE_LOCK) {
-            // Do not consume low-priority queue entries while download/transcode UI is active.
-            if (hasRealtimePresentationLocked(now)) return;
-
-            // A duration result can arrive while a progress presentation is active and no normal
-            // notice exists. Once the live presentation is gone, start the oldest queued result.
-            if (noticeType == IslandNoticeType.NONE) {
-                if (!NOTICE_QUEUE.isEmpty()) {
-                    QueuedNotice next = NOTICE_QUEUE.removeFirst();
-                    publishActiveNoticeLocked(next.type, next.title, next.value, next.persistent,
-                            next.useQueueInterval, now);
-                }
-                return;
-            }
-            if (noticePersistent) return;
+            if (noticeType == IslandNoticeType.NONE || noticePersistent) return;
             if (noticeShownAt <= 0L || now - noticeShownAt < noticeHoldMillis(noticeUsesQueueInterval)) return;
 
             if (!NOTICE_QUEUE.isEmpty()) {
@@ -1153,17 +1061,22 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         if (alpha <= .01f) return;
         int foreground = hexColor(.94f, .95f, .98f, alpha);
         if (type == IslandNoticeType.REFRESHING || type == IslandNoticeType.PLAYLIST_TRACK_ADDING
-                || type == IslandNoticeType.TRANSCODING || type == IslandNoticeType.CUSTOM_SOURCE_LOADING) {
+                || type == IslandNoticeType.TRANSCODING || type == IslandNoticeType.GD_SOURCE_LOADING) {
             renderSpinner(centerX, centerY, alpha, accentColor, now, false);
             return;
         }
         if (type == IslandNoticeType.REFRESH_SUCCESS
                 || type == IslandNoticeType.PLAYLIST_TRACK_ADD_SUCCESS
                 || type == IslandNoticeType.PLAYLIST_TRACK_ALREADY_EXISTS
-                || type == IslandNoticeType.TRANSCODE_SUCCESS || type == IslandNoticeType.CUSTOM_SOURCE_SUCCESS) {
+                || type == IslandNoticeType.TRANSCODE_SUCCESS || type == IslandNoticeType.GD_SOURCE_HEALTHY) {
             drawRotatedPill(centerX - 1.8, centerY + .8, 3.8, 1.25, 43f,
                     hexColor(.70f, 1f, .77f, alpha));
             drawRotatedPill(centerX + 1.6, centerY - .4, 6.2, 1.25, -47f,
+                    hexColor(.70f, 1f, .77f, alpha));
+            return;
+        }
+        if (type == IslandNoticeType.GD_SOURCE_SUCCESS) {
+            drawNoticeFontelloIcon(FontelloIcons.LINK, centerX, centerY, alpha,
                     hexColor(.70f, 1f, .77f, alpha));
             return;
         }
@@ -1178,7 +1091,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             return;
         }
         if (type == IslandNoticeType.REFRESH_ERROR || type == IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR
-                || type == IslandNoticeType.PLAYBACK_ERROR || type == IslandNoticeType.CUSTOM_SOURCE_ERROR) {
+                || type == IslandNoticeType.PLAYBACK_ERROR || type == IslandNoticeType.GD_SOURCE_ERROR) {
             drawRotatedPill(centerX, centerY, 10.0, 1.25, 45f,
                     hexColor(1f, .48f, .50f, alpha));
             drawRotatedPill(centerX, centerY, 10.0, 1.25, -45f,
@@ -1350,9 +1263,10 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         RECENT_PLAY_ERROR,
         LISTENING_DURATION_SUCCESS,
         LISTENING_DURATION_ERROR,
-        CUSTOM_SOURCE_LOADING,
-        CUSTOM_SOURCE_SUCCESS,
-        CUSTOM_SOURCE_ERROR
+        GD_SOURCE_LOADING,
+        GD_SOURCE_SUCCESS,
+        GD_SOURCE_HEALTHY,
+        GD_SOURCE_ERROR
     }
 
 

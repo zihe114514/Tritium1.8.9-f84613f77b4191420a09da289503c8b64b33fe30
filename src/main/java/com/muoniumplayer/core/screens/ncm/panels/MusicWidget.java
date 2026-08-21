@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.ncm.panels;
 import today.opai.api.enums.EnumChatColor;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.TextureManager;
@@ -64,10 +65,9 @@ public class MusicWidget extends RoundedRectWidget {
 
         this.setBeforeRenderCallback(() -> {
 
-            // 只在这个 music 被渲染的时候才加载封面
+            // 只在这个 music 被渲染的时候才加载封面；GD 封面未就绪时下一帧重试
             if (!coverLoaded) {
-                coverLoaded = true;
-                this.loadCover();
+                coverLoaded = this.loadCover();
             }
 
             this.setBounds(this.getParentWidth(), 30);
@@ -142,8 +142,11 @@ public class MusicWidget extends RoundedRectWidget {
         boolean cloudSong = music.isCloudSong();
         String highestQuality = music.getHighestQualityLabel();
         boolean showHighestQuality = highestQuality != null && !highestQuality.isEmpty();
+        String gdSourceLabel = music.isGd() ? GdStudioMusicService.displayName(music.getGdPlatform()) : "";
+        boolean showGdSource = music.isGd() && !gdSourceLabel.isEmpty();
+        double gdBadgeWidth = showGdSource ? Math.max(26.0, gdSourceLabel.length() * 7.0 + 10.0) : 0.0;
         double accessBadgeReserve = (vipRestricted ? 24.0 : 0.0) + (digitalAlbumTrack ? 28.0 : 0.0)
-                + (cloudSong ? 28.0 : 0.0) + (showHighestQuality ? 38.0 : 0.0);
+                + (cloudSong ? 28.0 : 0.0) + (showHighestQuality ? 38.0 : 0.0) + gdBadgeWidth;
 
         String translatedNames = music.getTranslatedNames();
 
@@ -251,6 +254,28 @@ public class MusicWidget extends RoundedRectWidget {
                 qualityText.center();
             });
             nextAccessBadgeX += qualityBadgeWidth + 3.0;
+        }
+
+        if (showGdSource) {
+            final double gdBadgeOffset = nextAccessBadgeX;
+            RoundedRectWidget gdBadge = new RoundedRectWidget(0, 0, gdBadgeWidth, 10);
+            this.addChild(gdBadge);
+            gdBadge.setClickable(false);
+            gdBadge.setBeforeRenderCallback(() -> {
+                gdBadge.setRadius(2.5);
+                gdBadge.setColor(0x3D5AFE);
+                gdBadge.setAlpha(.92f);
+                gdBadge.setPosition(lblMusicName.getRelativeX() + lblMusicName.getWidth() + 3 + gdBadgeOffset,
+                        lblMusicName.getRelativeY() + lblMusicName.getHeight() * .5 - gdBadge.getHeight() * .5);
+            });
+            LabelWidget gdText = new LabelWidget(gdSourceLabel, FontManager.pf12bold);
+            gdBadge.addChild(gdText);
+            gdText.setClickable(false);
+            gdText.setBeforeRenderCallback(() -> {
+                gdText.setColor(0xFFFFFF);
+                gdText.center();
+            });
+            nextAccessBadgeX += gdBadgeWidth + 3.0;
         }
 
         final double dirtyBadgeOffset = nextAccessBadgeX;
@@ -419,14 +444,19 @@ public class MusicWidget extends RoundedRectWidget {
         return sb.toString();
     }
 
-    private void loadCover() {
-
+    private boolean loadCover() {
         TextureManager textureManager = TextureManager.getInstance();
         Location coverLoc = this.music.getSmallCoverLocation();
         if (textureManager.getTexture(coverLoc) != null)
-            return;
+            return true;
 
-        Textures.downloadTextureAndLoadAsync(music.getCoverUrl(64), coverLoc);
+        String url = music.getCoverUrl(64);
+        if (url == null || url.trim().isEmpty()) {
+            // GD 封面仍在异步预取中：返回 false，下一帧重新尝试，避免对空串发起无效下载。
+            return false;
+        }
+        Textures.downloadTextureAndLoadAsync(url, coverLoc);
+        return true;
     }
 
 }

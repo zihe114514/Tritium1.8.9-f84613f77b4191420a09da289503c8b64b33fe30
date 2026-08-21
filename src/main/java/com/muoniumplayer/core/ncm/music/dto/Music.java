@@ -7,8 +7,10 @@ import top.fpsmaster.music.Track;
 import com.muoniumplayer.core.ncm.RequestUtil;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.CadenceMusicService;
-import com.muoniumplayer.core.ncm.customsource.CustomSourceManager;
+import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
+import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
+import com.muoniumplayer.core.ncm.music.GdStudioSourceSettings;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
 import com.muoniumplayer.core.ncm.music.Quality;
 import com.muoniumplayer.core.utils.Location;
@@ -19,8 +21,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.HashMap;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -105,16 +105,17 @@ public class Music {
     private transient String sourceId;
     private transient String sourceMid;
     private transient String externalCoverUrl;
+    /** GD Studio aggregated source key (netease/joox/...) for freely selected GD tracks. */
+    private transient String gdPlatform;
+    private transient String gdPicId;
+    private transient String gdLyricId;
     private transient boolean vip;
     /** True only when the NetEase payload explicitly marks this track as a cloud-drive track. */
     private transient boolean cloudSong;
     /** Highest provider tier advertised by song/privilege metadata; empty means not supplied. */
     private transient String highestQualityLabel = "";
     private transient Track cadenceTrack;
-    /** True for songs returned by the selected custom source platform search. */
-    private transient boolean customSourceTrack;
-    private transient String customSourcePlatform = "";
-    private transient Map<String, Object> customSourceInfo;
+
     /** Actual stream quality resolved for the current playback request. */
     private transient volatile PlaybackQuality playbackQuality = PlaybackQuality.UNKNOWN;
 
@@ -294,35 +295,44 @@ public class Music {
         return music;
     }
 
-    /** Creates a queue item returned by a manually selected custom-source platform. */
-    public static Music fromCustomSourceResult(Map<String, Object> info, String sourcePlatform) {
-        if (info == null) return null;
-        String name = mapString(info, "name");
-        String singer = mapString(info, "singer");
-        String idText = mapString(info, "id");
-        long stableId = stableLong("custom:" + sourcePlatform + ":" + idText + ":" + name);
+    /** Builds a freely selectable GD Studio track from a GD API search result. */
+    public static Music fromGdTrack(GdStudioMusicService.GdTrack track, String platformKey) {
+        String id = nonNull(track.id);
+        String returnedPlatform = track == null ? "" : nonNull(track.source).trim().toLowerCase(Locale.ROOT);
+        String configuredPlatform = platformKey == null ? "" : platformKey.trim().toLowerCase(Locale.ROOT);
+        String platform = GdStudioMusicService.isKnownPlatform(returnedPlatform) ? returnedPlatform : configuredPlatform;
+        long stableId = stableLong("gd:" + platform + ':' + id);
+
         List<Artist> artistList = new ArrayList<>();
-        artistList.add(new Artist(stableLong("custom:artist:" + singer), singer.isEmpty() ? "Unknown" : singer,
-                Collections.emptyList(), Collections.emptyList()));
-        Album itemAlbum = new Album(stableLong("custom:album:" + mapString(info, "albumId")),
-                mapString(info, "albumName"), mapString(info, "img"), Collections.emptyList());
-        Music music = new Music(name, name, "", stableId, artistList, Collections.emptyList(), itemAlbum,
-                mapLong(info, "duration"), 0L, 0L, Collections.emptyList());
-        music.source = "tx".equalsIgnoreCase(sourcePlatform) ? MusicPlatform.QQ : MusicPlatform.NETEASE;
-        music.sourceId = idText;
-        music.sourceMid = mapString(info, "strMediaMid");
-        music.externalCoverUrl = mapString(info, "img");
-        music.customSourceTrack = true;
-        music.customSourcePlatform = sourcePlatform == null ? "" : sourcePlatform.toLowerCase(Locale.ROOT);
-        music.customSourceInfo = new HashMap<>(info);
+        String artists = nonNull(track.artist);
+        if (!artists.trim().isEmpty()) {
+            String[] names = artists.split("\\s*[、,/]\\s*");
+            for (String artistName : names) {
+                if (!artistName.trim().isEmpty()) {
+                    artistList.add(new Artist(stableLong("gd:artist:" + artistName), artistName.trim(),
+                            Collections.emptyList(), Collections.emptyList()));
+                }
+            }
+        }
+        if (artistList.isEmpty()) {
+            artistList.add(new Artist(0L, "Unknown", Collections.emptyList(), Collections.emptyList()));
+        }
+
+        String albumName = nonNull(track.album);
+        Album album = new Album(stableLong("gd:" + platform + ":album:" + albumName), albumName, "",
+                Collections.emptyList());
+
+        Music music = new Music(nonNull(track.name), nonNull(track.name), "", stableId,
+                artistList, Collections.emptyList(), album, 0L, 0L, 0L, Collections.emptyList());
+        music.source = MusicPlatform.GD;
+        music.sourceId = id;
+        music.gdPlatform = platform;
+        music.gdPicId = nonNull(track.picId);
+        music.gdLyricId = nonNull(track.lyricId);
+        music.externalCoverUrl = "";
         return music;
     }
 
-    public boolean isCustomSourceTrack() { return customSourceTrack; }
-    public String getCustomSourcePlatform() { return customSourcePlatform == null ? "" : customSourcePlatform; }
-    public Map<String, Object> getCustomSourceInfo() { return customSourceInfo; }
-    private static String mapString(Map<String, Object> info, String key) { Object value = info.get(key); return value == null ? "" : String.valueOf(value); }
-    private static long mapLong(Map<String, Object> info, String key) { try { Object value = info.get(key); return value instanceof Number ? ((Number) value).longValue() : Long.parseLong(String.valueOf(value)); } catch (Throwable ignored) { return 0L; } }
     public Track toCadenceTrack() {
         if (cadenceTrack != null) return cadenceTrack;
         cadenceTrack = new Track(source.toCadenceSource(), getSourceId(), sourceMid, nonNull(name),
@@ -344,7 +354,11 @@ public class Music {
     }
 
     public boolean isNetease() {
-        return !customSourceTrack && getSource() == MusicPlatform.NETEASE;
+        return getSource() == MusicPlatform.NETEASE;
+    }
+
+    public boolean isGd() {
+        return getSource() == MusicPlatform.GD;
     }
 
     /**
@@ -361,7 +375,6 @@ public class Music {
     }
 
     public String getStableKey() {
-        if (customSourceTrack) return "custom_" + getCustomSourcePlatform() + "_" + Long.toUnsignedString(id);
         return getSource().name().toLowerCase() + '_' + Long.toUnsignedString(id);
     }
 
@@ -413,11 +426,30 @@ public class Music {
     public String getCoverUrl(int size) {
         String base = getBaseCoverUrl();
         if (base.isEmpty()) return "";
-        if (isQQ()) {
-            // QQ 封面 URL 已带平台尺寸，避免追加网易云专用 param 导致 404。
+        if (isQQ() || isGd()) {
+            // QQ/GD 封面 URL 已带平台尺寸，避免追加网易云专用 param 导致 404。
             return base.replace("http://", "https://");
         }
         return base + "?param=" + size + "y" + size;
+    }
+
+    /**
+     * Resolves the GD Studio album-art URL (network call). Safe to call from background
+     * cover-loading threads only; the render path uses the cached {@link #getCoverUrl(int)}.
+     */
+    public String resolveGdCoverUrl(int size) {
+        if (!isGd()) return getCoverUrl(size);
+        String cached = externalCoverUrl;
+        if (cached != null && !cached.trim().isEmpty()) {
+            return cached.replace("http://", "https://");
+        }
+        String resolved = "";
+        try {
+            resolved = GdStudioMusicService.getPicUrl(getGdPlatform(), gdPicId, size);
+        } catch (Throwable ignored) {
+        }
+        if (!resolved.isEmpty()) externalCoverUrl = resolved;
+        return resolved.replace("http://", "https://");
     }
 
     /** 更新歌曲播放次数；跨平台曲目不调用网易云 scrobble。 */
@@ -436,10 +468,11 @@ public class Music {
     public Tuple<String, String> getPlayUrl() {
         // Never show a quality badge carried over from a previous failed resolve.
         this.playbackQuality = PlaybackQuality.UNKNOWN;
-        if (customSourceTrack) return resolveCustomSourceFallback();
+        if (isGd()) {
+            return resolveGdPlayUrl();
+        }
         if (isQQ()) {
-            Tuple<String, String> result = resolveCadenceWithStandardFallback();
-            return result != null ? result : resolveCustomSourceFallback();
+            return resolveCadenceWithStandardFallback();
         }
 
         // Cadence 搜索得到的网易云歌曲仍优先保持原来源，且该来源内部先尝试无损。
@@ -452,7 +485,7 @@ public class Music {
                     return resolveWithBuiltInNeteaseApi();
                 }
             }, "built-in NetEase API");
-            return result != null ? result : resolveCustomSourceFallback();
+            return result;
         }
 
         Tuple<String, String> result = resolveWithTimeout(new Callable<Tuple<String, String>>() {
@@ -463,18 +496,33 @@ public class Music {
         }, "built-in NetEase API");
         if (result != null) return result;
         result = resolveCadenceWithStandardFallback();
-        return result != null ? result : resolveCustomSourceFallback();
+        return result;
     }
 
-    /** Resolves only after the built-in provider paths failed; custom scripts never replace them. */
-    private Tuple<String, String> resolveCustomSourceFallback() {
-        Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
-        Tuple<String, String> resolved = CustomSourceManager.resolvePlaybackUrl(this, requestedQuality);
-        if (resolved != null) {
-            this.playbackQuality = detectCadencePlaybackQuality(resolved.getB(), requestedQuality);
-            considerHighestQuality(resolved.getB(), 0L);
-        }
-        return resolved;
+    /**
+     * Resolves a freely selected GD Studio track. When the preferred platform fails to parse or
+     * play, it sends the documented URL request to the exact platform/id returned by search.
+     */
+    private Tuple<String, String> resolveGdPlayUrl() {
+        final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
+        final String platform = getGdPlatform().isEmpty() ? GdStudioSourceSettings.getPlatform() : getGdPlatform();
+        return resolveWithTimeout(new Callable<Tuple<String, String>>() {
+            @Override
+            public Tuple<String, String> call() throws Exception {
+                DownloadDynamicIsland.showGdSourceResolving("GD音乐台 · " + platform.toUpperCase(Locale.ROOT));
+                GdStudioMusicService.ResolveResult result =
+                        GdStudioMusicService.resolveTrack(platform, getSourceId(), requestedQuality);
+                if (result == null) {
+                    DownloadDynamicIsland.showGdSourceFailure("GD音乐台", "当前平台未返回可播放链接");
+                    return null;
+                }
+                DownloadDynamicIsland.showGdSourceResolved("GD音乐台 · "
+                        + result.platform.toUpperCase(Locale.ROOT), result.format);
+                playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
+                considerHighestQuality(result.format, 0L);
+                return new Tuple<>(result.url, result.format);
+            }
+        }, "GD Studio");
     }
 
     /**

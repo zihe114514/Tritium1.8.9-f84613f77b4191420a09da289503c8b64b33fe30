@@ -16,6 +16,7 @@ import top.fpsmaster.music.Track;
 import top.fpsmaster.music.http.MusicHttp;
 import top.fpsmaster.music.store.MusicCredentialStore;
 import com.muoniumplayer.core.ncm.OptionsUtil;
+import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.settings.ConfigPaths;
@@ -53,6 +54,11 @@ public final class CadenceMusicService {
     }
 
     public static synchronized void initialize(String legacyNeteaseCookie) {
+        // Restore the persisted GD source choice on startup so selecting a platform in the
+        // second-level source menu remains effective after restarting the client.
+        if (GdStudioSourceSettings.isEnabled()) {
+            currentPlatform = MusicPlatform.GD;
+        }
         if (!initialized) {
             CREDENTIALS.load();
             SERVICE.getQq().setMusicid(nonNull(CREDENTIALS.getQqMusicId()));
@@ -90,6 +96,9 @@ public final class CadenceMusicService {
             return Collections.emptyList();
         }
         initialize(OptionsUtil.getCookie());
+        if (currentPlatform == MusicPlatform.GD) {
+            return searchGd(keyword, limit);
+        }
         try {
             List<Track> tracks = SERVICE.search(currentPlatform.toCadenceSource(), keyword.trim(), Math.max(1, limit));
             return adaptTracks(tracks);
@@ -98,9 +107,29 @@ public final class CadenceMusicService {
             return Collections.emptyList();
         }
     }
+    private static List<Music> searchGd(String keyword, int limit) {
+        String platform = GdStudioSourceSettings.getPlatform();
+        if (platform.isEmpty()) return Collections.emptyList();
+        try {
+            // The GD API documents a 20-result default page; staying within it avoids excess payload.
+            List<GdStudioMusicService.GdTrack> tracks =
+                    GdStudioMusicService.search(platform, keyword.trim(), Math.min(20, Math.max(1, limit)), 1);
+            List<Music> result = new ArrayList<>();
+            for (GdStudioMusicService.GdTrack track : tracks) {
+                if (track == null) continue;
+                result.add(Music.fromGdTrack(track, platform));
+            }
+            return result;
+        } catch (Throwable throwable) {
+            System.err.println("[Music/GD] Search failed for " + platform + ": " + throwable.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+
     /**
      * Performs a caller-selected official-provider search without changing the visible provider.
-     * Custom-source manual platform matching uses this only for the platform chosen by the user.
+     * This is used only for the platform explicitly chosen by the caller.
      */
     public static List<Music> search(MusicPlatform platform, String keyword, int limit) {
         if (isBlank(keyword) || platform == null) return Collections.emptyList();
@@ -181,6 +210,17 @@ public final class CadenceMusicService {
     /** Resolves one Cadence stream attempt at an explicit tier without mutating global preferences. */
     public static Tuple<String, String> getSongUrl(Music music, Quality requestedQuality) {
         if (music == null) return null;
+        if (music.isGd()) {
+            try {
+                Quality effectiveQuality = requestedQuality == null ? Quality.LOSSLESS : requestedQuality;
+                GdStudioMusicService.ResolveResult result = GdStudioMusicService.resolveTrack(
+                        music.getGdPlatform(), music.getSourceId(), effectiveQuality);
+                return result == null ? null : new Tuple<>(result.url, result.format);
+            } catch (Throwable throwable) {
+                System.err.println("[Music/GD] Song URL failed for " + music.getStableKey() + ": " + throwable.getMessage());
+                return null;
+            }
+        }
         initialize(OptionsUtil.getCookie());
         try {
             Track track = music.toCadenceTrack();
@@ -199,6 +239,21 @@ public final class CadenceMusicService {
 
     public static Lyric getLyric(Music music) {
         if (music == null) return null;
+        if (music.isGd()) {
+            try {
+                com.muoniumplayer.core.utils.Tuple<String, String> lrc =
+                        GdStudioMusicService.getLyric(music.getGdPlatform(), music.getGdLyricId());
+                if (lrc == null) return null;
+                String original = lrc.getA() == null ? "" : lrc.getA();
+                String translated = lrc.getB() == null ? "" : lrc.getB();
+                List<top.fpsmaster.music.LyricLine> lines =
+                        top.fpsmaster.music.lyric.LyricParser.INSTANCE.parse(original, translated, "");
+                return new Lyric(original, translated, "", lines);
+            } catch (Throwable throwable) {
+                System.err.println("[Music/GD] Lyric failed for " + music.getStableKey() + ": " + throwable.getMessage());
+                return null;
+            }
+        }
         initialize(OptionsUtil.getCookie());
         try {
             return SERVICE.getLyric(music.toCadenceTrack());

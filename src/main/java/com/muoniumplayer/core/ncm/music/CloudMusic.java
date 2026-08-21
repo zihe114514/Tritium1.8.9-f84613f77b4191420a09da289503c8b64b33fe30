@@ -1562,7 +1562,8 @@ public class CloudMusic implements SharedConstants {
 
     public static List<Music> search(String keyWord) {
         List<Music> cadenceResults = CadenceMusicService.search(keyWord, 50);
-        if (!cadenceResults.isEmpty() || CadenceMusicService.getCurrentPlatform() == MusicPlatform.QQ) {
+        MusicPlatform platform = CadenceMusicService.getCurrentPlatform();
+        if (!cadenceResults.isEmpty() || platform == MusicPlatform.QQ || platform == MusicPlatform.GD) {
             return cadenceResults;
         }
 

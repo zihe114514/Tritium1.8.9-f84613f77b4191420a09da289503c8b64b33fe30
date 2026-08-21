@@ -139,11 +139,19 @@ final class MusicCoverService {
         return textureManager.getTexture(coverLocation) == null || forceReload;
     }
 
+    /** Resolves a GD track cover on the background thread; official tracks return as-is. */
+    private static String coverUrl(Music music, int size) {
+        if (music != null && music.isGd()) {
+            return music.resolveGdCoverUrl(size);
+        }
+        return music == null ? "" : music.getCoverUrl(size);
+    }
+
     private static void loadMainCoverAsync(Music music, Location musicCover, Location musicCoverBlur) {
         MultiThreadingUtil.runAsync(() -> {
             try {
                 @Cleanup
-                InputStream coverStream = HttpUtils.downloadStream(music.getCoverUrl(320), 5);
+                InputStream coverStream = HttpUtils.downloadStream(coverUrl(music, 320), 5);
                 byte[] imageData = IOUtils.toByteArray(coverStream);
                 BufferedImage coverImage = DynamicTexture.readImage(new ByteArrayInputStream(imageData));
                 if (coverImage != null) {
@@ -169,7 +177,7 @@ final class MusicCoverService {
 
     private static void loadSmallCoverAsync(Music music, Location musicCoverSmall) {
         MultiThreadingUtil.runAsync(() -> {
-            InputStream smallCoverStream = HttpUtils.downloadStream(music.getCoverUrl(128), 5);
+            InputStream smallCoverStream = HttpUtils.downloadStream(coverUrl(music, 128), 5);
             BufferedImage smallCoverImage = DynamicTexture.readImage(smallCoverStream);
             Textures.loadTexture(musicCoverSmall, smallCoverImage);
         });
