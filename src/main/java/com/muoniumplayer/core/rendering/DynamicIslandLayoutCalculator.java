@@ -7,6 +7,11 @@ import com.muoniumplayer.core.settings.HudConfig;
 /** Calculates text-aware Dynamic Island bounds without mutating animation state. */
 final class DynamicIslandLayoutCalculator {
 
+    /** Reference base width the per-style minimum widths were tuned against. */
+    static final double DEFAULT_BASE_WIDTH = 250.0;
+    static final double MIN_BASE_WIDTH = 160.0;
+    static final double MAX_BASE_WIDTH = 720.0;
+
     private DynamicIslandLayoutCalculator() {
     }
 
@@ -66,10 +71,17 @@ final class DynamicIslandLayoutCalculator {
         }
 
         double screenMaxWidth = Math.max(compactWidth, (screenWidth - 12.0) / configuredScale);
-        double configuredPreferredWidth = DynamicIslandMath.clamp(HudConfig.dynamicIslandMaxWidth, 160.0, 720.0);
+        // "灵动岛基础宽度" is a real base width, not a passive ceiling. Previously it was only
+        // fed into Math.max(configured, desired), so the natural text width always won and dragging
+        // the slider changed nothing. Now the configured value scales the per-style minimum width and
+        // caps how far copy may stretch the island, so both directions of the slider are visible.
+        double configuredBaseWidth = DynamicIslandMath.clamp(HudConfig.dynamicIslandMaxWidth,
+                MIN_BASE_WIDTH, MAX_BASE_WIDTH);
+        double baseWidthRatio = configuredBaseWidth / DEFAULT_BASE_WIDTH;
+        double scaledMinWidth = minWidth * baseWidthRatio;
         double desiredWidth = sideReserve + widestText * configuredTextScale;
-        double maxWidth = Math.min(screenMaxWidth, Math.max(configuredPreferredWidth, desiredWidth));
-        double safeMinWidth = Math.min(minWidth, maxWidth);
+        double maxWidth = Math.min(screenMaxWidth, Math.max(scaledMinWidth, configuredBaseWidth));
+        double safeMinWidth = Math.min(scaledMinWidth, maxWidth);
         double textScale = configuredTextScale;
         if (widestText > .01) {
             double availableAtMax = Math.max(28.0, maxWidth - sideReserve);

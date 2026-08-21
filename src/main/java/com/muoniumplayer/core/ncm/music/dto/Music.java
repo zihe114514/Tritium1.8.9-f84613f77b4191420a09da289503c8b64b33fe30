@@ -37,6 +37,8 @@ import java.util.stream.Collectors;
 public class Music {
 
     private static final long PLAY_URL_RESOLVE_TIMEOUT_SECONDS = 10L;
+    // GD Studio proxies can resolve a valid third-party CDN link more slowly than official APIs.
+    private static final long GD_PLAY_URL_RESOLVE_TIMEOUT_SECONDS = 35L;
     private static final AtomicInteger URL_RESOLVER_THREAD_ID = new AtomicInteger();
     private static final ExecutorService URL_RESOLVER = Executors.newCachedThreadPool(new ThreadFactory() {
         @Override
@@ -297,8 +299,9 @@ public class Music {
 
     /** Builds a freely selectable GD Studio track from a GD API search result. */
     public static Music fromGdTrack(GdStudioMusicService.GdTrack track, String platformKey) {
+        if (track == null) return null;
         String id = nonNull(track.id);
-        String returnedPlatform = track == null ? "" : nonNull(track.source).trim().toLowerCase(Locale.ROOT);
+        String returnedPlatform = nonNull(track.source).trim().toLowerCase(Locale.ROOT);
         String configuredPlatform = platformKey == null ? "" : platformKey.trim().toLowerCase(Locale.ROOT);
         String platform = GdStudioMusicService.isKnownPlatform(returnedPlatform) ? returnedPlatform : configuredPlatform;
         long stableId = stableLong("gd:" + platform + ':' + id);
@@ -510,19 +513,47 @@ public class Music {
             @Override
             public Tuple<String, String> call() throws Exception {
                 DownloadDynamicIsland.showGdSourceResolving("GD音乐台 · " + platform.toUpperCase(Locale.ROOT));
-                GdStudioMusicService.ResolveResult result =
-                        GdStudioMusicService.resolveTrack(platform, getSourceId(), requestedQuality);
+                // Protected resolve: the documented bitrate ladder on the selected source first, then
+                // one healthy source re-matched by title/artist. Only a fully failed chain reports failure.
+                GdStudioMusicService.ResolveResult result = GdStudioMusicService.resolveTrackWithFallback(
+                        platform, getSourceId(), getName(), getArtistsName(), requestedQuality);
                 if (result == null) {
-                    DownloadDynamicIsland.showGdSourceFailure("GD音乐台", "当前平台未返回可播放链接");
+                    String reason = GdStudioMusicService.getHealth(platform).lastError;
+                    DownloadDynamicIsland.showGdSourceFailure("GD音乐台",
+                            reason.isEmpty() ? "当前平台未返回可播放链接" : reason);
                     return null;
                 }
-                DownloadDynamicIsland.showGdSourceResolved("GD音乐台 · "
-                        + result.platform.toUpperCase(Locale.ROOT), result.format);
+                DownloadDynamicIsland.showGdSourceResolved(result.isFallback()
+                        ? "已回退 " + GdStudioMusicService.displayName(result.platform)
+                        : "GD音乐台 · " + result.platform.toUpperCase(Locale.ROOT), result.format);
                 playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
                 considerHighestQuality(result.format, 0L);
                 return new Tuple<>(result.url, result.format);
             }
-        }, "GD Studio");
+        }, "GD Studio", GD_PLAY_URL_RESOLVE_TIMEOUT_SECONDS);
+    }
+
+    /**
+     * Re-resolves a GD Studio track on another healthy source after byte-level inspection rejects
+     * the stream the selected source handed out (DASH video, HTML error page, truncated payload).
+     */
+    public Tuple<String, String> getGdCrossSourceFallbackPlayUrl() {
+        if (!isGd()) return null;
+        final Quality requestedQuality = CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality;
+        final String platform = getGdPlatform().isEmpty() ? GdStudioSourceSettings.getPlatform() : getGdPlatform();
+        return resolveWithTimeout(new Callable<Tuple<String, String>>() {
+            @Override
+            public Tuple<String, String> call() throws Exception {
+                GdStudioMusicService.ResolveResult result = GdStudioMusicService.resolveCrossSource(
+                        platform, getName(), getArtistsName(), requestedQuality);
+                if (result == null) return null;
+                DownloadDynamicIsland.showGdSourceResolved("已回退 "
+                        + GdStudioMusicService.displayName(result.platform), result.format);
+                playbackQuality = detectCadencePlaybackQuality(result.format, requestedQuality);
+                considerHighestQuality(result.format, 0L);
+                return new Tuple<>(result.url, result.format);
+            }
+        }, "GD cross-source fallback", GD_PLAY_URL_RESOLVE_TIMEOUT_SECONDS);
     }
 
     /**
@@ -615,18 +646,34 @@ public class Music {
         }
     }
     private Tuple<String, String> resolveWithTimeout(Callable<Tuple<String, String>> resolver, String resolverName) {
+        return resolveWithTimeout(resolver, resolverName, PLAY_URL_RESOLVE_TIMEOUT_SECONDS);
+    }
+
+    private Tuple<String, String> resolveWithTimeout(Callable<Tuple<String, String>> resolver, String resolverName,
+                                                      long timeoutSeconds) {
         Future<Tuple<String, String>> future = URL_RESOLVER.submit(resolver);
         try {
-            return normalizePlayUrl(future.get(PLAY_URL_RESOLVE_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+            return normalizePlayUrl(future.get(Math.max(1L, timeoutSeconds), TimeUnit.SECONDS));
         } catch (TimeoutException timeout) {
             future.cancel(true);
+            if ("GD Studio".equals(resolverName)) {
+                DownloadDynamicIsland.showGdSourceFailure("GD音乐台", "获取播放链接超时");
+            }
             System.err.println("[Music] " + resolverName + " URL resolver timed out for " + getStableKey());
         } catch (InterruptedException interrupted) {
             future.cancel(true);
+            if ("GD Studio".equals(resolverName)) {
+                DownloadDynamicIsland.showGdSourceFailure("GD音乐台", "获取播放链接被中断");
+            }
             Thread.currentThread().interrupt();
         } catch (ExecutionException failure) {
             future.cancel(true);
             Throwable cause = failure.getCause() == null ? failure : failure.getCause();
+            if ("GD Studio".equals(resolverName)) {
+                DownloadDynamicIsland.showGdSourceFailure("GD音乐台",
+                        cause.getMessage() == null || cause.getMessage().trim().isEmpty()
+                                ? "获取播放链接失败" : cause.getMessage());
+            }
             System.err.println("[Music] " + resolverName + " URL resolver failed for " + getStableKey()
                     + ": " + cause.getMessage());
         }

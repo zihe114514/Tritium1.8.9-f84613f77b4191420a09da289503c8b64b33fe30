@@ -186,11 +186,17 @@ public final class MusicSourceOverlay extends NCMPanel {
             name.setPosition(10, 9);
         });
 
-        LabelWidget description = new LabelWidget(platform.key + " · " + platform.status.description, FontManager.pf12);
+        // The static status describes what upstream currently exposes; the runtime status shows a
+        // circuit-breaker cooldown so a selected source that just failed explains itself in place.
+        LabelWidget description = new LabelWidget(() -> {
+            String runtime = GdStudioMusicService.statusLabel(platform.key);
+            return platform.key + " · " + (runtime.isEmpty() ? platform.status.description : runtime);
+        }, FontManager.pf12);
         row.addChild(description);
         description.setClickable(false);
         description.setBeforeRenderCallback(() -> {
-            description.setColor(platform.status.color);
+            description.setColor(GdStudioMusicService.statusLabel(platform.key).isEmpty()
+                    ? platform.status.color : 0xE07B6B);
             description.setMaxWidth(Math.max(1, row.getWidth() - 96));
             description.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             description.setPosition(10, 30);
@@ -238,8 +244,11 @@ public final class MusicSourceOverlay extends NCMPanel {
         String key = GdStudioSourceSettings.getPlatform();
         if (key.isEmpty()) return "未选用 · 选择后作为独立内容源使用";
         String label = GdStudioMusicService.displayName(key) + "（" + key + "）";
+        // The documented budget is 50 requests / 5 minutes; showing what is left makes the
+        // protective throttle visible instead of looking like a random failure.
+        String budget = " · 额度剩余 " + GdStudioMusicService.remainingRequestBudget() + "/50";
         return CadenceMusicService.getCurrentPlatform() == MusicPlatform.GD
-                ? "当前内容源：" + label : "已选用：" + label + " · 点击切换";
+                ? "当前内容源：" + label + budget : "已选用：" + label + " · 点击切换";
     }
 
     private void addContentSource(Panel dialog, MusicPlatform platform, double y) {

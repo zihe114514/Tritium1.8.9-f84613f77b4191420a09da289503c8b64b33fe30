@@ -11,6 +11,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
+import java.util.Map;
 
 /**
  * Download implementation and its existing progress publication contract.
@@ -25,13 +26,16 @@ final class MusicDownloadService {
 
     @SneakyThrows
     static void downloadMusic(String playUrl, File music) {
+        // Some CDNs reject anonymous requests (Bilibili answers 403 without a browser
+        // User-Agent plus a bilibili Referer), so host-specific headers travel with the transfer.
+        Map<String, String> streamHeaders = AudioStreamHeaders.forUrl(playUrl);
         MuoniumPlayerExtension.getInstance().musicInfo.downloading = true;
         MuoniumPlayerExtension.getInstance().musicInfo.downloadProgress = 0;
         MuoniumPlayerExtension.getInstance().musicInfo.downloadSpeed = "0 b/s";
         DownloadDynamicIsland.beginDownload();
 
         try {
-            InputStream stream = new WrappedInputStream(HttpUtils.get(playUrl, null),
+            InputStream stream = new WrappedInputStream(HttpUtils.get(playUrl, null, streamHeaders),
                     new WrappedInputStream.ProgressListener() {
                         com.muoniumplayer.core.utils.timing.Timer timer = new com.muoniumplayer.core.utils.timing.Timer();
 

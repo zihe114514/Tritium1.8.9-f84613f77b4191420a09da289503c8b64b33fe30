@@ -980,21 +980,24 @@ public class CloudMusic implements SharedConstants {
             try {
                 return getCachedOrTempFile(url, reportedType, song);
             } catch (RuntimeException primaryFailure) {
-                return getNeteaseStandardFallbackFile(song, url, primaryFailure);
+                return getValidationFallbackFile(song, url, primaryFailure);
             }
         }
 
         /**
          * A URL can be syntactically valid while serving a DASH video or another non-audio MP4
-         * payload. Once the byte-level validation rejects such a primary response, retry the
-         * existing NetEase standard-MP3 endpoint before treating the song as unplayable.
+         * payload. Once the byte-level validation rejects such a primary response, retry a
+         * source-appropriate stream before treating the song as unplayable: NetEase falls back to
+         * its standard-MP3 endpoint, a GD Studio track falls back to another healthy GD source.
          */
-        private File getNeteaseStandardFallbackFile(Music song, String failedUrl, RuntimeException primaryFailure) {
-            if (song == null || !song.isNetease()) {
+        private File getValidationFallbackFile(Music song, String failedUrl, RuntimeException primaryFailure) {
+            if (song == null || !(song.isNetease() || song.isGd())) {
                 throw primaryFailure;
             }
 
-            Tuple<String, String> standardPlayUrl = song.getStandardMp3PlayUrl();
+            Tuple<String, String> standardPlayUrl = song.isGd()
+                    ? song.getGdCrossSourceFallbackPlayUrl()
+                    : song.getStandardMp3PlayUrl();
             if (standardPlayUrl == null || standardPlayUrl.getA() == null
                     || standardPlayUrl.getA().trim().isEmpty()
                     || standardPlayUrl.getA().equals(failedUrl)) {
@@ -1003,7 +1006,8 @@ public class CloudMusic implements SharedConstants {
 
             try {
                 System.err.println("[NCM] Primary response failed byte-level audio validation for "
-                        + song.getStableKey() + "; retrying standard MP3.");
+                        + song.getStableKey() + "; retrying "
+                        + (song.isGd() ? "another GD source." : "standard MP3."));
                 return getCachedOrTempFile(standardPlayUrl.getA(),
                         AudioContainerSupport.normalizeReportedContainer(standardPlayUrl.getB()), song);
             } catch (RuntimeException standardFailure) {

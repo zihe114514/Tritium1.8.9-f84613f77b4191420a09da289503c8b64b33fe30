@@ -19,6 +19,7 @@ import com.muoniumplayer.core.ncm.OptionsUtil;
 import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
+import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.settings.ConfigPaths;
 import com.muoniumplayer.core.utils.Tuple;
 
@@ -118,20 +119,26 @@ public final class CadenceMusicService {
     private static List<Music> searchGd(String keyword, int limit) {
         String platform = GdStudioSourceSettings.getPlatform();
         if (platform.isEmpty()) return Collections.emptyList();
-        try {
-            // The GD API documents a 20-result default page; staying within it avoids excess payload.
-            List<GdStudioMusicService.GdTrack> tracks =
-                    GdStudioMusicService.search(platform, keyword.trim(), Math.min(20, Math.max(1, limit)), 1);
-            List<Music> result = new ArrayList<>();
-            for (GdStudioMusicService.GdTrack track : tracks) {
-                if (track == null) continue;
-                result.add(Music.fromGdTrack(track, platform));
-            }
-            return result;
-        } catch (Throwable throwable) {
-            System.err.println("[Music/GD] Search failed for " + platform + ": " + throwable.getMessage());
-            return Collections.emptyList();
+        // The GD API documents a 20-result default page; staying within it avoids excess payload.
+        // searchWithFallback always tries the selected source first and only hands the query to a
+        // healthy source when that source genuinely fails, so the screen never goes silently empty.
+        GdStudioMusicService.SearchOutcome outcome = GdStudioMusicService.searchWithFallback(
+                platform, keyword.trim(), Math.min(20, Math.max(1, limit)), 1);
+        if (outcome.isFallback()) {
+            DownloadDynamicIsland.showGdSearchFallback(GdStudioMusicService.displayName(platform),
+                    GdStudioMusicService.displayName(outcome.source), outcome.requestedSourceFailed);
+        } else if (outcome.isEmpty() && !outcome.failureReason.isEmpty()) {
+            System.err.println("[Music/GD] Search failed for " + platform + ": " + outcome.failureReason);
+            DownloadDynamicIsland.showGdSearchFailure(GdStudioMusicService.displayName(platform),
+                    outcome.failureReason);
         }
+        String servedSource = outcome.source.isEmpty() ? platform : outcome.source;
+        List<Music> result = new ArrayList<>();
+        for (GdStudioMusicService.GdTrack track : outcome.tracks) {
+            Music adapted = Music.fromGdTrack(track, servedSource);
+            if (adapted != null) result.add(adapted);
+        }
+        return result;
     }
 
 
@@ -221,8 +228,9 @@ public final class CadenceMusicService {
         if (music.isGd()) {
             try {
                 Quality effectiveQuality = requestedQuality == null ? Quality.LOSSLESS : requestedQuality;
-                GdStudioMusicService.ResolveResult result = GdStudioMusicService.resolveTrack(
-                        music.getGdPlatform(), music.getSourceId(), effectiveQuality);
+                GdStudioMusicService.ResolveResult result = GdStudioMusicService.resolveTrackWithFallback(
+                        music.getGdPlatform(), music.getSourceId(), music.getName(),
+                        music.getArtistsName(), effectiveQuality);
                 return result == null ? null : new Tuple<>(result.url, result.format);
             } catch (Throwable throwable) {
                 System.err.println("[Music/GD] Song URL failed for " + music.getStableKey() + ": " + throwable.getMessage());

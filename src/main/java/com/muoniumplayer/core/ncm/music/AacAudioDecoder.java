@@ -131,6 +131,7 @@ final class AacAudioDecoder {
             AudioTrack track = (AudioTrack) tracks.get(0);
             Decoder decoder = new Decoder(track.getDecoderSpecificInfo());
             SampleBuffer buffer = new SampleBuffer();
+            boolean decodedFromSampleTable = false;
             while (track.hasMoreFrames()) {
                 Frame frame = track.readNextFrame();
                 if (frame == null || frame.getData() == null || frame.getData().length == 0) {
@@ -138,10 +139,270 @@ final class AacAudioDecoder {
                 }
                 decoder.decodeFrame(frame.getData(), buffer);
                 writer.write(buffer);
+                decodedFromSampleTable = true;
                 long endOffset = frame.getOffset() + frame.getSize();
                 reportProgress(progressListener, input.length() <= 0L
                         ? 0.0 : (double) endOffset / (double) input.length());
             }
+
+            // Bilibili DASH audio is a fragmented MP4 (.m4s): the initial moov atom has an
+            // empty sample table, while the AAC frames are described by moof/trun fragments.
+            // JAAD can read the AAC decoder configuration from moov, but not those fragments.
+            if (!decodedFromSampleTable) {
+                decodeFragmentedMp4Aac(file, decoder, writer, progressListener);
+            }
+        }
+    }
+
+    /**
+     * Decodes unencrypted fragmented MP4 AAC streams such as Bilibili's audio-only DASH .m4s
+     * payloads. We intentionally support the common tfhd/trun subset emitted by Bilibili and
+     * fail closed for malformed/encrypted fragments instead of presenting a stalled transcode.
+     */
+    private static void decodeFragmentedMp4Aac(RandomAccessFile file, Decoder decoder, PcmWaveWriter writer,
+                                               ProgressListener progressListener) throws IOException, AACException {
+        long length = file.length();
+        long offset = 0L;
+        int decodedFrames = 0;
+        while (offset + 8L <= length) {
+            Mp4Box box = readMp4Box(file, offset, length);
+            if (box == null) break;
+            if ("moof".equals(box.type)) {
+                Mp4Box mediaData = findFollowingMediaDataBox(file, box.end, length);
+                if (mediaData == null) {
+                    throw new IOException("Fragmented MP4 moof has no following mdat payload");
+                }
+                decodedFrames += decodeMovieFragment(file, box, mediaData, decoder, writer, progressListener, length);
+            }
+            offset = box.end;
+        }
+        if (decodedFrames <= 0) {
+            throw new IOException("ISO-BMFF file has neither sample-table nor DASH AAC frames");
+        }
+    }
+
+    private static Mp4Box findFollowingMediaDataBox(RandomAccessFile file, long offset, long length)
+            throws IOException {
+        long cursor = offset;
+        while (cursor + 8L <= length) {
+            Mp4Box box = readMp4Box(file, cursor, length);
+            if (box == null) return null;
+            if ("mdat".equals(box.type)) return box;
+            // A following fragment begins before media data: do not accidentally read it as samples.
+            if ("moof".equals(box.type)) return null;
+            cursor = box.end;
+        }
+        return null;
+    }
+
+    private static int decodeMovieFragment(RandomAccessFile file, Mp4Box movieFragment, Mp4Box mediaData,
+                                           Decoder decoder, PcmWaveWriter writer,
+                                           ProgressListener progressListener, long fileLength)
+            throws IOException, AACException {
+        int decodedFrames = 0;
+        long cursor = movieFragment.dataStart;
+        while (cursor + 8L <= movieFragment.end) {
+            Mp4Box child = readMp4Box(file, cursor, movieFragment.end);
+            if (child == null) break;
+            if ("traf".equals(child.type)) {
+                decodedFrames += decodeTrackFragment(file, child, movieFragment, mediaData, decoder, writer,
+                        progressListener, fileLength);
+            }
+            cursor = child.end;
+        }
+        return decodedFrames;
+    }
+
+    private static int decodeTrackFragment(RandomAccessFile file, Mp4Box trackFragment, Mp4Box movieFragment,
+                                           Mp4Box mediaData, Decoder decoder, PcmWaveWriter writer,
+                                           ProgressListener progressListener, long fileLength)
+            throws IOException, AACException {
+        int defaultSampleSize = -1;
+        boolean defaultBaseIsMoof = false;
+        long nextSampleOffset = mediaData.dataStart;
+        int decodedFrames = 0;
+
+        long cursor = trackFragment.dataStart;
+        while (cursor + 8L <= trackFragment.end) {
+            Mp4Box child = readMp4Box(file, cursor, trackFragment.end);
+            if (child == null) break;
+            if ("tfhd".equals(child.type)) {
+                TfhdDefaults defaults = readTfhdDefaults(file, child);
+                defaultSampleSize = defaults.defaultSampleSize;
+                defaultBaseIsMoof = defaults.defaultBaseIsMoof;
+            } else if ("trun".equals(child.type)) {
+                TrunResult result = decodeTrackRun(file, child, movieFragment, mediaData, defaultSampleSize,
+                        defaultBaseIsMoof, nextSampleOffset, decoder, writer, progressListener, fileLength);
+                nextSampleOffset = result.nextSampleOffset;
+                decodedFrames += result.decodedFrames;
+            }
+            cursor = child.end;
+        }
+        return decodedFrames;
+    }
+
+    private static TfhdDefaults readTfhdDefaults(RandomAccessFile file, Mp4Box box) throws IOException {
+        file.seek(box.dataStart);
+        int flags = readFullBoxFlags(file, box);
+        requireRemaining(file, box.end, 4L, "tfhd track id");
+        readUnsignedInt(file); // track_ID; a Bilibili audio .m4s contains a single audio traf.
+        if ((flags & 0x000001) != 0) {
+            requireRemaining(file, box.end, 8L, "tfhd base data offset");
+            file.readLong();
+        }
+        if ((flags & 0x000002) != 0) {
+            requireRemaining(file, box.end, 4L, "tfhd sample description index");
+            readUnsignedInt(file);
+        }
+        if ((flags & 0x000008) != 0) {
+            requireRemaining(file, box.end, 4L, "tfhd default sample duration");
+            readUnsignedInt(file);
+        }
+        int defaultSampleSize = -1;
+        if ((flags & 0x000010) != 0) {
+            requireRemaining(file, box.end, 4L, "tfhd default sample size");
+            long size = readUnsignedInt(file);
+            defaultSampleSize = size > Integer.MAX_VALUE ? -1 : (int) size;
+        }
+        return new TfhdDefaults(defaultSampleSize, (flags & 0x020000) != 0);
+    }
+
+    private static TrunResult decodeTrackRun(RandomAccessFile file, Mp4Box box, Mp4Box movieFragment,
+                                              Mp4Box mediaData, int defaultSampleSize, boolean defaultBaseIsMoof,
+                                              long fallbackSampleOffset, Decoder decoder, PcmWaveWriter writer,
+                                              ProgressListener progressListener, long fileLength)
+            throws IOException, AACException {
+        file.seek(box.dataStart);
+        int flags = readFullBoxFlags(file, box);
+        requireRemaining(file, box.end, 4L, "trun sample count");
+        long rawSampleCount = readUnsignedInt(file);
+        if (rawSampleCount <= 0L || rawSampleCount > 200_000L) {
+            throw new IOException("Fragmented MP4 has an invalid trun sample count");
+        }
+        int sampleCount = (int) rawSampleCount;
+
+        long sampleOffset = fallbackSampleOffset;
+        if ((flags & 0x000001) != 0) {
+            requireRemaining(file, box.end, 4L, "trun data offset");
+            int relativeOffset = file.readInt();
+            long baseOffset = defaultBaseIsMoof ? movieFragment.start : movieFragment.start;
+            sampleOffset = baseOffset + relativeOffset;
+        }
+        if ((flags & 0x000004) != 0) {
+            requireRemaining(file, box.end, 4L, "trun first sample flags");
+            readUnsignedInt(file);
+        }
+
+        boolean hasSampleDuration = (flags & 0x000100) != 0;
+        boolean hasSampleSize = (flags & 0x000200) != 0;
+        boolean hasSampleFlags = (flags & 0x000400) != 0;
+        boolean hasCompositionOffset = (flags & 0x000800) != 0;
+        List<Integer> sampleSizes = new ArrayList<>(sampleCount);
+        long totalSampleBytes = 0L;
+
+        // Read the complete trun table before seeking into mdat. Mixing table parsing with frame
+        // reads moves RandomAccessFile away from trun and was the cause of truncated-table errors.
+        for (int index = 0; index < sampleCount; index++) {
+            if (hasSampleDuration) {
+                requireRemaining(file, box.end, 4L, "trun sample duration");
+                readUnsignedInt(file);
+            }
+            int sampleSize = defaultSampleSize;
+            if (hasSampleSize) {
+                requireRemaining(file, box.end, 4L, "trun sample size");
+                long size = readUnsignedInt(file);
+                sampleSize = size > Integer.MAX_VALUE ? -1 : (int) size;
+            }
+            if (hasSampleFlags) {
+                requireRemaining(file, box.end, 4L, "trun sample flags");
+                readUnsignedInt(file);
+            }
+            if (hasCompositionOffset) {
+                requireRemaining(file, box.end, 4L, "trun composition offset");
+                readUnsignedInt(file);
+            }
+            if (sampleSize <= 0 || totalSampleBytes > Integer.MAX_VALUE - (long) sampleSize) {
+                throw new IOException("Fragmented MP4 AAC sample has an invalid size");
+            }
+            sampleSizes.add(sampleSize);
+            totalSampleBytes += sampleSize;
+        }
+        if (sampleOffset < mediaData.dataStart || sampleOffset > mediaData.end - totalSampleBytes) {
+            throw new IOException("Fragmented MP4 AAC samples are outside the mdat payload");
+        }
+
+        SampleBuffer buffer = new SampleBuffer();
+        for (Integer sampleSize : sampleSizes) {
+            byte[] frame = new byte[sampleSize];
+            file.seek(sampleOffset);
+            file.readFully(frame);
+            decoder.decodeFrame(frame, buffer);
+            writer.write(buffer);
+            sampleOffset += sampleSize;
+            reportProgress(progressListener, fileLength <= 0L ? 0.0 : (double) sampleOffset / (double) fileLength);
+        }
+        return new TrunResult(sampleOffset, sampleCount);
+    }
+    private static int readFullBoxFlags(RandomAccessFile file, Mp4Box box) throws IOException {
+        requireRemaining(file, box.end, 4L, "full box header");
+        file.readUnsignedByte(); // version
+        return (file.readUnsignedByte() << 16) | (file.readUnsignedByte() << 8) | file.readUnsignedByte();
+    }
+
+    private static void requireRemaining(RandomAccessFile file, long end, long amount, String field) throws IOException {
+        if (amount < 0L || file.getFilePointer() > end - amount) {
+            throw new IOException("Truncated fragmented MP4 " + field);
+        }
+    }
+
+    private static Mp4Box readMp4Box(RandomAccessFile file, long start, long boundary) throws IOException {
+        if (start < 0L || start + 8L > boundary) return null;
+        file.seek(start);
+        long size = readUnsignedInt(file);
+        String type = readBoxType(file);
+        long headerSize = 8L;
+        if (size == 1L) {
+            if (start + 16L > boundary) return null;
+            size = file.readLong();
+            headerSize = 16L;
+        } else if (size == 0L) {
+            size = boundary - start;
+        }
+        if (size < headerSize || size > boundary - start) return null;
+        return new Mp4Box(start, start + headerSize, start + size, type);
+    }
+
+    private static final class Mp4Box {
+        private final long start;
+        private final long dataStart;
+        private final long end;
+        private final String type;
+
+        private Mp4Box(long start, long dataStart, long end, String type) {
+            this.start = start;
+            this.dataStart = dataStart;
+            this.end = end;
+            this.type = type;
+        }
+    }
+
+    private static final class TfhdDefaults {
+        private final int defaultSampleSize;
+        private final boolean defaultBaseIsMoof;
+
+        private TfhdDefaults(int defaultSampleSize, boolean defaultBaseIsMoof) {
+            this.defaultSampleSize = defaultSampleSize;
+            this.defaultBaseIsMoof = defaultBaseIsMoof;
+        }
+    }
+
+    private static final class TrunResult {
+        private final long nextSampleOffset;
+        private final int decodedFrames;
+
+        private TrunResult(long nextSampleOffset, int decodedFrames) {
+            this.nextSampleOffset = nextSampleOffset;
+            this.decodedFrames = decodedFrames;
         }
     }
 

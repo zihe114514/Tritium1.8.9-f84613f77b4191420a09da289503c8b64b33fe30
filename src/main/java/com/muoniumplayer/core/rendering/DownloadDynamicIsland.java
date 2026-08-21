@@ -87,6 +87,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static final Deque<QueuedNotice> NOTICE_QUEUE = new ArrayDeque<QueuedNotice>();
     /** A missing refresh callback must not leave the island in a permanent loading state. */
     private static final long PLAYLIST_REFRESH_NOTICE_TIMEOUT_MILLIS = 30_000L;
+    /** GD URL resolution has a longer network budget, but its loading card must still terminate. */
+    private static final long GD_SOURCE_NOTICE_TIMEOUT_MILLIS = 45_000L;
     /** True only for ordinary notices that are part of a multi-message queue. */
     private static volatile boolean noticeUsesQueueInterval;
 
@@ -190,15 +192,14 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     public static void showPlaylistRefreshSuccess(int playlistCount, long elapsedMillis) {
         int safeCount = Math.max(0, playlistCount);
         long safeElapsed = Math.max(0L, elapsedMillis);
-        publishNotice(IslandNoticeType.REFRESH_SUCCESS, "歌单同步",
-                "已同步 " + safeCount + " 个歌单 · " + safeElapsed + " ms");
+        completePersistentNotice(IslandNoticeType.REFRESHING, IslandNoticeType.REFRESH_SUCCESS,
+                "歌单同步", "已同步 " + safeCount + " 个歌单 · " + safeElapsed + " ms");
     }
 
     public static void showPlaylistRefreshFailure(String message) {
-        publishNotice(IslandNoticeType.REFRESH_ERROR, "歌单同步失败",
-                safeNoticeValue(message, "网络请求失败"));
+        completePersistentNotice(IslandNoticeType.REFRESHING, IslandNoticeType.REFRESH_ERROR,
+                "歌单同步失败", safeNoticeValue(message, "网络请求失败"));
     }
-
     /** Keeps the island visible while a selected track is submitted to a playlist. */
     public static void showPlaylistTrackAddInProgress(String playlistName) {
         publishNotice(IslandNoticeType.PLAYLIST_TRACK_ADDING, "加入歌单",
@@ -287,6 +288,25 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         // clear health confirmation without interrupting any notice preserved by the live loader.
         publishNotice(IslandNoticeType.GD_SOURCE_HEALTHY, "当前音源正常",
                 source + " · 当前 API 已返回可播放链接");
+    }
+
+    /**
+     * Search-time notice: another source served the query. {@code requestedSourceFailed} separates a
+     * real outage from a source that simply had no match, so the card never misreports the cause.
+     */
+    public static void showGdSearchFallback(String requestedSource, String servedSource,
+                                            boolean requestedSourceFailed) {
+        publishNotice(IslandNoticeType.GD_SOURCE_HEALTHY, "音源已自动回退",
+                safeNoticeValue(requestedSource, "所选音源")
+                        + (requestedSourceFailed ? " 暂不可用 · 已用 " : " 无匹配结果 · 已用 ")
+                        + safeNoticeValue(servedSource, "备用音源") + " 返回结果");
+    }
+
+    /** Search-time notice: neither the selected source nor the fallback returned anything. */
+    public static void showGdSearchFailure(String requestedSource, String reason) {
+        publishNotice(IslandNoticeType.GD_SOURCE_ERROR, "音源搜索失败",
+                safeNoticeValue(requestedSource, "所选音源") + " · "
+                        + safeNoticeValue(reason, "请求失败"));
     }
 
     public static void showGdSourceFailure(String sourceName, String reason) {
@@ -440,12 +460,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 if (isPersistentNoticeTimedOut(now)) {
                     boolean queueMode = !NOTICE_QUEUE.isEmpty();
                     if (queueMode) markQueuedNoticesUseQueueIntervalLocked();
-                    publishActiveNoticeLocked(IslandNoticeType.REFRESH_ERROR, "歌单同步超时",
-                            "30 秒内未收到结果 · 请稍后重试", false, queueMode, now);
+                    if (noticeType == IslandNoticeType.REFRESHING) {
+                        publishActiveNoticeLocked(IslandNoticeType.REFRESH_ERROR, "歌单同步超时",
+                                "30 秒内未收到结果 · 请稍后重试", false, queueMode, now);
+                    } else if (noticeType == IslandNoticeType.GD_SOURCE_LOADING) {
+                        publishActiveNoticeLocked(IslandNoticeType.GD_SOURCE_ERROR, "GD音乐台链接超时",
+                                "45 秒内未获取到播放链接 · 请稍后重试", false, queueMode, now);
+                    }
                 }
                 return;
             }
-
             if (noticeShownAt <= 0L || now - noticeShownAt < noticeHoldMillis(noticeUsesQueueInterval)) return;
 
             if (!NOTICE_QUEUE.isEmpty()) {
@@ -459,12 +483,16 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         }
     }
 
-    /** Refresh is the only persistent notice without an independent progress/completion channel. */
+    /** Persistent refresh and GD-link cards have independent timeout/completion channels. */
     private static boolean isPersistentNoticeTimedOut(long now) {
-        return noticeType == IslandNoticeType.REFRESHING && noticeShownAt > 0L
-                && now - noticeShownAt >= PLAYLIST_REFRESH_NOTICE_TIMEOUT_MILLIS;
+        if (noticeShownAt <= 0L) return false;
+        long timeout = noticeType == IslandNoticeType.REFRESHING
+                ? PLAYLIST_REFRESH_NOTICE_TIMEOUT_MILLIS
+                : noticeType == IslandNoticeType.GD_SOURCE_LOADING
+                ? GD_SOURCE_NOTICE_TIMEOUT_MILLIS
+                : Long.MAX_VALUE;
+        return now - noticeShownAt >= timeout;
     }
-
     private static final class QueuedNotice {
         private final IslandNoticeType type;
         private final String title;
