@@ -54,6 +54,13 @@ public class PlayList {
     public transient List<Music> musics;
     private transient boolean searchMode = false;
     /**
+     * 真正来自搜索框的结果列表。
+     *
+     * <p>{@code searchMode} 被发现页（热搜/榜单/专辑/最近播放）复用来表示"曲目已经在内存里，不要再去
+     * 拉歌单详情"，所以它区分不出"这是搜索结果"。起播行为只对搜索结果特殊处理，因此单独一个标记。</p>
+     */
+    private transient boolean searchResultList = false;
+    /**
      * 歌单来源。旧网易云对象没有该字段时保持 NETEASE，QQ 歌单则由
      * CadenceMusicService 在适配时显式写入。
      */

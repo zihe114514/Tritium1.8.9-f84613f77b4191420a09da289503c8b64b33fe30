@@ -54,6 +54,19 @@ final class FfmpegSupport {
         return executable() != null;
     }
 
+    /**
+     * 只报告已缓存的探测结论,绝不触发新的探测。供渲染线程(HUD 编辑器)使用:探测会创建子进程,
+     * 放在渲染线程上会卡帧。
+     *
+     * @return 1 已找到,-1 探测过但没找到,0 尚未探测
+     */
+    static int cachedState() {
+        synchronized (LOCK) {
+            if (executable != null) return 1;
+            return nextProbeAtMillis > 0L ? -1 : 0;
+        }
+    }
+
     /** 只在整个会话里提示一次,免得每首歌都刷一行。 */
     static void warnMissingOnce() {
         synchronized (LOCK) {
@@ -118,7 +131,9 @@ final class FfmpegSupport {
             ProcessBuilder builder = new ProcessBuilder(candidate, "-hide_banner", "-version");
             builder.redirectErrorStream(true);
             process = builder.start();
-            drainQuietly(process.getInputStream());
+            // 排空必须放到守护线程上:一个同名但不会退出的程序会让"读到 EOF"永远不返回,
+            // 那样超时判断根本走不到。先起排空线程,再用带超时的 waitFor 兜住。
+            drainAsync(process.getInputStream());
             if (!process.waitFor(VERSION_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 return false;
             }
@@ -142,14 +157,21 @@ final class FfmpegSupport {
     }
 
     /** 必须把输出读干:管道缓冲区填满时子进程会阻塞在写上,永远等不到退出。 */
-    private static void drainQuietly(InputStream stream) {
+    private static void drainAsync(final InputStream stream) {
         if (stream == null) return;
-        try {
-            byte[] buffer = new byte[4096];
-            while (stream.read(buffer) >= 0) {
-                // 只是丢弃,版本号本身用不上。
+        Thread thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    byte[] buffer = new byte[4096];
+                    while (stream.read(buffer) >= 0) {
+                        // 只是丢弃,版本号本身用不上。
+                    }
+                } catch (Throwable ignored) {
+                }
             }
-        } catch (Throwable ignored) {
-        }
+        }, "muonium-ffmpeg-version");
+        thread.setDaemon(true);
+        thread.start();
     }
 }

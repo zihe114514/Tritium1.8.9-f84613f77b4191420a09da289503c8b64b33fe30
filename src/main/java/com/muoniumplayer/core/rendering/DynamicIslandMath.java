@@ -58,6 +58,19 @@ final class DynamicIslandMath {
         return 0xFF000000 | (red << 16) | (green << 8) | blue;
     }
 
+    /**
+     * 把颜色沿色相环旋转指定角度，并保证饱和度与明度足够，用于液态玻璃边缘的动态取色光。
+     * 主题强调色本身可能很暗（浅色主题），直接旋转会得到一条看不见的边。
+     */
+    static int shiftHue(int color, float degrees) {
+        float[] hsb = Color.RGBtoHSB((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF, null);
+        float hue = (float) ((hsb[0] + degrees / 360.0f) % 1.0);
+        if (hue < 0f) hue += 1.0f;
+        float saturation = Math.max(.42f, Math.min(1f, hsb[1]));
+        float brightness = Math.max(.82f, Math.min(1f, hsb[2]));
+        return Color.HSBtoRGB(hue, saturation, brightness) & 0xFFFFFF;
+    }
+
     static Color colorWithAlpha(int color, float alpha) {
         return new Color((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF,
                 clamp255(clamp01f(alpha) * 255f));

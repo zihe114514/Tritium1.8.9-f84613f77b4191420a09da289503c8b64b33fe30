@@ -18,6 +18,9 @@ public final class HudConfig {
     public static final float SCALE_MIN = 0.5f;
     public static final float SCALE_MAX = 2.0f;
 
+    /** 灵动岛样式索引上限,与 {@code DownloadDynamicIsland.DynamicIslandStyle} 的数量保持一致。 */
+    public static final int DYNAMIC_ISLAND_STYLE_MAX = 6;
+
     private static final File FILE = ConfigPaths.HUD;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
@@ -90,8 +93,31 @@ public final class HudConfig {
     public static float dynamicIslandCompletionHoldSeconds = 1.80f;
     /** When multiple notices are queued, seconds to show each queued notice. */
     public static float dynamicIslandQueueIntervalSeconds = 1.00f;
-    /** Visual preset for the global island: 0 pill, 1 glass, 2 compact, 3 card, 4 system card, 5 music focus. */
+    /**
+     * Visual preset for the global island: 0 pill, 1 glass, 2 compact, 3 card, 4 system card,
+     * 5 music focus, 6 liquid glass.
+     */
     public static int dynamicIslandStyle = 0;
+
+    // 灵动岛动画节奏。1.0 表示历史默认速度,数值越大越快;时长以毫秒计。
+    /** 弹出/展开阶段的逼近速度倍率。 */
+    public static float dynamicIslandExpandSpeed = 1.0f;
+    /** 收起/隐藏阶段的逼近速度倍率。 */
+    public static float dynamicIslandCollapseSpeed = 1.0f;
+    /** 文案切换、成功态变形等内容过渡的速度倍率。 */
+    public static float dynamicIslandContentSpeed = 1.0f;
+    /** 首次入场动画时长(毫秒)。 */
+    public static float dynamicIslandEntranceDuration = 420.0f;
+    /** 入场回弹幅度倍率,0 为完全不回弹。 */
+    public static float dynamicIslandOvershoot = 1.0f;
+    /** 加载指示器的旋转速度倍率。 */
+    public static float dynamicIslandSpinnerSpeed = 1.0f;
+
+    /**
+     * 网易云动态封面(需要外部 ffmpeg 抽帧)。关掉后桌面歌曲信息、全屏歌词页与播放条一律用静态封面。
+     * 这里是唯一的真实来源,HUD 编辑器与模块开关都读写它。
+     */
+    public static boolean animatedCoverEnabled = true;
 
     private HudConfig() {
     }
@@ -136,6 +162,17 @@ public final class HudConfig {
         dynamicIslandCompletionHoldSeconds = 1.80f;
         dynamicIslandQueueIntervalSeconds = 1.00f;
         dynamicIslandStyle = 0;
+        dynamicIslandExpandSpeed = 1.0f;
+        dynamicIslandCollapseSpeed = 1.0f;
+        dynamicIslandContentSpeed = 1.0f;
+        dynamicIslandEntranceDuration = 420.0f;
+        dynamicIslandOvershoot = 1.0f;
+        dynamicIslandSpinnerSpeed = 1.0f;
+    }
+
+    /** 恢复封面相关外观。 */
+    public static void resetCoverAppearance() {
+        animatedCoverEnabled = true;
     }
 
     /** Loads saved settings; malformed or out-of-range values fall back safely. */
@@ -193,7 +230,16 @@ public final class HudConfig {
             dynamicIslandProgressHeight = clamp(getFloat(o, "dynamicIslandProgressHeight", dynamicIslandProgressHeight), 0.75f, 4.0f);
             dynamicIslandCompletionHoldSeconds = clamp(getFloat(o, "dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds), 0.5f, 6.0f);
             dynamicIslandQueueIntervalSeconds = clamp(getFloat(o, "dynamicIslandQueueIntervalSeconds", dynamicIslandQueueIntervalSeconds), 0.5f, 6.0f);
-            dynamicIslandStyle = clampInt(getInt(o, "dynamicIslandStyle", dynamicIslandStyle), 0, 5);
+            dynamicIslandStyle = clampInt(getInt(o, "dynamicIslandStyle", dynamicIslandStyle), 0,
+                    DYNAMIC_ISLAND_STYLE_MAX);
+            dynamicIslandExpandSpeed = clamp(getFloat(o, "dynamicIslandExpandSpeed", dynamicIslandExpandSpeed), 0.40f, 2.50f);
+            dynamicIslandCollapseSpeed = clamp(getFloat(o, "dynamicIslandCollapseSpeed", dynamicIslandCollapseSpeed), 0.40f, 2.50f);
+            dynamicIslandContentSpeed = clamp(getFloat(o, "dynamicIslandContentSpeed", dynamicIslandContentSpeed), 0.40f, 2.50f);
+            dynamicIslandEntranceDuration = clamp(getFloat(o, "dynamicIslandEntranceDuration", dynamicIslandEntranceDuration), 160.0f, 1200.0f);
+            dynamicIslandOvershoot = clamp(getFloat(o, "dynamicIslandOvershoot", dynamicIslandOvershoot), 0.0f, 2.00f);
+            dynamicIslandSpinnerSpeed = clamp(getFloat(o, "dynamicIslandSpinnerSpeed", dynamicIslandSpinnerSpeed), 0.30f, 3.00f);
+
+            animatedCoverEnabled = getBoolean(o, "animatedCoverEnabled", animatedCoverEnabled);
         } catch (Throwable ignored) {
         }
     }
@@ -246,6 +292,14 @@ public final class HudConfig {
             o.addProperty("dynamicIslandCompletionHoldSeconds", dynamicIslandCompletionHoldSeconds);
             o.addProperty("dynamicIslandQueueIntervalSeconds", dynamicIslandQueueIntervalSeconds);
             o.addProperty("dynamicIslandStyle", dynamicIslandStyle);
+            o.addProperty("dynamicIslandExpandSpeed", dynamicIslandExpandSpeed);
+            o.addProperty("dynamicIslandCollapseSpeed", dynamicIslandCollapseSpeed);
+            o.addProperty("dynamicIslandContentSpeed", dynamicIslandContentSpeed);
+            o.addProperty("dynamicIslandEntranceDuration", dynamicIslandEntranceDuration);
+            o.addProperty("dynamicIslandOvershoot", dynamicIslandOvershoot);
+            o.addProperty("dynamicIslandSpinnerSpeed", dynamicIslandSpinnerSpeed);
+
+            o.addProperty("animatedCoverEnabled", animatedCoverEnabled);
 
             JsonConfigStorage.writeObject(FILE, GSON, o);
 

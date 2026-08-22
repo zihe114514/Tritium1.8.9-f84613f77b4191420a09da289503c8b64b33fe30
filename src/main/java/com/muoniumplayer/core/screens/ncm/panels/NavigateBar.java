@@ -203,6 +203,8 @@ public class NavigateBar extends NCMPanel {
                         // Keep the original track-search flow and its independent temporary playlist.
                         PlayList playList = JsonUtils.parse("{}", PlayList.class);
                         playList.setSearchMode(true);
+                        // 只有搜索框产生的列表才走"起播后接最近播放"，发现页复用 searchMode 的那些列表不受影响。
+                        playList.setSearchResultList(true);
                         playList.musics = new CopyOnWriteArrayList<>();
                         PlaylistPanel panel = new PlaylistPanel(playList);
                         NCMScreen.getInstance().setCurrentPanel(panel);
@@ -449,11 +451,14 @@ public class NavigateBar extends NCMPanel {
 
         btnTheme.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
             if (mouseButton != 0 && mouseButton != 1) return false;
-            if (mouseButton == 0) {
-                NCMScreen.getInstance().cycleThemeFrom(
-                        btnTheme.getX() + btnTheme.getWidth() * .5,
-                        btnTheme.getY() + btnTheme.getHeight() * .5);
+            if (mouseButton == 1) {
+                // 右键进入调色板：改的是当前主题的颜色配置项，不轮换主题。
+                NCMScreen.getInstance().openThemePalette();
+                return true;
             }
+            NCMScreen.getInstance().cycleThemeFrom(
+                    btnTheme.getX() + btnTheme.getWidth() * .5,
+                    btnTheme.getY() + btnTheme.getHeight() * .5);
             DownloadDynamicIsland.showTheme(NCMTheme.getCurrentName());
             return true;
         });

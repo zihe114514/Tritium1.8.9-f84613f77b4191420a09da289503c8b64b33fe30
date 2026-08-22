@@ -8,6 +8,7 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.PersonalFmManager;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.rendering.PlayerQueueIcons;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.ncm.music.Quality;
 import com.muoniumplayer.core.rendering.ui.widgets.*;
@@ -465,8 +466,7 @@ public class ControlsBar extends NCMPanel {
                 .setPosition(7.0, Math.max(2.0, (qualitySelector.getHeight() - qualityText.getHeight()) * .5)));
 
         // 下一首播放：队列抽屉的开关排在音质按钮左边，沿用右下角次级控件的同一条锚点链。
-        ThemedTextureIconWidget queueToggle = new ThemedTextureIconWidget(
-                PlayerIconAssets.PLAY_NEXT, "»", FontManager.pf16bold, 0, 0, 18, 18);
+        IconWidget queueToggle = PlayerQueueIcons.newPlayNextButton(18);
         this.addChild(queueToggle);
         queueToggle.setShouldOverrideMouseCursor(true);
         queueToggle.setBeforeRenderCallback(() -> {

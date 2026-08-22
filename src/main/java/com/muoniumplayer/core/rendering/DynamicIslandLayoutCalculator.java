@@ -47,6 +47,10 @@ final class DynamicIslandLayoutCalculator {
         } else if (systemCard) {
             minWidth = noticeMode ? 154.0 : 176.0;
             targetHeight = noticeMode ? 46.0 : 52.0;
+        } else if (style == DynamicIslandStyle.LIQUID_GLASS) {
+            // 液态玻璃要给折射亮带和边缘光留出余量，所以比通透玻璃再高一点、宽一点。
+            minWidth = noticeMode ? 142.0 : 168.0;
+            targetHeight = noticeMode ? 38.0 : 42.0;
         } else if (style == DynamicIslandStyle.GLASS) {
             minWidth = noticeMode ? 132.0 : 158.0;
             targetHeight = noticeMode ? 34.0 : 38.0;
@@ -64,7 +68,9 @@ final class DynamicIslandLayoutCalculator {
         double widestText = Math.max(titleWidth, valueWidth);
         double configuredTextScale = DynamicIslandMath.clamp(HudConfig.dynamicIslandTextScale,
                 minAutoTextScale, maxAutoTextScale);
-        double sideReserve = systemCard ? 60.0 : (musicFocus ? 68.0 : (style == DynamicIslandStyle.CARD ? 48.0 : 46.0));
+        double sideReserve = systemCard ? 60.0 : (musicFocus ? 68.0
+                : (style == DynamicIslandStyle.LIQUID_GLASS ? 50.0
+                : (style == DynamicIslandStyle.CARD ? 48.0 : 46.0)));
         if (!noticeMode) {
             sideReserve += Math.max(31.0, FontManager.pf12bold.getStringWidthD("100%")
                     * configuredTextScale + 14.0);

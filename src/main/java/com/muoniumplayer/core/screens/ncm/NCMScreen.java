@@ -91,6 +91,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     /** 二级音乐来源菜单：固定内容平台与 GD音乐台 聚合音源统一在此处管理。 */
     public MusicSourceOverlay musicSourceOverlay = null;
 
+    /** 主题调色板：主题按钮右键打开的二级菜单，实时预览主题颜色配置项。 */
+    public ThemePaletteOverlay themePaletteOverlay = null;
+
     /** 对取消收藏等破坏性操作的二次确认层。 */
     public ConfirmationOverlay confirmationOverlay = null;
 
@@ -426,6 +429,20 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             }
             StencilClipManager.endClip();
         }
+        // 主题调色板与其它二级菜单同层，阻止下方歌单与控件接收输入。
+        if (this.themePaletteOverlay != null) {
+            StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight(), cornerRadius, -1));
+            this.themePaletteOverlay.setBounds(basePanel.getX(), basePanel.getY(),
+                    basePanel.getWidth(), basePanel.getHeight());
+            this.themePaletteOverlay.setAlpha(alpha);
+            this.themePaletteOverlay.renderWidget(mouseX, mouseY, 0);
+            if (this.themePaletteOverlay.shouldClose()) {
+                this.themePaletteOverlay.dispose();
+                this.themePaletteOverlay = null;
+            }
+            StencilClipManager.endClip();
+        }
         // 账号管理始终位于最上层，并独占鼠标/滚轮输入。
         if (this.accountManagerOverlay != null) {
             StencilClipManager.beginClip(() -> roundedRect(basePanel.getX(), basePanel.getY(),
@@ -483,8 +500,8 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     /** 由主题按钮传入绝对 GUI 坐标，保证涟漪确实从按钮处开始。 */
     public void cycleThemeFrom(double originX, double originY) {
-        NCMTheme.ThemePreset target = NCMTheme.next();
-        this.themeTransitionRenderer.begin(originX, originY, target.getColor(ColorType.ACCENT));
+        NCMTheme.next();
+        this.themeTransitionRenderer.begin(originX, originY, NCMTheme.getTargetColor(ColorType.ACCENT));
     }
 
     private final class ThemeGlassWidget extends AbstractWidget<ThemeGlassWidget> {
@@ -596,6 +613,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.accountManagerOverlay.onInit();
     }
 
+    /** 打开主题调色板；重复打开时先回收上一次的实例，避免两层叠在一起。 */
+    public void openThemePalette() {
+        if (this.themePaletteOverlay != null) this.themePaletteOverlay.dispose();
+        this.themePaletteOverlay = new ThemePaletteOverlay();
+        this.themePaletteOverlay.onInit();
+    }
+
     /** Opens the second-level source center without changing the current content page. */
     public void openMusicSourceManager() {
         if (this.musicSourceOverlay != null) this.musicSourceOverlay.dispose();
@@ -609,6 +633,13 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         if (this.confirmationOverlay != null) {
             if (keyCode == Keyboard.KEY_ESCAPE) {
                 this.confirmationOverlay.cancel();
+            }
+            return;
+        }
+
+        if (this.themePaletteOverlay != null) {
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                this.themePaletteOverlay.handleEscape();
             }
             return;
         }
@@ -665,11 +696,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         }
 
-        if (keyCode == Keyboard.KEY_SPACE && CloudMusic.currentlyPlaying != null && CloudMusic.player != null && !CloudMusic.player.isFinished()) {
-            if (CloudMusic.player.isPausing())
-                CloudMusic.player.unpause();
-            else
-                CloudMusic.player.pause();
+        // 与全局快捷键共用 CloudMusic.togglePlayPause()，两处的判空与暂停语义始终一致。
+        if (keyCode == Keyboard.KEY_SPACE) {
+            CloudMusic.togglePlayPause();
         }
 
     }
@@ -680,6 +709,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
      */
     private boolean isModalOverlayActive() {
         return this.confirmationOverlay != null
+                || this.themePaletteOverlay != null
                 || this.musicSourceOverlay != null
                 || this.accountManagerOverlay != null
                 || this.addToPlaylistOverlay != null;
@@ -695,6 +725,11 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         if (this.confirmationOverlay != null) {
             this.confirmationOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
+            return;
+        }
+
+        if (this.themePaletteOverlay != null) {
+            this.themePaletteOverlay.onMouseClickReceived(mouseX, mouseY, mouseButton);
             return;
         }
 
@@ -756,16 +791,26 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
     /** 播放器主题的颜色语义；具体颜色由 {@link NCMTheme} 提供。 */
     public enum ColorType {
 
-        GENERIC_BACKGROUND,
-        ELEMENT_BACKGROUND,
-        ELEMENT_HOVER,
-        PRIMARY_TEXT,
-        SECONDARY_TEXT,
-        ACCENT,
-        ACCENT_HOVER,
-        INPUT_BACKGROUND,
-        NAVIGATION_BACKGROUND,
-        BORDER
+        GENERIC_BACKGROUND("页面底色"),
+        ELEMENT_BACKGROUND("控件底色"),
+        ELEMENT_HOVER("控件悬停"),
+        PRIMARY_TEXT("主要文字"),
+        SECONDARY_TEXT("次要文字"),
+        ACCENT("强调色"),
+        ACCENT_HOVER("强调悬停"),
+        INPUT_BACKGROUND("输入框底色"),
+        NAVIGATION_BACKGROUND("导航底色"),
+        BORDER("描边");
+
+        private final String displayName;
+
+        ColorType(String displayName) {
+            this.displayName = displayName;
+        }
+
+        public String getDisplayName() {
+            return this.displayName;
+        }
 
     }
 

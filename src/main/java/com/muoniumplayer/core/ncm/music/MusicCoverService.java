@@ -18,7 +18,7 @@ import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.network.HttpUtils;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
-import com.muoniumplayer.core.MuoniumPlayerExtension;
+import com.muoniumplayer.core.settings.HudConfig;
 
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
@@ -120,10 +120,18 @@ final class MusicCoverService {
         MultiThreadingUtil.runAsync(() -> {
             try {
                 JsonObject response = CloudMusicApi.songDynamicCover(music.getId()).toJsonObject();
-                ITextureObject texture = decodeImageCover(response);
+                String imageUrl = findDynamicCoverUrl(response);
+                String videoUrl = findDynamicVideoUrl(response);
+                if (imageUrl.isEmpty() && videoUrl.isEmpty()) {
+                    // 绝大多数曲目本来就没有动态封面(接口返回 data:{}),这不是失败,但日志里必须能和
+                    // "取到了却用不上"区分开,否则无法判断是曲目问题还是功能坏了。
+                    System.out.println("[Music/Cover] No dynamic cover published for " + music.getStableKey());
+                    return;
+                }
+                ITextureObject texture = decodeImageCover(imageUrl);
                 if (!isAnimated(texture)) {
                     // 图片分支拿到的是单帧(等于静态封面)或什么都没拿到,这时视频才是真正的动态封面。
-                    ITextureObject video = decodeVideoCover(music, findDynamicVideoUrl(response));
+                    ITextureObject video = decodeVideoCover(music, videoUrl);
                     if (video != null) {
                         discard(texture);
                         texture = video;
@@ -133,8 +141,10 @@ final class MusicCoverService {
                     return;
                 }
                 install(music, dynamicLocation, texture);
-            } catch (Throwable ignored) {
-                // Dynamic artwork is purely decorative. Static artwork remains the guaranteed fallback.
+            } catch (Throwable failure) {
+                // 动态封面纯属装饰,静态封面始终是保底;但静默失败会让问题无法定位,所以留一行。
+                System.err.println("[Music/Cover] Dynamic cover lookup failed for " + music.getStableKey()
+                        + ": " + failure);
             }
         });
     }
@@ -148,12 +158,17 @@ final class MusicCoverService {
         return TextureManager.getInstance().getTexture(dynamic) != null ? dynamic : fallback;
     }
 
+    /**
+     * 开关的唯一真实来源是 {@link HudConfig#animatedCoverEnabled}:HUD 编辑器的"动态封面"行与模块里的
+     * {@code Animated Cover} 都读写它,两处显示因此永远一致,而且不依赖外部值存储是否已初始化。
+     */
     private static boolean isDynamicCoverEnabled() {
-        try {
-            return MuoniumPlayerExtension.getInstance().musicInfo.animatedCover.getValue();
-        } catch (Throwable ignored) {
-            return true;   // 设置尚未初始化时按默认开启处理
-        }
+        return HudConfig.animatedCoverEnabled;
+    }
+
+    /** ffmpeg 的已缓存探测结论:1 可用,-1 探测过但没找到,0 还没探测。不会触发新的探测。 */
+    static int ffmpegState() {
+        return FfmpegSupport.cachedState();
     }
 
     /** 同一首歌只尝试一次,避免每次重新播放都打一遍接口。 */
@@ -174,10 +189,9 @@ final class MusicCoverService {
     }
 
     /** 图片型动态封面(GIF/APNG)。没有图片 URL 或解不出来时返回 null,交给视频分支。 */
-    private static ITextureObject decodeImageCover(JsonObject response) {
+    private static ITextureObject decodeImageCover(String imageUrl) {
         try {
-            String imageUrl = findDynamicCoverUrl(response);
-            if (imageUrl.isEmpty() || isVideoUrl(imageUrl)) {
+            if (imageUrl == null || imageUrl.isEmpty() || isVideoUrl(imageUrl)) {
                 return null;
             }
             byte[] imageBytes;
@@ -229,7 +243,7 @@ final class MusicCoverService {
             return texture;
         } catch (Throwable failure) {
             System.err.println("[Music/Cover] Animated cover unavailable for " + music.getStableKey() + ": "
-                    + failure.getMessage());
+                    + failure);
             return null;
         } finally {
             if (temporary != null && !temporary.delete()) {
@@ -245,8 +259,13 @@ final class MusicCoverService {
     private static void install(final Music music, final Location dynamicLocation, final ITextureObject texture) {
         final String cacheKey = music.getStableKey();
         MultiThreadingUtil.runOnMainThread(() -> {
-            if (CloudMusic.currentlyPlaying != music) {
+            // 比 stableKey 而不是比引用:歌单重载、automix 交接都可能让"同一首歌"换成另一个 Music 实例,
+            // 而纹理位置本来就是按 stableKey 生成的。
+            Music playing = CloudMusic.currentlyPlaying;
+            if (playing == null || !cacheKey.equals(playing.getStableKey())) {
+                // 解码期间换歌了:纹理没进 TextureManager,不删就再没人有机会删。
                 discard(texture);
+                System.out.println("[Music/Cover] Dropped dynamic cover for " + cacheKey + ": track changed");
                 return;
             }
             TextureManager.getInstance().loadTexture(dynamicLocation, texture);

@@ -32,7 +32,13 @@ public enum HudSetting {
     DYNAMIC_ISLAND_MAX_WIDTH("灵动岛基础宽度", 160.0f, 720.0f),
     DYNAMIC_ISLAND_PROGRESS_HEIGHT("进度条粗细", 0.75f, 4.00f),
     DYNAMIC_ISLAND_COMPLETION_HOLD("完成停留", 0.50f, 6.00f),
-    DYNAMIC_ISLAND_QUEUE_INTERVAL("排队间隔", 0.50f, 6.00f);
+    DYNAMIC_ISLAND_QUEUE_INTERVAL("排队间隔", 0.50f, 6.00f),
+    DYNAMIC_ISLAND_EXPAND_SPEED("弹出速度", 0.40f, 2.50f),
+    DYNAMIC_ISLAND_COLLAPSE_SPEED("收起速度", 0.40f, 2.50f),
+    DYNAMIC_ISLAND_CONTENT_SPEED("内容切换速度", 0.40f, 2.50f),
+    DYNAMIC_ISLAND_ENTRANCE_DURATION("入场时长(ms)", 160.0f, 1200.0f),
+    DYNAMIC_ISLAND_OVERSHOOT("入场回弹", 0.00f, 2.00f),
+    DYNAMIC_ISLAND_SPINNER_SPEED("加载转速", 0.30f, 3.00f);
 
     private final String label;
     private final float min;
@@ -84,6 +90,12 @@ public enum HudSetting {
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT: return HudConfig.dynamicIslandProgressHeight;
             case DYNAMIC_ISLAND_COMPLETION_HOLD: return HudConfig.dynamicIslandCompletionHoldSeconds;
             case DYNAMIC_ISLAND_QUEUE_INTERVAL: return HudConfig.dynamicIslandQueueIntervalSeconds;
+            case DYNAMIC_ISLAND_EXPAND_SPEED: return HudConfig.dynamicIslandExpandSpeed;
+            case DYNAMIC_ISLAND_COLLAPSE_SPEED: return HudConfig.dynamicIslandCollapseSpeed;
+            case DYNAMIC_ISLAND_CONTENT_SPEED: return HudConfig.dynamicIslandContentSpeed;
+            case DYNAMIC_ISLAND_ENTRANCE_DURATION: return HudConfig.dynamicIslandEntranceDuration;
+            case DYNAMIC_ISLAND_OVERSHOOT: return HudConfig.dynamicIslandOvershoot;
+            case DYNAMIC_ISLAND_SPINNER_SPEED: return HudConfig.dynamicIslandSpinnerSpeed;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }
@@ -117,6 +129,12 @@ public enum HudSetting {
             case DYNAMIC_ISLAND_PROGRESS_HEIGHT: HudConfig.dynamicIslandProgressHeight = clamped; break;
             case DYNAMIC_ISLAND_COMPLETION_HOLD: HudConfig.dynamicIslandCompletionHoldSeconds = clamped; break;
             case DYNAMIC_ISLAND_QUEUE_INTERVAL: HudConfig.dynamicIslandQueueIntervalSeconds = clamped; break;
+            case DYNAMIC_ISLAND_EXPAND_SPEED: HudConfig.dynamicIslandExpandSpeed = clamped; break;
+            case DYNAMIC_ISLAND_COLLAPSE_SPEED: HudConfig.dynamicIslandCollapseSpeed = clamped; break;
+            case DYNAMIC_ISLAND_CONTENT_SPEED: HudConfig.dynamicIslandContentSpeed = clamped; break;
+            case DYNAMIC_ISLAND_ENTRANCE_DURATION: HudConfig.dynamicIslandEntranceDuration = clamped; break;
+            case DYNAMIC_ISLAND_OVERSHOOT: HudConfig.dynamicIslandOvershoot = clamped; break;
+            case DYNAMIC_ISLAND_SPINNER_SPEED: HudConfig.dynamicIslandSpinnerSpeed = clamped; break;
             default: throw new IllegalStateException("Unknown HUD setting: " + this);
         }
     }

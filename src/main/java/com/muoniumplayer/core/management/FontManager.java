@@ -40,6 +40,14 @@ public class FontManager extends AbstractManager {
     public static CFontRenderer fontello14, fontello16, fontello18, fontello22;
     /** Provider-brand Fontello glyphs use a separate font to avoid private-use code collisions. */
     public static CFontRenderer musicBrand16, musicBrand18;
+    /**
+     * 「下一首播放」图标字体（player-queue-icons，fontello U+E309）的两档字号。
+     *
+     * <p>两档而不是一档：这枚图标出现在两种大小的按钮里（歌曲行 20 像素、播放条 18 像素），而
+     * 字形是按字号栅格化的，同一个渲染器画进不同大小的按钮就会一大一小。{@code PlayerQueueIcons}
+     * 会按按钮边长挑墨迹最接近目标比例的那一档，把两处的观感对齐到相邻贴图图标的水平。</p>
+     */
+    public static CFontRenderer queueIcon34, queueIcon38;
     /** QQ Music brand icon font; deliberately separate from Fontello login glyphs. */
     public static CFontRenderer qqMusicIcon16, qqMusicIcon20;
 
@@ -110,6 +118,8 @@ public class FontManager extends AbstractManager {
         // The QQ Music brand glyph has more internal whitespace than the NetEase glyph.
         // Use a dedicated larger renderer in the source switcher so both providers read at the same visual size.
         qqMusicIcon20 = create(20, "qq-music-icons");
+        queueIcon34 = create(34, "player-queue-icons");
+        queueIcon38 = create(38, "player-queue-icons");
     }
 
     /**

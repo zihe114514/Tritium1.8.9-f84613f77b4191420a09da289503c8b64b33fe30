@@ -62,6 +62,7 @@ final class VideoCoverFrames {
 
         Process process = null;
         Thread stderrDrain = null;
+        Thread watchdog = null;
         try {
             ProcessBuilder builder = new ProcessBuilder(
                     ffmpeg, "-nostdin", "-hide_banner", "-v", "error",
@@ -77,8 +78,11 @@ final class VideoCoverFrames {
                     "-f", "image2pipe", "-c:v", "png", "-");
             process = builder.start();
             stderrDrain = drainAsync(process.getErrorStream());
-            List<BufferedImage> frames = readFrames(process.getInputStream(),
-                    System.currentTimeMillis() + DECODE_TIMEOUT_MILLIS);
+            long deadline = System.currentTimeMillis() + DECODE_TIMEOUT_MILLIS;
+            // 超时判断只在两帧之间生效是不够的:ffmpeg 卡住却不关 stdout 时,读操作会永久阻塞并
+            // 一直占着线程池里的一条线程。到点直接杀进程,读端随即拿到 EOF,正常收尾。
+            watchdog = startWatchdog(process, deadline);
+            List<BufferedImage> frames = readFrames(process.getInputStream(), deadline);
             return frames;
         } catch (Throwable failure) {
             System.err.println("[Music/Cover] Animated cover decode failed: " + failure.getMessage());
@@ -93,8 +97,40 @@ final class VideoCoverFrames {
                     process.destroyForcibly();
                 }
             }
+            if (watchdog != null) watchdog.interrupt();
             if (stderrDrain != null) stderrDrain.interrupt();
         }
+    }
+
+    /**
+     * 到期后销毁 ffmpeg 进程。销毁会关掉管道,阻塞在 {@code read} 上的解码线程立刻以 EOF 收尾,
+     * 已解出的帧照样返回。解码正常结束时调用方会中断它,睡眠随即抛出并安全退出。
+     */
+    private static Thread startWatchdog(final Process process, final long deadlineMillis) {
+        Thread thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    long remaining = deadlineMillis - System.currentTimeMillis();
+                    while (remaining > 0L) {
+                        Thread.sleep(Math.min(250L, remaining));
+                        remaining = deadlineMillis - System.currentTimeMillis();
+                    }
+                } catch (InterruptedException finished) {
+                    return;   // 解码已经结束,不用管了
+                }
+                try {
+                    if (process.isAlive()) {
+                        System.err.println("[Music/Cover] Animated cover decode timed out; stopping ffmpeg");
+                        process.destroy();
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        }, "muonium-ffmpeg-watchdog");
+        thread.setDaemon(true);
+        thread.start();
+        return thread;
     }
 
     /**

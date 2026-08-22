@@ -378,7 +378,10 @@ public class CloudMusic implements SharedConstants {
     public static volatile boolean dontAdd = false;
 
     public static void prev() {
-        if (personalFmActive && curIdx <= 0) return;
+        // 私人 FM 没有"上一首"。原先的 curIdx <= 0 在实践中等于永远拦住：FM 队列以前每首歌都是一条
+        // 独立的单曲队列。现在预备下一首会让队列真的长出历史，如果不改成无条件拦住，FM 就凭空多出
+        // 一个官方客户端里并不存在的回退按钮。
+        if (personalFmActive) return;
         updatePlayCountIfNeeded();
 
         if (!canPlayPrevious() || playList.isEmpty()) {
@@ -416,7 +419,18 @@ public class CloudMusic implements SharedConstants {
             PersonalFmManager.requestNextBatchAsync();
             return;
         }
-        if (!canPlayNext() || playList.isEmpty()) {
+        if (playList.isEmpty()) {
+            return;
+        }
+
+        // 手动切歌优先交给已经预解码好的 automix 备用轨，避免"关闭播放器 → 重新解析下载解码"的静音断点。
+        // 必须放在 canPlayNext() 之前：后者在循环模式走到队尾时会把 curIdx 改成 -1，而交接是在播放线程
+        // 的下一个 10ms tick 上完成的，中途让 curIdx 停在 -1 会让读 playList.get(curIdx) 的界面越界。
+        if (!awaitingPlaybackAction && player != null && requestManualAutomixSkip()) {
+            return;
+        }
+
+        if (!canPlayNext()) {
             return;
         }
 
@@ -565,10 +579,92 @@ public class CloudMusic implements SharedConstants {
         }
     }
 
+    /**
+     * 从用户队列里移除第 {@code offset} 个待播曲目（0 就是下一首要播的那个）。
+     *
+     * <p>被移除的曲目是当初 {@link #playNext(Music)} 插进来的那一条，所以直接从 {@code playList} 里
+     * 删掉就回到了插入前的顺序；队列块因此短一格，{@code playNextTail} 同步下移。正在播放的曲目和
+     * {@code curIdx} 都不受影响，队列清空后 {@code playNextTail} 复位为 -1。</p>
+     *
+     * @return 是否真的移除了一条
+     */
+    public static boolean removeQueuedNext(int offset) {
+        synchronized (PLAY_NEXT_LOCK) {
+            List<Music> queue = playList;
+            int current = curIdx;
+            int tail = playNextTail;
+            if (queue == null || tail <= current || tail >= queue.size()) return false;
+
+            int size = tail - current;
+            if (offset < 0 || offset >= size) return false;
+
+            queue.remove(current + 1 + offset);
+            playNextTail = tail - 1 > current ? tail - 1 : -1;
+            queueRevision++;
+            return true;
+        }
+    }
+
+    /**
+     * 清空用户队列：把所有待播曲目从 {@code playList} 里删掉，恢复到没用过"下一首播放"的顺序。
+     *
+     * @return 被移除的曲目数量
+     */
+    public static int clearQueuedNextSongs() {
+        synchronized (PLAY_NEXT_LOCK) {
+            List<Music> queue = playList;
+            int current = curIdx;
+            int tail = playNextTail;
+            if (queue == null || tail <= current || tail >= queue.size()) return 0;
+
+            int removed = 0;
+            for (int index = tail; index > current; index--) {
+                queue.remove(index);
+                removed++;
+            }
+            playNextTail = -1;
+            queueRevision++;
+            return removed;
+        }
+    }
+
     /** Forgets the user queue; the tracks themselves stay wherever they were inserted. */
     private static void clearQueuedNext() {
         playNextTail = -1;
         queueRevision++;
+    }
+
+    /**
+     * 把私人 FM 预备好的下一首接到活队列尾部。必须在主线程调用。
+     *
+     * <p>FM 会话原本每首歌都是一条独立的单曲队列，{@code peekNextIndex()} 因此永远看不到下一首，无缝
+     * 切换在私人 FM 下从来没有生效过。这里让队列真的长出下一格：automix 看到 {@code queueRevision}
+     * 变化后会重新预测并提前预解码，普通切歌路径也不再需要"播完再请求"。</p>
+     *
+     * <p>校验都是为了让一次迟到的预备安全作废：用户可能已经退出 FM、换成了别的歌单（{@code playList}
+     * 换成另一条实例）、或者这一格已经被填上了。任一条不成立就返回 false，调用方当作没预备过，旧的
+     * "播完再请求下一批"兜底路径照旧生效。</p>
+     *
+     * @param expectedQueue 发起预备时的活队列实例
+     * @param song          预备好的曲目
+     * @return 是否真的接上了
+     */
+    public static boolean appendPrefetchedPersonalFmTrack(List<Music> expectedQueue, Music song) {
+        if (expectedQueue == null || song == null) return false;
+        synchronized (PLAY_NEXT_LOCK) {
+            if (!personalFmActive || playList != expectedQueue) return false;
+            int size = expectedQueue.size();
+            // 只在"队尾就是正在播的这一首"时接：已经有下一首，或者下标已经越界，都不该再动队列。
+            if (curIdx < 0 || curIdx + 1 != size) return false;
+
+            Music tail = expectedQueue.get(size - 1);
+            // 接口偶尔会把刚推过的那一首再推一遍，连着播同一首不是无缝切换该有的效果。
+            if (tail != null && tail.getId() == song.getId()) return false;
+
+            expectedQueue.add(song);
+            queueRevision++;
+        }
+        return true;
     }
 
     /**
@@ -686,6 +782,53 @@ public class CloudMusic implements SharedConstants {
         }
     }
 
+    /**
+     * 请求正在播放的 {@code PlayThread} 用已经预解码好的下一首完成一次无缝交接。
+     *
+     * <p>这里只是"请求"：真正的交接仍然发生在播放线程的 10ms 监督 tick 上，和自然结束时的自动切歌
+     * 走同一段 {@code performAutomixHandover}，因此不会出现两个线程同时替换 player/session 的竞态。
+     * 任何一个前置条件不满足（无缝切换被关掉、下一首还没备好、备好的不是队列此刻预测的那一首、正在
+     * 暂停、上一次淡化还没跑完）都返回 false，调用方原样走旧的切歌路径。</p>
+     */
+    private static boolean requestManualAutomixSkip() {
+        try {
+            if (!AutomixSettings.isEnabled()) return false;
+            Thread active = playThread;
+            if (!(active instanceof PlayThread)) return false;
+            return ((PlayThread) active).requestManualSkip();
+        } catch (Throwable ignored) {
+            // 手动切歌是用户操作，绝不能因为无缝路径上的意外而卡住：失败就当没有这条捷径。
+            return false;
+        }
+    }
+
+    /**
+     * 切换当前播放的暂停/继续。播放器界面的空格键与全局快捷键共用这一条路径，避免两处各写一份判空
+     * 逻辑之后行为慢慢分叉；正在进行的无缝淡化由 {@code driveAutomixFade} 一并挂起，这里不必特殊处理。
+     *
+     * @return 本次调用的实际结果；没有可操作的播放时返回 {@link PlayPauseResult#UNAVAILABLE}
+     */
+    public static PlayPauseResult togglePlayPause() {
+        AudioPlayer activePlayer = player;
+        if (currentlyPlaying == null || activePlayer == null || activePlayer.isFinished()) {
+            return PlayPauseResult.UNAVAILABLE;
+        }
+        if (activePlayer.isPausing()) {
+            activePlayer.unpause();
+            return PlayPauseResult.RESUMED;
+        }
+        activePlayer.pause();
+        return PlayPauseResult.PAUSED;
+    }
+
+    /** {@link #togglePlayPause()} 的结果，供界面与快捷键决定要不要给反馈。 */
+    public enum PlayPauseResult {
+        /** 当前没有可暂停/继续的播放。 */
+        UNAVAILABLE,
+        PAUSED,
+        RESUMED
+    }
+
     private static void prepareForTrackChange() {
         dontAdd = true;
     }
@@ -705,6 +848,73 @@ public class CloudMusic implements SharedConstants {
      * 播放来源, 用于记录播放时长
      */
     public static PlayList playedFrom = null;
+
+    /**
+     * 从搜索结果起播：只把用户点的那一首装进队列，随后用刷新过的"最近播放"续上后面的曲目。
+     *
+     * <p>搜索结果不是歌单，顺着它一路往下播是搜索关键词的排序，不是用户在听的东西。主流播放器在这
+     * 里接的都是用户自己的播放上下文，本项目最接近的就是网易云的"最近播放"。</p>
+     *
+     * <p>刻意先起播、再异步补队列：拉一次最近播放要走一次网络，让点击等它回来会有几百毫秒的"点了
+     * 没反应"。补队列时会校验队列还是刚装进去的那一条，用户在这段时间里点了别的歌或者用了"下一首
+     * 播放"就直接放弃追加。最近播放为空（未登录 / Cookie 失效 / 接口变更）时退回用搜索结果本身续，
+     * 也就是旧行为。</p>
+     *
+     * @param selected      用户点的那一首
+     * @param searchResults 当前搜索结果，作为最近播放不可用时的兜底队列
+     * @param selectedIndex {@code selected} 在搜索结果里的下标，仅在完全无法起播时使用
+     */
+    public static void playFromSearchSelection(Music selected, List<Music> searchResults, int selectedIndex) {
+        if (selected == null) {
+            play(searchResults, selectedIndex);
+            return;
+        }
+
+        // 搜索结果不是歌单，播放时长上报没有来源歌单可归属，与旧行为一致。
+        currentPlaylistContext = null;
+        play(Collections.singletonList(selected), 0);
+
+        final List<Music> installedQueue = playList;
+        final List<Music> fallback = searchResults == null
+                ? Collections.<Music>emptyList() : new ArrayList<>(searchResults);
+        MultiThreadingUtil.runAsync(() -> {
+            List<Music> recent = NeteaseRecentPlaysService.fetchRecentSongs(
+                    NeteaseRecentPlaysService.MAX_RECENT_SONGS);
+            final boolean usedRecent = !recent.isEmpty();
+            final List<Music> queue = NeteaseRecentPlaysService.buildQueue(selected,
+                    usedRecent ? recent : fallback);
+            MultiThreadingUtil.runOnMainThread(() ->
+                    appendSearchSelectionTail(installedQueue, selected, queue, usedRecent));
+        });
+    }
+
+    /**
+     * 把 {@link #playFromSearchSelection} 拉到的队列尾部接到活队列上。必须在主线程调用。
+     */
+    private static void appendSearchSelectionTail(List<Music> installedQueue, Music selected,
+                                                  List<Music> queue, boolean usedRecent) {
+        if (installedQueue == null || selected == null || queue == null || queue.size() <= 1) return;
+
+        int appended;
+        synchronized (PLAY_NEXT_LOCK) {
+            // 队列必须还是当初装进去的那一条实例，并且仍然只有那一首：用户在这几百毫秒里换了歌、
+            // 换了歌单、或者用"下一首播放"插了曲目，都不能再往里追加。
+            if (playList != installedQueue || installedQueue.size() != 1) return;
+            Music head = installedQueue.get(0);
+            if (head == null || !head.equals(selected)) return;
+
+            List<Music> tail = queue.subList(1, queue.size());
+            installedQueue.addAll(tail);
+            appended = tail.size();
+            // automix 之前按"没有下一首"预测过一次，递增 revision 让它重新预测并重新预解码。
+            queueRevision++;
+        }
+        System.out.println("[NCM] 搜索起播：已接入" + (usedRecent ? "最近播放" : "搜索结果")
+                + " " + appended + " 首");
+        if (usedRecent) {
+            DownloadDynamicIsland.showSearchQueueFromRecentPlays(appended);
+        }
+    }
 
     /**
      * 播放给定的列表中的所有歌曲
@@ -738,6 +948,9 @@ public class CloudMusic implements SharedConstants {
             return;
         }
 
+        // 旧队列即将被整条换掉，任何在途的 FM 预备结果都不再属于它。
+        PersonalFmManager.clearPrefetchState();
+
         // 深拷贝一份以避免打乱时影响来源列表；FM 会话始终保持接口返回顺序。
         List<Music> safeSongList = new ArrayList<>(songs);
         stopExistingPlayThread();
@@ -769,6 +982,7 @@ public class CloudMusic implements SharedConstants {
         if (!personalFmActive) return;
         personalFmActive = false;
         playMode = playModeBeforePersonalFm;
+        PersonalFmManager.clearPrefetchState();
     }
 
     /**
@@ -864,6 +1078,16 @@ public class CloudMusic implements SharedConstants {
         private volatile long seenQueueRevision = -1L;
         /** Set by the wait loop when the armed deck took over, so {@code run()} skips a fresh start. */
         private volatile boolean automixHandover;
+        /**
+         * Set by {@link #requestManualSkip()} when a user-pressed "next" should be served by the armed
+         * deck. Consumed by the wait loop on its next tick, so the handover always runs on the playback
+         * thread even though the request comes from the interface thread.
+         */
+        private volatile boolean manualSkipRequested;
+        /** Prefetch attempts made for the current track, so a flaky FM response retries but stops. */
+        private volatile int fmPrefetchAttempts;
+        /** Earliest wall-clock time the next personal-FM prefetch attempt may start. */
+        private volatile long nextFmPrefetchAt;
         private volatile AutomixFade activeFade;
 
         public PlayThread(List<Music> songs, int startIdx) {
@@ -999,6 +1223,8 @@ public class CloudMusic implements SharedConstants {
                 return false;
             }
             currentlyPlaying = song;
+            // 有了 FM 预备之后，推进不再每首都经过 PersonalFmManager.requestBatch，界面同步必须在这里补。
+            if (personalFmActive) PersonalFmManager.noteFmTrackStarted(song);
             // Dynamic cover lookup is optional and never blocks audio startup or static-cover rendering.
             loadDynamicMusicCover(song);
 
@@ -1084,6 +1310,16 @@ public class CloudMusic implements SharedConstants {
                 // The 10 ms supervision tick doubles as the crossfade clock: fine-grained enough for a
                 // smooth ramp and already bound to the session/cancellation checks above.
                 driveAutomixFade();
+                // Served before the arm bookkeeping: a queue-revision change inside maybeArmNextTrack
+                // drops the armed deck, and a request that arrived a tick earlier must not be thrown
+                // away with it without the ordinary switch running instead.
+                if (tryManualNextHandover(activePlayer)) {
+                    automixHandover = true;
+                    return;
+                }
+                // 私人 FM 的下一首得先请求回来才存在，所以排在 arm 之前：预备成功会递增 queueRevision，
+                // 紧接着的那次 arm 正好看到长出来的队列并立刻开始预解码。
+                maybePrefetchPersonalFm(activePlayer);
                 maybeArmNextTrack(activePlayer);
                 maybePreRollArmedDeck(activePlayer);
                 if (tryAutomixHandover(activePlayer)) {
@@ -1421,12 +1657,31 @@ public class CloudMusic implements SharedConstants {
 
         /** Playback position after which the next track may start being armed. */
         private static final long EARLY_ARM_MILLIS = 10_000L;
+        /**
+         * 私人 FM 开始预备下一首的播放位置。比 {@link #EARLY_ARM_MILLIS} 更早：预备本身要走一次网络
+         * 请求，拿回来之后 automix 还要解析、下载、可能转码、再解码，越早接上队列越有机会真的无缝。
+         * 又不是 0：用户连点跳过时每首都立刻打一次接口纯属浪费，还会把推荐白白塞进去重表。
+         */
+        private static final long FM_PREFETCH_AFTER_MILLIS = 5_000L;
+        /** 每首歌允许的预备次数；连续失败就让位给"播完再请求下一批"的旧兜底路径。 */
+        private static final int MAX_FM_PREFETCH_ATTEMPTS = 3;
+        /** 预备失败后的冷却，避免接口异常时被 10ms 的监督 tick 反复敲。 */
+        private static final long FM_PREFETCH_RETRY_MILLIS = 15_000L;
         /** Attempts allowed per track before automix gives up and lets the ordinary switch run. */
         private static final int MAX_ARM_ATTEMPTS = 3;
         /** Cooldown between arm attempts, so a failing source is not hammered every tick. */
         private static final long ARM_RETRY_MILLIS = 20_000L;
         /** Ramp used when the handover fires with (almost) none of the outgoing track left. */
         private static final long LATE_FIRE_FADE_MILLIS = 700L;
+        /**
+         * Ramp used when the user pressed "next" themselves.
+         *
+         * <p>The planned overlap is measured in bars and can be several seconds: correct for a blend the
+         * listener never asked for, far too slow for a button press, which has to feel immediate. Just
+         * under a second is short enough to read as "switched now" and still long enough to stay a
+         * gain ramp rather than a click at the splice point.</p>
+         */
+        private static final long MANUAL_SKIP_FADE_MILLIS = 900L;
         /**
          * How long before the planned handover the armed deck is started, silently.
          *
@@ -1552,6 +1807,49 @@ public class CloudMusic implements SharedConstants {
         private void resetArmState() {
             armAttempts = 0;
             nextArmAt = 0L;
+            // A request that never got served (its session died first) must not fire against the track
+            // that starts next: the user asked to leave a different song.
+            manualSkipRequested = false;
+            // 预备下一首同样按"每首歌一份预算"计：交接到新的一首之后要能重新预备。
+            fmPrefetchAttempts = 0;
+            nextFmPrefetchAt = 0L;
+        }
+
+        /**
+         * 私人 FM 专属：在当前这首还在放的时候就把下一首推荐拉回来接到队列尾部。
+         *
+         * <p>普通歌单的下一首本来就躺在队列里，automix 直接预解码即可；私人 FM 的下一首却必须先发一次
+         * 请求才存在，所以旧流程只能"播完 → 请求 → 重开播放线程"，中间的静音躲不掉，automix 也因为
+         * {@code peekNextIndex()} 恒为 -1 而完全没生效。</p>
+         *
+         * <p>刻意不看 {@link AutomixSettings#isEnabled()}：即使用户关掉了无缝切换，提前把下一首接进队列
+         * 也能省掉那一段"播完才开始下载解码"的空白，效果上就是普通的顺序播放。解析失败等待用户操作
+         * （{@code awaitingPlaybackAction}）或用户正在手动切歌（{@code dontAdd}）时不预备，避免替一条
+         * 马上要被换掉的队列白跑一次请求。</p>
+         */
+        private void maybePrefetchPersonalFm(AudioPlayer activePlayer) {
+            if (!personalFmActive || dontAdd || awaitingPlaybackAction) return;
+            if (fmPrefetchAttempts >= MAX_FM_PREFETCH_ATTEMPTS) return;
+            if (activePlayer == null || !isSessionUsable(session)) return;
+
+            List<Music> queue = playList;
+            // 只有队尾就是正在播的这一首时才需要预备；已经有下一首就什么都不做。
+            if (queue == null || curIdx < 0 || curIdx + 1 != queue.size()) return;
+
+            long now = System.currentTimeMillis();
+            if (now < nextFmPrefetchAt) return;
+
+            long total = (long) activePlayer.getTotalTimeMillis();
+            long position = (long) activePlayer.getCurrentTimeMillis();
+            if (total <= 0L) return;
+
+            // 播够一段时间，或者已经逼近尾声、再不预备就赶不上了。以先到者为准，和 arm 的判定同构。
+            long lead = AutomixSettings.getOverlapMillis() + AutomixSettings.ARM_LEAD_MILLIS;
+            if (position < FM_PREFETCH_AFTER_MILLIS && total - position > lead) return;
+
+            fmPrefetchAttempts++;
+            nextFmPrefetchAt = now + FM_PREFETCH_RETRY_MILLIS;
+            PersonalFmManager.prefetchNextAsync(queue);
         }
 
         /**
@@ -1767,6 +2065,80 @@ public class CloudMusic implements SharedConstants {
             }
         }
         /**
+         * Whether a user-pressed "next" can be served by the armed deck instead of the ordinary
+         * close/resolve/download/decode switch. Called from the interface thread, so it only inspects
+         * state and raises a flag - nothing here touches {@code player}, {@code session} or the queue.
+         *
+         * @return whether the request was accepted; {@code false} means the caller must switch normally
+         */
+        boolean requestManualSkip() {
+            if (doBreak || isPlaybackCancelled() || !isSessionUsable(session)) return false;
+            // Already asked; the pending request will be served on the next tick.
+            if (manualSkipRequested) return false;
+            // A blend is still running. Promoting a third deck now would leave two tracks audible
+            // against the new one, so this switch has to be the ordinary abrupt one.
+            if (activeFade != null) return false;
+
+            AudioPlayer active = ownedPlayer;
+            if (active == null || !active.isUsable() || active.isFinished() || active.isPausing()) return false;
+
+            ArmedTrack track = armed;
+            if (track == null || track.plan == null || track.deck == null || !track.deck.isUsable()) return false;
+            if (!armStillValid(track.generation, track.queueRevision)) return false;
+            // The decoded deck has to be exactly the track the queue predicts right now, or a manual
+            // "next" would land on a different song than the one the ordinary switch would have played.
+            if (track.index != peekNextIndex()) return false;
+
+            manualSkipRequested = true;
+            return true;
+        }
+
+        /**
+         * Serves a pending manual skip. Unlike the automatic path this ignores {@code plan.fireMillis}:
+         * the user asked to leave the current track now, so the seam happens on this tick with a short
+         * ramp instead of at the planned bar line.
+         */
+        private boolean tryManualNextHandover(AudioPlayer activePlayer) {
+            if (!manualSkipRequested) return false;
+
+            ArmedTrack track = armed;
+            boolean usable = activePlayer != null && activePlayer.isUsable() && !activePlayer.isFinished()
+                    && !activePlayer.isPausing()
+                    && track != null && track.plan != null && track.deck != null
+                    && armStillValid(track.generation, track.queueRevision)
+                    && track.index >= 0 && track.index < playList.size();
+            manualSkipRequested = false;
+            if (!usable) {
+                // The deck went away in the few milliseconds since the request. The user still pressed
+                // "next", so fall back to the ordinary switch rather than doing nothing at all.
+                cancelArmedTrack();
+                performOrdinaryNextAfterFailedHandover();
+                return false;
+            }
+
+            if (!performAutomixHandover(activePlayer, track, MANUAL_SKIP_FADE_MILLIS)) {
+                performOrdinaryNextAfterFailedHandover();
+                return false;
+            }
+            return true;
+        }
+
+        /**
+         * The original manual-switch path, run from the playback thread when the seamless one could not
+         * be used. Identical to what {@link CloudMusic#next()} does when nothing is armed: attribute the
+         * outgoing track, mark the index as changed by a player control, and close the player so the
+         * supervision loop starts the next track.
+         */
+        private void performOrdinaryNextAfterFailedHandover() {
+            if (doBreak || isPlaybackCancelled() || !isSessionUsable(session)) return;
+            if (playList.isEmpty() || player == null || !canPlayNext()) return;
+            updatePlayCountIfNeeded();
+            prepareForTrackChange();
+            curIdx++;
+            stopCurrentPlayback();
+        }
+
+        /**
          * Fires the handover once the outgoing track reaches the planned point, or immediately if it
          * already ended (a late arm still beats a silent gap).
          */
@@ -1795,6 +2167,17 @@ public class CloudMusic implements SharedConstants {
          * and the incoming one takes over the queue index, session, lyrics and history reporting at once.
          */
         private boolean performAutomixHandover(AudioPlayer outgoing, ArmedTrack track) {
+            return performAutomixHandover(outgoing, track, 0L);
+        }
+
+        /**
+         * @param overlapOverrideMillis ramp to use instead of the planned overlap, or {@code 0} to keep
+         *                              the plan's own length. A user-pressed "next" overrides it: the
+         *                              planned blend is measured in bars and reads as sluggish when it
+         *                              answers a button press.
+         */
+        private boolean performAutomixHandover(AudioPlayer outgoing, ArmedTrack track,
+                                               long overlapOverrideMillis) {
             armed = null;
             AutomixPlan plan = track.plan;
             AudioPlayer incoming = track.deck;
@@ -1809,28 +2192,17 @@ public class CloudMusic implements SharedConstants {
             // which sounds like a gap followed by a track sneaking in rather than like a blend.
             long remaining = Math.max(0L,
                     (long) outgoing.getTotalTimeMillis() - (long) outgoing.getCurrentTimeMillis());
-            long effectiveOverlap = plan.overlapMillis;
+            long requestedOverlap = overlapOverrideMillis > 0L ? overlapOverrideMillis : plan.overlapMillis;
+            long effectiveOverlap = requestedOverlap;
             if (!outgoing.isUsable() || outgoing.isFinished() || remaining < 400L) {
                 effectiveOverlap = LATE_FIRE_FADE_MILLIS;
             } else if (remaining < effectiveOverlap) {
                 effectiveOverlap = Math.max(LATE_FIRE_FADE_MILLIS, remaining);
             }
             System.out.println("[Automix] handover -> " + track.song.getName() + " · " + plan.summary
-                    + (effectiveOverlap == plan.overlapMillis
+                    + (overlapOverrideMillis > 0L ? " (manual skip)" : "")
+                    + (effectiveOverlap == requestedOverlap
                             ? "" : " (ramp shortened to " + effectiveOverlap + "ms, " + remaining + "ms left)"));
-
-            // Attribute the outgoing track before the queue index moves on.
-            try {
-                NeteasePlaybackHistoryReporter.finish(outgoing,
-                        NeteasePlaybackHistoryReporter.EndReason.COMPLETED);
-            } catch (Throwable ignored) {
-            }
-            if (!dontAdd && playedFrom != null && curIdx >= 0 && curIdx < playList.size()) {
-                try {
-                    playList.get(curIdx).updPlayCount(playedFrom, outgoing.getCurrentTimeSeconds());
-                } catch (Throwable ignored) {
-                }
-            }
 
             PlaybackSession nextSession;
             synchronized (PLAYER_STATE_LOCK) {
@@ -1862,6 +2234,21 @@ public class CloudMusic implements SharedConstants {
                     return false;
                 }
 
+                // Attributed here rather than before the deck is started: every early return above
+                // leaves the outgoing track playing, and the ordinary completion path would then report
+                // and count it a second time.
+                try {
+                    NeteasePlaybackHistoryReporter.finish(outgoing,
+                            NeteasePlaybackHistoryReporter.EndReason.COMPLETED);
+                } catch (Throwable ignored) {
+                }
+                if (!dontAdd && playedFrom != null && curIdx >= 0 && curIdx < playList.size()) {
+                    try {
+                        playList.get(curIdx).updPlayCount(playedFrom, outgoing.getCurrentTimeSeconds());
+                    } catch (Throwable ignored) {
+                    }
+                }
+
                 curIdx = track.index;
                 currentlyPlaying = track.song;
                 nextSession = CloudMusic.beginNewSession(track.song);
@@ -1889,6 +2276,8 @@ public class CloudMusic implements SharedConstants {
             loadLyric(track.song, nextSession, track.file);
             NeteasePlaybackHistoryReporter.start(track.song, currentPlaylistContext, incoming);
             DownloadDynamicIsland.showAutomixHandover(track.song.getName(), plan.summary);
+            // 无缝交接同样是"一首 FM 曲目开始出声"，面板与预备标记都要跟着走。
+            if (personalFmActive) PersonalFmManager.noteFmTrackStarted(track.song);
             return true;
         }
 
@@ -1974,6 +2363,9 @@ public class CloudMusic implements SharedConstants {
         private void cancelArmedTrack() {
             ArmedTrack track = armed;
             armed = null;
+            // Nothing left to hand over to, so a pending manual request has to fall back to the
+            // ordinary switch instead of waiting for a deck that no longer exists.
+            manualSkipRequested = false;
             if (track == null || track.deck == null) return;
             if (track.deck == ownedPlayer || track.deck == CloudMusic.player) return;
             closeQuietly(track.deck);
@@ -2061,6 +2453,14 @@ public class CloudMusic implements SharedConstants {
      */
     public static Location preferredCoverLocation(Music music, Location fallback) {
         return MusicCoverService.preferredCoverLocation(music, fallback);
+    }
+
+    /**
+     * 动态封面所需的 ffmpeg 是否就绪。返回 1 已找到、-1 探测过但没找到、0 尚未探测。
+     * 只读缓存结论,可以安全地在渲染线程里调用(HUD 编辑器用它给开关加一行提示)。
+     */
+    public static int animatedCoverToolingState() {
+        return MusicCoverService.ffmpegState();
     }
     public static BufferedImage gaussianBlur(BufferedImage imgIn, int blur) {
         return MusicCoverService.gaussianBlur(imgIn, blur);

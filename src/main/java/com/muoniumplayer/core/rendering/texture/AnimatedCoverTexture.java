@@ -18,6 +18,8 @@ public final class AnimatedCoverTexture extends DynamicTexture {
     private final List<Long> frameDurations;
     private int currentFrame;
     private long nextFrameAt;
+    /** 换帧过程中的上传会再次绑定纹理,必须挡住由此产生的重入。 */
+    private boolean uploadingFrame;
 
     public AnimatedCoverTexture(List<BufferedImage> sourceFrames, List<Long> sourceDurations) {
         // clearable 必须是 false:DynamicTexture 在首次上传后会把 dynamicTextureData 置空,而这里每换一帧
@@ -55,8 +57,22 @@ public final class AnimatedCoverTexture extends DynamicTexture {
         return super.getGlTextureId();
     }
 
+    /**
+     * 换帧只发生在渲染线程,并且必须挡住两种重入:
+     *
+     * <p>一是<b>构造期间</b>:父类构造函数里的 GL 分配会调用 {@code bindTexture() -> getGlTextureId()},
+     * 虚方法派发到这里时 {@code frames} 还没有赋值,直接读它会 NPE——而这个异常发生在构造函数里,
+     * 结果是动态封面纹理永远建不起来。</p>
+     *
+     * <p>二是<b>上传期间</b>:{@link DynamicTexture#updateDynamicTexture()} 自己会绑定纹理,于是又回到
+     * {@code getGlTextureId()};若此时"该换帧"的条件仍然成立就会无限递归(StackOverflowError)。因此
+     * 先推进 {@code nextFrameAt} 再上传,并额外用一个标志位兜住。</p>
+     */
     private void advanceFrameIfDue() {
-        if (frames.size() < 2 || dynamicTextureData == null
+        List<int[]> localFrames = this.frames;
+        List<Long> localDurations = this.frameDurations;
+        if (localFrames == null || localDurations == null || localFrames.size() < 2
+                || dynamicTextureData == null || uploadingFrame
                 || !MuoniumPlayerExtension.isCallingFromMainThread()) {
             return;
         }
@@ -64,10 +80,20 @@ public final class AnimatedCoverTexture extends DynamicTexture {
         if (now < nextFrameAt) {
             return;
         }
-        currentFrame = (currentFrame + 1) % frames.size();
-        System.arraycopy(frames.get(currentFrame), 0, dynamicTextureData, 0, dynamicTextureData.length);
-        updateDynamicTexture();
-        nextFrameAt = now + frameDurations.get(currentFrame);
+        int next = (currentFrame + 1) % localFrames.size();
+        int[] pixels = localFrames.get(next);
+        if (pixels.length != dynamicTextureData.length) {
+            return;
+        }
+        currentFrame = next;
+        nextFrameAt = now + localDurations.get(next);
+        System.arraycopy(pixels, 0, dynamicTextureData, 0, dynamicTextureData.length);
+        uploadingFrame = true;
+        try {
+            updateDynamicTexture();
+        } finally {
+            uploadingFrame = false;
+        }
     }
 
     private static BufferedImage normalize(BufferedImage source, int width, int height) {

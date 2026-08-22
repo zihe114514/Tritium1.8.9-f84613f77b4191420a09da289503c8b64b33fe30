@@ -22,6 +22,7 @@ import today.opai.api.impl.OpenAPIImpl;
 import today.opai.api.impl.WindowResolutionImpl;
 import today.opai.api.interfaces.EventHandler;
 import com.muoniumplayer.core.MuoniumPlayerExtension;
+import com.muoniumplayer.core.MusicHotkeys;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.Framebuffer;
@@ -68,6 +69,8 @@ public class MuoniumPlayerMod {
     public static KeyBinding keyVolumeUp;
     /** 降低播放器音量，默认数字键盘 -。可在「选项 → 控制」中修改。 */
     public static KeyBinding keyVolumeDown;
+    /** 暂停 / 继续播放，默认数字键盘 *。可在「选项 → 控制」中修改。 */
+    public static KeyBinding keyTogglePause;
 
     @Mod.Instance(MOD_ID)
     public static MuoniumPlayerMod instance;
@@ -92,12 +95,15 @@ public class MuoniumPlayerMod {
         keyNextTrack = new KeyBinding("key.muonium.next_track", Keyboard.KEY_NEXT, KEY_CATEGORY);
         keyVolumeUp = new KeyBinding("key.muonium.volume_up", Keyboard.KEY_ADD, KEY_CATEGORY);
         keyVolumeDown = new KeyBinding("key.muonium.volume_down", Keyboard.KEY_SUBTRACT, KEY_CATEGORY);
+        // 和音量的小键盘 +/- 放在一起，构成一组"媒体键"；原版没有占用小键盘 *，因此默认不冲突。
+        keyTogglePause = new KeyBinding("key.muonium.toggle_pause", Keyboard.KEY_MULTIPLY, KEY_CATEGORY);
         ClientRegistry.registerKeyBinding(keyOpenMusic);
         ClientRegistry.registerKeyBinding(keyEditHud);
         ClientRegistry.registerKeyBinding(keyPreviousTrack);
         ClientRegistry.registerKeyBinding(keyNextTrack);
         ClientRegistry.registerKeyBinding(keyVolumeUp);
         ClientRegistry.registerKeyBinding(keyVolumeDown);
+        ClientRegistry.registerKeyBinding(keyTogglePause);
     }
 
     @Mod.EventHandler
@@ -175,6 +181,11 @@ public class MuoniumPlayerMod {
             }
             if (keyVolumeDown.isPressed()) {
                 CloudMusic.adjustVolume(-.05f);
+            }
+
+            // 暂停 / 继续与播放器界面的空格键共用同一条 CloudMusic.togglePlayPause()，反馈也在那里统一给出。
+            if (keyTogglePause.isPressed()) {
+                MusicHotkeys.togglePlayback();
             }
         }
     }

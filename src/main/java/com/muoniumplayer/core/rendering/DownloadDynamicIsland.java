@@ -38,7 +38,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         COMPACT("紧凑状态"),
         CARD("浮层卡片"),
         SYSTEM_CARD("系统通知"),
-        MUSIC_FOCUS("音乐聚焦");
+        MUSIC_FOCUS("音乐聚焦"),
+        LIQUID_GLASS("液态玻璃");
 
         private final String displayName;
 
@@ -321,10 +322,47 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                 safeNoticeValue(trackName, "所选歌曲") + " · " + detail);
     }
 
+    /**
+     * 搜索结果起播后，队列已经接上"最近播放"的提示。普通通道：歌已经在放了，这只是解释后面会播什么。
+     */
+    public static void showSearchQueueFromRecentPlays(int count) {
+        publishNotice(IslandNoticeType.PLAY_NEXT, "已接入最近播放",
+                Math.max(0, count) + " 首 · 播完当前歌曲后继续");
+    }
+
+    /**
+     * 私人 FM 已经把下一首推荐预备进队列的提示。普通通道：这只是解释接下来会播什么，必须老实排在用户
+     * 主动触发的反馈后面，不能抢占正在显示的下载 / 转码卡片。
+     */
+    public static void showPersonalFmPrefetched(String trackName) {
+        publishNotice(IslandNoticeType.PLAY_NEXT, "已预备下一首",
+                safeNoticeValue(trackName, "下一首推荐") + " · 私人 FM 将无缝接入");
+    }
+
     /** Reports that "play next" had no queue to insert into and simply started the track. */
     public static void showQueuedNextStarted(String trackName) {
         publishNotice(IslandNoticeType.PLAY_NEXT, "开始播放",
                 safeNoticeValue(trackName, "所选歌曲") + " · 当前没有播放队列，已直接播放");
+    }
+
+    /**
+     * 全局快捷键切换暂停/继续后的提示。刻意用普通通道（非 persistent）：这只是一次状态确认，必须
+     * 老实排在用户触发的其它反馈后面，不能抢占正在显示的下载/转码卡片。
+     */
+    public static void showPlaybackPaused(String trackName) {
+        publishNotice(IslandNoticeType.PLAYBACK_TOGGLE, "已暂停",
+                safeNoticeValue(trackName, "当前播放") + " · 再按一次继续");
+    }
+
+    /** 与 {@link #showPlaybackPaused(String)} 成对，报告播放已恢复。 */
+    public static void showPlaybackResumed(String trackName) {
+        publishNotice(IslandNoticeType.PLAYBACK_TOGGLE, "继续播放",
+                safeNoticeValue(trackName, "当前播放"));
+    }
+
+    /** 快捷键按下但当前没有可暂停的播放时的提示，避免用户以为按键没生效。 */
+    public static void showPlaybackToggleUnavailable() {
+        publishNotice(IslandNoticeType.PLAYBACK_TOGGLE, "暂停快捷键", "当前没有正在播放的歌曲");
     }
 
     /** Reports the automix switch itself being turned on or off. */
@@ -770,22 +808,31 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         boolean enabled = HudConfig.dynamicIslandEnabled;
         boolean shouldShow = enabled && (activeDownload || holdingCompletion || activeNotice);
 
-        visibility = Interpolations.interpolate(visibility, shouldShow ? 1f : 0f,
-                shouldShow ? .28f : .22f);
-        expansion = Interpolations.interpolate(expansion, shouldShow ? 1.0 : 0.0,
-                shouldShow ? .24f : .25f);
+        // 动画节奏来自配置：每个逼近系数乘以对应的速度倍率，再钳到 (0,.95] 以免越过目标值抖动。
+        float expandRate = animationRate(shouldShow ? HudConfig.dynamicIslandExpandSpeed
+                : HudConfig.dynamicIslandCollapseSpeed, shouldShow ? .28f : .22f);
+        float expansionRate = animationRate(shouldShow ? HudConfig.dynamicIslandExpandSpeed
+                : HudConfig.dynamicIslandCollapseSpeed, shouldShow ? .24f : .25f);
+        float contentRate = animationRate(shouldShow ? HudConfig.dynamicIslandContentSpeed
+                : HudConfig.dynamicIslandCollapseSpeed, shouldShow ? .32f : .24f);
+        float transitionRate = animationRate(shouldShow ? HudConfig.dynamicIslandContentSpeed
+                : HudConfig.dynamicIslandCollapseSpeed, shouldShow ? .38f : .26f);
+        float copyRate = animationRate(shouldShow ? HudConfig.dynamicIslandContentSpeed
+                : HudConfig.dynamicIslandCollapseSpeed, shouldShow ? .32f : .26f);
+        float successRate = animationRate(HudConfig.dynamicIslandContentSpeed, .28f);
+
+        visibility = Interpolations.interpolate(visibility, shouldShow ? 1f : 0f, expandRate);
+        expansion = Interpolations.interpolate(expansion, shouldShow ? 1.0 : 0.0, expansionRate);
         float contentTarget = shouldShow && expansion > .30 ? 1f : 0f;
-        contentAlpha = Interpolations.interpolate(contentAlpha, contentTarget,
-                shouldShow ? .32f : .24f);
-        contentTransition = Interpolations.interpolate(contentTransition, shouldShow ? 1f : 0f,
-                shouldShow ? .38f : .26f);
-        noticeCopyTransition = Interpolations.interpolate(noticeCopyTransition, 1f,
-                shouldShow ? .32f : .26f);
+        contentAlpha = Interpolations.interpolate(contentAlpha, contentTarget, contentRate);
+        contentTransition = Interpolations.interpolate(contentTransition, shouldShow ? 1f : 0f, transitionRate);
+        noticeCopyTransition = Interpolations.interpolate(noticeCopyTransition, 1f, copyRate);
         successMorph = Interpolations.interpolate(successMorph,
-                enabled && holdingCompletion ? 1f : 0f, .28f);
+                enabled && holdingCompletion ? 1f : 0f, successRate);
 
         double frameDelta = Math.min(4.0, Math.max(0.0, RenderSystem.getFrameDeltaTime()));
-        spinnerRotation = (spinnerRotation + frameDelta * 7.2) % 360.0;
+        spinnerRotation = (spinnerRotation + frameDelta * 7.2
+                * DynamicIslandMath.clamp(HudConfig.dynamicIslandSpinnerSpeed, .30, 3.0)) % 360.0;
 
         previousDownloading = activeDownload;
         lastObservedProgress = rawProgress;
@@ -890,10 +937,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
         double entryScale = 1.0;
         if (!preview && animationStart > 0L) {
-            double entryProgress = DynamicIslandMath.clamp01((now - animationStart) / 420.0);
+            double entranceDuration = DynamicIslandMath.clamp(HudConfig.dynamicIslandEntranceDuration,
+                    160.0, 1200.0);
+            double entryProgress = DynamicIslandMath.clamp01((now - animationStart) / entranceDuration);
             double cubicOut = 1.0 - Math.pow(1.0 - entryProgress, 3.0);
             double restrainedOvershoot = Math.sin(entryProgress * Math.PI)
-                    * (1.0 - entryProgress) * .025;
+                    * (1.0 - entryProgress) * .025
+                    * DynamicIslandMath.clamp(HudConfig.dynamicIslandOvershoot, 0.0, 2.0);
             entryScale = .965 + .035 * cubicOut + restrainedOvershoot;
         }
 
@@ -904,20 +954,25 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         double x = centerX - width * .5;
         boolean systemCard = style == DynamicIslandStyle.SYSTEM_CARD;
         boolean musicFocus = style == DynamicIslandStyle.MUSIC_FOCUS;
+        boolean liquidGlass = style == DynamicIslandStyle.LIQUID_GLASS;
         double radius = systemCard ? Math.min(11.0, height * .25)
                 : (musicFocus ? Math.min(14.0, height * .31)
-                : (style == DynamicIslandStyle.CARD ? Math.min(12.0, height * .30) : height * .5));
+                : (liquidGlass ? Math.min(16.0, height * .40)
+                : (style == DynamicIslandStyle.CARD ? Math.min(12.0, height * .30) : height * .5)));
         int accentColor = NCMTheme.getAccentColor();
         int iconAccentColor = DynamicIslandMath.brightenAccent(accentColor, .30f);
 
         // Keep the shadow on the island's own rounded silhouette. The prior expanded,
         // left-shifted rectangle looked like a separate dark background canvas.
-        float shadowAlpha = alpha * (style == DynamicIslandStyle.GLASS ? .13f : (musicFocus ? .23f : .19f));
+        float shadowAlpha = alpha * (style == DynamicIslandStyle.GLASS ? .13f
+                : (liquidGlass ? .15f : (musicFocus ? .23f : .19f)));
         roundedRect(x + 1.0, y + 1.8, width, height, radius,
                 hexColor(0f, 0f, 0f, shadowAlpha));
         roundedRect(x + 2.0, y + 3.0, width, height, radius,
                 hexColor(0f, 0f, 0f, shadowAlpha * .42f));
-        if (style == DynamicIslandStyle.GLASS) {
+        if (liquidGlass) {
+            renderLiquidGlassSurface(x, y, width, height, radius, alpha, accentColor, now);
+        } else if (style == DynamicIslandStyle.GLASS) {
             roundedRect(x, y, width, height, radius, RenderSystem.reAlpha(accentColor, alpha * .20f));
             roundedRect(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height * .46),
                     Math.max(1.0, radius - 1.0), hexColor(1f, 1f, 1f, alpha * .075f));
@@ -958,7 +1013,7 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             roundedOutline(x, y, width, height, radius, .65,
                     new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 20f)));
         }
-        if (!systemCard && !musicFocus) {
+        if (!systemCard && !musicFocus && !liquidGlass) {
             roundedRect(x + radius * .70, y + .8, Math.max(2.0, width - radius * 1.40), .75, .38,
                     hexColor(1f, 1f, 1f, alpha * (style == DynamicIslandStyle.GLASS ? .13f : .055f)));
         }
@@ -968,7 +1023,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         // curved shoulder, making the left edge look incomplete.
         // SYSTEM_CARD reserves a 24px tile at x + 8, whose exact center is x + 20.
         // Keep the glyph center tied to that tile rather than its wider text gutter.
-        double iconInset = systemCard ? 20.0 : (musicFocus ? 26.0 : (style == DynamicIslandStyle.CARD ? 25.0 : 23.0));
+        double iconInset = systemCard ? 20.0 : (musicFocus ? 26.0
+                : (liquidGlass ? 24.0 : (style == DynamicIslandStyle.CARD ? 25.0 : 23.0)));
         double iconExpandedX = centerX - expandedWidth * .5 + iconInset;
         double iconX = DynamicIslandMath.lerp(centerX, iconExpandedX, expansionValue);
         double iconY = y + height * .5;
@@ -980,10 +1036,17 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
             renderMusicFocusArtwork(iconX, iconY, height, iconAlpha, accentColor, iconAccentColor, now,
                     preview, noticeMode, activeNoticeType, success);
         } else {
-            double iconPlate = systemCard ? 17.0 : 18.4;
+            double iconPlate = systemCard ? 17.0 : (liquidGlass ? 19.6 : 18.4);
             scaleAtPos(iconX, iconY, systemCard ? 1.0 : 1.08);
             roundedRect(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
-                    iconPlate * .5, RenderSystem.reAlpha(accentColor, iconAlpha * .22f));
+                    iconPlate * .5, RenderSystem.reAlpha(accentColor, iconAlpha * (liquidGlass ? .16f : .22f)));
+            if (liquidGlass) {
+                // 磨砂托盘：上亮下暗的一层反光，让图标像压在玻璃里而不是贴在表面。
+                roundedRectGradientVertical(iconX - iconPlate * .5, iconY - iconPlate * .5,
+                        iconPlate, iconPlate, iconPlate * .5,
+                        new Color(255, 255, 255, DynamicIslandMath.clamp255(iconAlpha * 34f)),
+                        new Color(255, 255, 255, 0));
+            }
             roundedOutline(iconX - iconPlate * .5, iconY - iconPlate * .5, iconPlate, iconPlate,
                     iconPlate * .5, .85, new Color(255, 255, 255, DynamicIslandMath.clamp255(iconAlpha * 76f)));
             if (noticeMode) {
@@ -1004,7 +1067,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         float renderedTextAlpha = staticVolumeCopy
                 ? (expansionValue >= .74 ? alpha : 0f) : textAlpha;
         if (renderedTextAlpha > .01f) {
-            double textLeft = x + (systemCard ? 44.0 : (musicFocus ? 55.0 : (style == DynamicIslandStyle.CARD ? 39.0 : 37.0)));
+            double textLeft = x + (systemCard ? 44.0 : (musicFocus ? 55.0
+                    : (liquidGlass ? 39.0 : (style == DynamicIslandStyle.CARD ? 39.0 : 37.0))));
             double textRight = x + width - (systemCard ? 12.0 : (musicFocus ? 12.0 : 9.0));
             double textCenter = (textLeft + textRight) * .5;
             double copySlide = (1.0 - DynamicIslandMath.clamp01(contentFade)) * CONTENT_CHANGE_SLIDE;
@@ -1272,6 +1336,13 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     RenderSystem.reAlpha(accentColor, alpha));
             return;
         }
+        if (type == IslandNoticeType.PLAYBACK_TOGGLE) {
+            // 两条竖条 = 暂停键，是这一类通知最直观的符号。
+            roundedRect(centerX - 4.2, centerY - 4.8, 2.6, 9.6, 1.1, foreground);
+            roundedRect(centerX + 1.6, centerY - 4.8, 2.6, 9.6, 1.1,
+                    RenderSystem.reAlpha(accentColor, alpha));
+            return;
+        }
         if (type == IslandNoticeType.QUALITY || type == IslandNoticeType.AUTOMIX) {
             // A compact equalizer makes a playback-quality notice distinct from other status states.
             roundedRect(centerX - 5.1, centerY + 1.5, 2.2, 3.5, 1.1,
@@ -1312,6 +1383,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                                long now, boolean preview) {
         if (alpha <= .01f) return;
         double rotation = preview ? (now / 7.0) % 360.0 : spinnerRotation;
+        if (getStyle() == DynamicIslandStyle.LIQUID_GLASS) {
+            // 液态玻璃有自己的加载动画；这里集中转发，通知图标那一路也能一起用上。
+            renderLiquidGlassSpinner(centerX, centerY, alpha, accentColor, rotation, now);
+            return;
+        }
         final int segments = 8;
         for (int segment = 0; segment < segments; segment++) {
             float trail = 1f - segment / (float) segments;
@@ -1323,6 +1399,120 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     RenderSystem.reAlpha(accentColor, segmentAlpha));
             api.getGLStateManager().popMatrix();
         }
+    }
+
+    /** 把配置里的速度倍率折算成插值系数，永远留在 (0,.95] 内，速度再快也不会越过目标值。 */
+    private static float animationRate(float configuredSpeed, float baseRate) {
+        float speed = (float) DynamicIslandMath.clamp(configuredSpeed, .40, 2.50);
+        return Math.max(.02f, Math.min(.95f, baseRate * speed));
+    }
+
+    /**
+     * 液态玻璃表面：半透明冷色基底 + 上半部折射亮带 + 一条缓慢横扫的镜面反光，
+     * 外沿是一圈按时间旋转色相的动态取色光。
+     *
+     * <p>所有笔触都用圆角矩形与其渐变版本绘制，因此天然贴合灵动岛轮廓，不会像径向光斑那样
+     * 溢出边界；也没有额外的 GL 状态切换，与既有样式共用同一层状态隔离。</p>
+     */
+    private void renderLiquidGlassSurface(double x, double y, double width, double height,
+                                         double radius, float alpha, int accentColor, long now) {
+        double seconds = now / 1000.0;
+        int accentBright = DynamicIslandMath.brightenAccent(accentColor, .34f) & 0xFFFFFF;
+        double innerRadius = Math.max(1.0, radius - 1.0);
+
+        // 玻璃本体：偏冷的深色基底压住背景，再叠一层强调色的竖向渐变当作体积感。
+        roundedRect(x, y, width, height, radius, hexColor(.043f, .055f, .078f, alpha * .82f));
+        roundedRectGradientVertical(x, y, width, height, radius,
+                DynamicIslandMath.colorWithAlpha(accentBright, alpha * .17f),
+                DynamicIslandMath.colorWithAlpha(accentColor, alpha * .07f));
+        // 冷白到紫蓝的横向色散。这里不用 drawGradientCornerLR：它的混合角会被算成完全不透明，
+        // 放在半透明的玻璃上会糊成两块实色。
+        roundedRectGradientHorizontal(x, y, width, height, radius,
+                new Color(222, 241, 255, DynamicIslandMath.clamp255(alpha * 34f)),
+                new Color(122, 152, 240, DynamicIslandMath.clamp255(alpha * 26f)));
+
+        // 折射：上半部亮带 + 底部回弹的强调色反射。
+        roundedRectGradientVertical(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0),
+                Math.max(1.0, height * .52), innerRadius,
+                new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 46f)),
+                new Color(255, 255, 255, 0));
+        roundedRectGradientVertical(x + 1.0, y + height * .60, Math.max(1.0, width - 2.0),
+                Math.max(1.0, height * .38), innerRadius,
+                new Color(255, 255, 255, 0),
+                DynamicIslandMath.colorWithAlpha(accentBright, alpha * .13f));
+
+        // 镜面反光：一条两侧渐隐的窄光带来回扫过，速度很慢，不会干扰读字。
+        double streakWidth = Math.max(12.0, width * .18);
+        double travel = Math.max(0.0, width - streakWidth - radius);
+        double streakX = x + radius * .5 + (.5 + .5 * Math.sin(seconds * .82)) * travel;
+        double streakHalf = streakWidth * .5;
+        float streakAlpha = alpha * 34f;
+        roundedRectGradientHorizontal(streakX, y + 1.4, streakHalf, Math.max(1.0, height - 2.8),
+                streakHalf * .5, new Color(255, 255, 255, 0),
+                new Color(255, 255, 255, DynamicIslandMath.clamp255(streakAlpha)));
+        roundedRectGradientHorizontal(streakX + streakHalf, y + 1.4, streakHalf,
+                Math.max(1.0, height - 2.8), streakHalf * .5,
+                new Color(255, 255, 255, DynamicIslandMath.clamp255(streakAlpha)),
+                new Color(255, 255, 255, 0));
+
+        // 边缘动态取色：四角取自主题强调色的四个色相相位，整圈随时间缓慢转动。
+        float phase = (float) ((seconds * 26.0) % 360.0);
+        roundedOutlineGradient(x, y, width, height, radius, 1.0,
+                DynamicIslandMath.colorWithAlpha(DynamicIslandMath.shiftHue(accentBright, phase), alpha * .80f),
+                DynamicIslandMath.colorWithAlpha(DynamicIslandMath.shiftHue(accentBright, phase + 70f), alpha * .92f),
+                DynamicIslandMath.colorWithAlpha(DynamicIslandMath.shiftHue(accentBright, phase + 140f), alpha * .74f),
+                DynamicIslandMath.colorWithAlpha(DynamicIslandMath.shiftHue(accentBright, phase + 210f), alpha * .90f));
+        roundedOutline(x + 1.0, y + 1.0, Math.max(1.0, width - 2.0), Math.max(1.0, height - 2.0),
+                innerRadius, .55, new Color(255, 255, 255, DynamicIslandMath.clamp255(alpha * 30f)));
+    }
+
+    /**
+     * 液态玻璃的加载动画：外圈静止的玻璃刻度、一条按色相渐变的彗尾主环、反向旋转的内圈三点，
+     * 以及中心随呼吸缩放的光点。全部由旋转后的圆角矩形组成，1.8.9 的固定管线可以直接吃下。
+     */
+    private void renderLiquidGlassSpinner(double centerX, double centerY, float alpha,
+                                          int accentColor, double rotation, long now) {
+        int accentBright = DynamicIslandMath.brightenAccent(accentColor, .30f) & 0xFFFFFF;
+        double seconds = now / 1000.0;
+
+        // 外圈刻度：固定不动，给旋转体一个可参照的"玻璃环"。
+        final int ticks = 18;
+        for (int tick = 0; tick < ticks; tick++) {
+            drawRotatedPill(centerX, centerY - 7.1, 1.05, .95,
+                    tick * (360f / ticks), hexColor(1f, 1f, 1f, alpha * .10f));
+        }
+
+        // 主环彗尾：越靠尾部越短越淡，颜色沿色相环推移。
+        final int segments = 12;
+        for (int segment = 0; segment < segments; segment++) {
+            float trail = 1f - segment / (float) segments;
+            float segmentAlpha = alpha * (.08f + .92f * trail * trail);
+            double length = 2.1 + 2.4 * trail;
+            int color = DynamicIslandMath.shiftHue(accentBright, segment * 9f
+                    + (float) ((seconds * 34.0) % 360.0));
+            api.getGLStateManager().pushMatrix();
+            api.getGLStateManager().translate(centerX, centerY, 0);
+            api.getGLStateManager().rotate((float) (rotation - segment * (250f / segments)), 0, 0, 1);
+            roundedRect(-.80, -6.5, 1.60, length, .80,
+                    DynamicIslandMath.colorWithAlpha(color, segmentAlpha).getRGB());
+            api.getGLStateManager().popMatrix();
+        }
+
+        // 内圈：三点反向慢转，制造两层不同速度的视差。
+        for (int dot = 0; dot < 3; dot++) {
+            api.getGLStateManager().pushMatrix();
+            api.getGLStateManager().translate(centerX, centerY, 0);
+            api.getGLStateManager().rotate((float) (-rotation * .58 + dot * 120f), 0, 0, 1);
+            roundedRect(-.75, -3.7, 1.50, 1.50, .75,
+                    RenderSystem.reAlpha(accentBright, alpha * (.34f + .18f * dot)));
+            api.getGLStateManager().popMatrix();
+        }
+
+        // 中心光点：呼吸缩放，和边缘光同一套节奏。
+        double breathe = .78 + .22 * (.5 + .5 * Math.sin(seconds * 2.4));
+        double core = 1.9 * breathe;
+        roundedRect(centerX - core, centerY - core, core * 2.0, core * 2.0, core,
+                hexColor(1f, 1f, 1f, alpha * .58f));
     }
 
     /**
@@ -1418,7 +1608,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         GD_SOURCE_HEALTHY,
         GD_SOURCE_ERROR,
         AUTOMIX,
-        PLAY_NEXT
+        PLAY_NEXT,
+        PLAYBACK_TOGGLE
     }
 
 

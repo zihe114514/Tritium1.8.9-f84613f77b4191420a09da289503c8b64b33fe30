@@ -141,6 +141,35 @@ public class PlayQueuePanel extends NCMPanel {
                 .setPosition(title.getRelativeX() + title.getWidth() + 8.0,
                         DRAWER_PADDING + Math.max(0.0, (HEADER_HEIGHT - hint.getHeight()) * .5)));
 
+        RoundedRectWidget clearAll = new RoundedRectWidget();
+        this.drawer.addChild(clearAll);
+        clearAll.setShouldOverrideMouseCursor(true);
+        clearAll.setBeforeRenderCallback(() -> {
+            // 队列为空时没有可清空的内容，按钮连同命中框一起收掉。
+            clearAll.setHidden(this.rows.isEmpty());
+            clearAll.setBounds(34.0, 14.0)
+                    .setPosition(this.drawer.getWidth() - DRAWER_PADDING - 16.0 - 4.0 - 34.0,
+                            DRAWER_PADDING + Math.max(0.0, (HEADER_HEIGHT - 14.0) * .5))
+                    .setRadius(3.0)
+                    .setColor(clearAll.isHovering()
+                            ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                            : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+        });
+        clearAll.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+            if (mouseButton == 0 && !this.rows.isEmpty()) {
+                this.cancelDrag();
+                CloudMusic.clearQueuedNextSongs();
+            }
+            return true;
+        });
+
+        LabelWidget clearAllText = new LabelWidget("清空", FontManager.pf10bold);
+        clearAll.addChild(clearAllText);
+        clearAllText.setClickable(false);
+        clearAllText.setBeforeRenderCallback(() -> clearAllText
+                .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
+                .center());
+
         RoundedRectWidget close = new RoundedRectWidget();
         this.drawer.addChild(close);
         close.setShouldOverrideMouseCursor(true);
@@ -166,7 +195,7 @@ public class PlayQueuePanel extends NCMPanel {
 
         this.drawer.addChild(this.list);
 
-        this.emptyHint = new LabelWidget("队列为空 · 点击歌曲右侧的 » 加入", FontManager.pf10bold);
+        this.emptyHint = new LabelWidget("队列为空 · 点击歌曲右侧的排队按钮加入", FontManager.pf10bold);
         this.drawer.addChild(this.emptyHint);
         this.emptyHint.setClickable(false);
         this.emptyHint.setBeforeRenderCallback(() -> this.emptyHint
@@ -193,11 +222,14 @@ public class PlayQueuePanel extends NCMPanel {
         double progress = smooth(this.openAnimation);
         double panelWidth = this.getWidth();
         double panelHeight = this.getHeight();
-        double drawerWidth = Math.max(150.0, panelWidth - DRAWER_INSET * 2.0);
+        // 抽屉只占播放器约 3/5：宽度按比例收窄并保持居中，高度连表头一起封顶。
+        double drawerWidth = Math.max(150.0,
+                Math.min(panelWidth - DRAWER_INSET * 2.0, panelWidth * .62));
 
         int rowCount = this.rows.size();
         double contentHeight = Math.max(0.0, rowCount * SLOT_HEIGHT - ROW_GAP);
-        double maxListHeight = Math.max(SLOT_HEIGHT, panelHeight * .46);
+        double maxListHeight = Math.max(SLOT_HEIGHT,
+                panelHeight * .60 - (DRAWER_PADDING * 2.0 + HEADER_HEIGHT));
         double listHeight = rowCount == 0
                 ? 26.0
                 : Math.max(SLOT_HEIGHT, Math.min(maxListHeight, contentHeight));
@@ -372,6 +404,22 @@ public class PlayQueuePanel extends NCMPanel {
         }
     }
 
+    /**
+     * 把某一行从用户队列里移除。位置按界面上的行序换算成队列下标，移除成功后本帧就把它
+     * 交给淡出列表，界面不会等到下一次快照对齐才有反馈。
+     */
+    private void removeRow(QueueRow row) {
+        int index = this.rows.indexOf(row);
+        if (index < 0 || row.removing) return;
+        if (row == this.draggingRow) this.cancelDrag();
+        if (!CloudMusic.removeQueuedNext(index)) return;
+
+        this.rows.remove(index);
+        row.removing = true;
+        row.setClickable(false);
+        if (!this.fadingRows.contains(row)) this.fadingRows.add(row);
+    }
+
     private void cancelDrag() {
         this.draggingRow = null;
     }
@@ -534,7 +582,7 @@ public class PlayQueuePanel extends NCMPanel {
             name.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             name.setBeforeRenderCallback(() -> name
                     .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
-                    .setMaxWidth(Math.max(10.0, this.getWidth() - 42.0 - 24.0))
+                    .setMaxWidth(Math.max(10.0, this.getWidth() - 42.0 - 38.0))
                     .setPosition(42.0, 4.0));
 
             LabelWidget artist = new LabelWidget(this.music.getArtistsName(), FontManager.pf10bold);
@@ -543,8 +591,36 @@ public class PlayQueuePanel extends NCMPanel {
             artist.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
             artist.setBeforeRenderCallback(() -> artist
                     .setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT))
-                    .setMaxWidth(Math.max(10.0, this.getWidth() - 42.0 - 24.0))
+                    .setMaxWidth(Math.max(10.0, this.getWidth() - 42.0 - 38.0))
                     .setPosition(42.0, ROW_HEIGHT - artist.getHeight() - 4.0));
+
+            // 移除按钮排在把手左边，并且自己吃掉点击，否则按下去会变成"开始拖动"。
+            RoundedRectWidget remove = new RoundedRectWidget();
+            this.addChild(remove);
+            remove.setShouldOverrideMouseCursor(true);
+            remove.setBeforeRenderCallback(() -> {
+                remove.setHidden(this.removing);
+                remove.setBounds(14.0, 14.0)
+                        .setPosition(Math.max(0.0, this.getWidth() - 32.0), (ROW_HEIGHT - 14.0) * .5)
+                        .setRadius(3.0)
+                        .setColor(remove.isHovering()
+                                ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
+                                : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
+                remove.setAlpha(remove.isHovering() ? .95f : .55f);
+            });
+            remove.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+                if (mouseButton == 0 && !this.removing) {
+                    PlayQueuePanel.this.removeRow(this);
+                }
+                return true;
+            });
+
+            LabelWidget removeText = new LabelWidget("×", FontManager.pf10bold);
+            remove.addChild(removeText);
+            removeText.setClickable(false);
+            removeText.setBeforeRenderCallback(() -> removeText
+                    .setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT))
+                    .center());
 
             DragHandleWidget handle = new DragHandleWidget();
             this.addChild(handle);

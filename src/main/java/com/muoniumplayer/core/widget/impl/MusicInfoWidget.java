@@ -54,6 +54,13 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
                 CloudMusic.player.setVolume(val.floatValue());
         });
         
+        // 动态封面开关的真实来源是 HudConfig(HUD 编辑器"封面 → 动态封面"同一状态),这里只是另一处入口。
+        animatedCover.setValueCallback(val -> {
+            if (val == null || HudConfig.animatedCoverEnabled == val) return;
+            HudConfig.animatedCoverEnabled = val;
+            HudConfig.save();
+        });
+
         this.addValues(this.turnComposerIntoLyric, this.animatedCover, this.volume);
         this.setEventHandler(this);
     }

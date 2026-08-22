@@ -6,9 +6,11 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.GdStudioMusicService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
+import com.muoniumplayer.core.rendering.PlayerQueueIcons;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.texture.Textures;
+import com.muoniumplayer.core.rendering.ui.widgets.IconWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedImageWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
@@ -100,8 +102,14 @@ public class MusicWidget extends RoundedRectWidget {
 
             if (i == 0) {
                 CloudMusic.currentPlaylistContext = playList.isSearchMode() ? null : playList;
-                if (playList.isPersonalFm()) CloudMusic.playFm(playList.getMusics(), index);
-                else CloudMusic.play(playList.getMusics(), index);
+                if (playList.isPersonalFm()) {
+                    CloudMusic.playFm(playList.getMusics(), index);
+                } else if (playList.isSearchResultList()) {
+                    // 搜索结果不顺着搜索排序往下播，改为接用户的"最近播放"。
+                    CloudMusic.playFromSearchSelection(this.music, playList.getMusics(), index);
+                } else {
+                    CloudMusic.play(playList.getMusics(), index);
+                }
             }
 
             return true;
@@ -397,8 +405,9 @@ public class MusicWidget extends RoundedRectWidget {
         // ===== 下一首播放：把这首歌插到当前歌曲之后，按点击顺序排队 =====
         // Available for every source, not just Netease: it only reorders the local play queue, so it
         // needs nothing from any account or API.
-        ThemedTextureIconWidget btnPlayNext = new ThemedTextureIconWidget(
-                PlayerIconAssets.PLAY_NEXT, "»", FontManager.pf16bold, 0, 0, 20, 20);
+        // 图标走字体（player-queue-icons U+E309）而不是贴图：烘成 PNG 的那一版把字形放大并裁掉了
+        // 一角，且每个播放器缩放下都要重新采样。
+        IconWidget btnPlayNext = PlayerQueueIcons.newPlayNextButton(20);
         this.addChild(btnPlayNext);
         btnPlayNext.setShouldOverrideMouseCursor(true);
         btnPlayNext.setBeforeRenderCallback(() -> {

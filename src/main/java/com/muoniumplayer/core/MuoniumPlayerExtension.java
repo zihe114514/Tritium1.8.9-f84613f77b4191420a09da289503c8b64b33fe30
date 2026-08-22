@@ -52,6 +52,7 @@ public class MuoniumPlayerExtension {
         // can create an AudioPlayer. This includes the mod-owned persisted volume.
         HudConfig.load();
         this.musicInfo.volume.setValue((double) HudConfig.playerVolume);
+        this.musicInfo.animatedCover.setValue(HudConfig.animatedCoverEnabled);
         NCMPlayerConfig.load();
         GdStudioSourceSettings.load();
         CloudMusic.quality = NCMPlayerConfig.getAudioQuality();

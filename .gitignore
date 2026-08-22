@@ -24,8 +24,11 @@ run
 # local claude settings (user-specific, not for sharing)
 .claude/settings.local.json
 
-# original Muonium reference source — not part of this mod's distribution
-Muonium/
+# original Muonium reference source — not part of this mod's distribution.
+# 必须锚定到仓库根：Windows 上 core.ignorecase=true，未锚定的 Muonium/ 会连
+# src/main/resources/muonium/ 与 src/main/resources/assets/muonium/ 一起忽略掉，
+# 新加的资源（字体、贴图）会被静默丢掉而不出现在 git status 里。
+/Muonium/
 
 # Codex/local agent state
 .codex/

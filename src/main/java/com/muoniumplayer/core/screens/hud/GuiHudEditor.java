@@ -15,6 +15,8 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.rendering.shader.Shaders;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
+import com.muoniumplayer.core.screens.ncm.NCMScreen;
+import com.muoniumplayer.core.screens.ncm.NCMTheme;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.settings.HudSetting;
 import com.muoniumplayer.core.widget.impl.MusicInfoWidget;
@@ -39,6 +41,9 @@ public class GuiHudEditor extends GuiScreen {
     private static final int SECTION_H = 22;
     private static final int COLOR_ROW_H = 26;
     private static final int SLIDER_ROW_H = 28;
+    private static final int THEME_CHIP_SIZE = 20;
+    private static final int THEME_CHIP_GAP = 4;
+    private static final int THEME_CHIP_COLUMNS = 9;
     private static final int PICKER_W = 204;
     private static final int PICKER_H = 184;
     private static final int SV_W = 180;
@@ -83,7 +88,13 @@ public class GuiHudEditor extends GuiScreen {
             HudSetting.DYNAMIC_ISLAND_MAX_WIDTH,
             HudSetting.DYNAMIC_ISLAND_PROGRESS_HEIGHT,
             HudSetting.DYNAMIC_ISLAND_COMPLETION_HOLD,
-            HudSetting.DYNAMIC_ISLAND_QUEUE_INTERVAL
+            HudSetting.DYNAMIC_ISLAND_QUEUE_INTERVAL,
+            HudSetting.DYNAMIC_ISLAND_EXPAND_SPEED,
+            HudSetting.DYNAMIC_ISLAND_COLLAPSE_SPEED,
+            HudSetting.DYNAMIC_ISLAND_CONTENT_SPEED,
+            HudSetting.DYNAMIC_ISLAND_ENTRANCE_DURATION,
+            HudSetting.DYNAMIC_ISLAND_OVERSHOOT,
+            HudSetting.DYNAMIC_ISLAND_SPINNER_SPEED
     };
 
     private boolean draggingInfo;
@@ -95,6 +106,8 @@ public class GuiHudEditor extends GuiScreen {
     private boolean currentExpanded = true;
     private boolean normalExpanded = true;
     private boolean islandExpanded = true;
+    private boolean coverExpanded = true;
+    private boolean themeExpanded = true;
     private boolean settingsCollapsed;
     private int settingsScroll;
     private HudSetting draggingSlider;
@@ -435,6 +448,30 @@ public class GuiHudEditor extends GuiScreen {
                     drawSlider(fr, setting, x + 6, rowY, SETTINGS_W - 12, mouseX, mouseY);
                     rowY += SLIDER_ROW_H;
                 }
+            }
+
+            drawSectionHeader(fr, "封面", coverExpanded, x + 5, rowY,
+                    SETTINGS_W - 10, mouseX, mouseY, 0xFFFFA971);
+            rowY += SECTION_H;
+            if (coverExpanded) {
+                drawToggleRow(fr, animatedCoverLabel(), HudConfig.animatedCoverEnabled,
+                        x + 6, rowY, mouseX, mouseY);
+                rowY += COLOR_ROW_H;
+            }
+
+            drawSectionHeader(fr, "主题", themeExpanded, x + 5, rowY,
+                    SETTINGS_W - 10, mouseX, mouseY, 0xFFB68CFF);
+            rowY += SECTION_H;
+            if (themeExpanded) {
+                int hovered = themeChipIndexAt(mouseX, mouseY, x + 6, rowY + COLOR_ROW_H);
+                NCMTheme.ThemePreset[] presets = NCMTheme.ThemePreset.values();
+                String name = hovered >= 0 && hovered < presets.length
+                        ? presets[hovered].getDisplayName()
+                        : NCMTheme.getCurrentName();
+                drawChoiceRow(fr, "播放器主题", name, x + 6, rowY, mouseX, mouseY);
+                rowY += COLOR_ROW_H;
+                drawThemeChips(x + 6, rowY, mouseX, mouseY);
+                rowY += themeGridHeight();
             }
         } finally {
             GL11.glDisable(GL11.GL_SCISSOR_TEST);
@@ -868,6 +905,40 @@ public class GuiHudEditor extends GuiScreen {
                     rowY += SLIDER_ROW_H;
                 }
             }
+
+            if (isInside(mouseX, mouseY, panelX + 5, rowY, SETTINGS_W - 10, SECTION_H)) {
+                coverExpanded = !coverExpanded;
+                settingsScroll = getSettingsLayout().clampScroll(settingsScroll, panelH);
+                return;
+            }
+            rowY += SECTION_H;
+            if (coverExpanded) {
+                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                    setAnimatedCoverEnabled(!HudConfig.animatedCoverEnabled);
+                    return;
+                }
+                rowY += COLOR_ROW_H;
+            }
+
+            if (isInside(mouseX, mouseY, panelX + 5, rowY, SETTINGS_W - 10, SECTION_H)) {
+                themeExpanded = !themeExpanded;
+                settingsScroll = getSettingsLayout().clampScroll(settingsScroll, panelH);
+                return;
+            }
+            rowY += SECTION_H;
+            if (themeExpanded) {
+                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                    applyTheme(NCMTheme.next());
+                    return;
+                }
+                rowY += COLOR_ROW_H;
+                int chip = themeChipIndexAt(mouseX, mouseY, panelX + 6, rowY);
+                if (chip >= 0) {
+                    applyTheme(NCMTheme.setCurrent(NCMTheme.ThemePreset.values()[chip]));
+                    return;
+                }
+                rowY += themeGridHeight();
+            }
             return;
         }
 
@@ -996,9 +1067,35 @@ public class GuiHudEditor extends GuiScreen {
         MusicLyricsWidget lyrics = MuoniumPlayerExtension.getInstance().musicLyrics;
         HudConfig.resetLyricAppearance();
         HudConfig.resetDynamicIslandAppearance();
+        HudConfig.resetCoverAppearance();
+        syncAnimatedCoverModuleValue();
         lyrics.loadHudEditorSettings();
         lyricSettingsDirty = false;
         HudConfig.save();
+    }
+
+    /**
+     * 动态封面依赖外部 ffmpeg。已经探测过但没找到时把结论写在标签上,否则用户只会看到"开着却没动画"。
+     * 这里只读缓存结论,不会在渲染线程上真的去探测(那会创建子进程并卡帧)。
+     */
+    private static String animatedCoverLabel() {
+        return CloudMusic.animatedCoverToolingState() < 0 ? "动态封面 · 未检测到 ffmpeg" : "动态封面";
+    }
+
+    private void setAnimatedCoverEnabled(boolean enabled) {
+        HudConfig.animatedCoverEnabled = enabled;
+        syncAnimatedCoverModuleValue();
+        HudConfig.save();
+    }
+
+    /** 模块面板里的 {@code Animated Cover} 只是同一状态的另一处显示,改完要立刻跟上。 */
+    private static void syncAnimatedCoverModuleValue() {
+        try {
+            MuoniumPlayerExtension.getInstance().musicInfo.animatedCover
+                    .setValue(HudConfig.animatedCoverEnabled);
+        } catch (Throwable ignored) {
+            // 值存储还没准备好时无所谓:HudConfig 才是真实来源。
+        }
     }
 
     private void beginColorEdit(EditingColor type, Color color) {
@@ -1127,6 +1224,14 @@ public class GuiHudEditor extends GuiScreen {
             case DYNAMIC_ISLAND_COMPLETION_HOLD:
             case DYNAMIC_ISLAND_QUEUE_INTERVAL:
                 return String.format("%.1f s", value);
+            case DYNAMIC_ISLAND_ENTRANCE_DURATION:
+                return Math.round(value) + " ms";
+            case DYNAMIC_ISLAND_EXPAND_SPEED:
+            case DYNAMIC_ISLAND_COLLAPSE_SPEED:
+            case DYNAMIC_ISLAND_CONTENT_SPEED:
+            case DYNAMIC_ISLAND_SPINNER_SPEED:
+            case DYNAMIC_ISLAND_OVERSHOOT:
+                return String.format("%.2f×", value);
             case CURRENT_TRANSITION:
             case OSD_TRANSITION:
             case NORMAL_SPACING:
@@ -1137,11 +1242,55 @@ public class GuiHudEditor extends GuiScreen {
         }
     }
 
+    /** 主题色块网格：每格显示预设的页面底色与强调色，点击立即切换。 */
+    private void drawThemeChips(int x, int y, int mouseX, int mouseY) {
+        NCMTheme.ThemePreset[] presets = NCMTheme.ThemePreset.values();
+        NCMTheme.ThemePreset current = NCMTheme.getCurrent();
+        for (int i = 0; i < presets.length; i++) {
+            int chipX = x + (i % THEME_CHIP_COLUMNS) * (THEME_CHIP_SIZE + THEME_CHIP_GAP);
+            int chipY = y + (i / THEME_CHIP_COLUMNS) * (THEME_CHIP_SIZE + THEME_CHIP_GAP);
+            boolean selected = presets[i] == current;
+            boolean hover = isInside(mouseX, mouseY, chipX, chipY, THEME_CHIP_SIZE, THEME_CHIP_SIZE);
+            if (selected || hover) {
+                drawRoundedRect(chipX - 1, chipY - 1, THEME_CHIP_SIZE + 2, THEME_CHIP_SIZE + 2, 7,
+                        selected ? 0xFFF4F7FB : 0x66A9BCD6);
+            }
+            drawRoundedRect(chipX, chipY, THEME_CHIP_SIZE, THEME_CHIP_SIZE, 6,
+                    0xFF000000 | presets[i].getColor(NCMScreen.ColorType.GENERIC_BACKGROUND));
+            drawRoundedRect(chipX + 4, chipY + 4, THEME_CHIP_SIZE - 8, THEME_CHIP_SIZE - 8, 4,
+                    0xFF000000 | presets[i].getColor(NCMScreen.ColorType.ACCENT));
+        }
+    }
+
+    /** 命中测试与 {@link #drawThemeChips} 共用同一套网格推导，避免两处走形。 */
+    private static int themeChipIndexAt(int mouseX, int mouseY, int x, int y) {
+        int count = NCMTheme.ThemePreset.values().length;
+        for (int i = 0; i < count; i++) {
+            int chipX = x + (i % THEME_CHIP_COLUMNS) * (THEME_CHIP_SIZE + THEME_CHIP_GAP);
+            int chipY = y + (i / THEME_CHIP_COLUMNS) * (THEME_CHIP_SIZE + THEME_CHIP_GAP);
+            if (isInside(mouseX, mouseY, chipX, chipY, THEME_CHIP_SIZE, THEME_CHIP_SIZE)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int themeGridHeight() {
+        int count = NCMTheme.ThemePreset.values().length;
+        int rows = Math.max(1, (count + THEME_CHIP_COLUMNS - 1) / THEME_CHIP_COLUMNS);
+        return rows * (THEME_CHIP_SIZE + THEME_CHIP_GAP) + 2;
+    }
+
+    private static void applyTheme(NCMTheme.ThemePreset preset) {
+        DownloadDynamicIsland.showTheme(preset == null ? NCMTheme.getCurrentName() : preset.getDisplayName());
+    }
+
     private HudEditorLayout.Metrics getSettingsLayout() {
         return HudEditorLayout.calculate(height, settingsCollapsed, currentExpanded, normalExpanded,
-                islandExpanded, SETTINGS_MARGIN, COLLAPSED_SETTINGS_H, SETTINGS_HEADER_H,
-                SECTION_H, COLOR_ROW_H, SLIDER_ROW_H, CURRENT_SLIDERS.length,
-                NORMAL_SLIDERS.length, ISLAND_SLIDERS.length, PICKER_W);
+                islandExpanded, coverExpanded, themeExpanded, SETTINGS_MARGIN,
+                COLLAPSED_SETTINGS_H, SETTINGS_HEADER_H, SECTION_H, COLOR_ROW_H, SLIDER_ROW_H,
+                CURRENT_SLIDERS.length, NORMAL_SLIDERS.length, ISLAND_SLIDERS.length,
+                themeGridHeight(), PICKER_W);
     }
     private void beginScissor(int x, int y, int w, int h) {
         // GL_SCISSOR rejects negative width/height with GL_INVALID_VALUE (1281). The editor is

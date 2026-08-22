@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.muoniumplayer.core.ncm.RequestUtil;
 import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.dto.Music;
+import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.utils.json.JsonUtils;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
@@ -56,11 +57,18 @@ public final class PersonalFmManager {
     private static final int BATCH_SIZE = 1;
     private static final int RECENT_ID_LIMIT = 24;
     private static final AtomicBoolean LOADING = new AtomicBoolean(false);
+    /**
+     * 后台"预备下一首"独占标志，刻意与 {@link #LOADING} 分开：预备是自动发生的，不能因为它在跑就
+     * 让用户点刷新 / 换模式 / 跳过没反应，反过来也不能让用户操作被一次后台请求饿死。
+     */
+    private static final AtomicBoolean PREFETCHING = new AtomicBoolean(false);
     /** Prevents a failed first request from recursively reopening itself on every panel repaint. */
     private static final AtomicBoolean INITIAL_REQUEST_ISSUED = new AtomicBoolean(false);
     private static final Set<Long> RECENT_SONG_IDS = new LinkedHashSet<>();
 
     private static volatile List<Music> currentBatch = Collections.emptyList();
+    /** 已经接进活队列、但还没播到的下一首；播到它时由 {@link #noteFmTrackStarted(Music)} 清掉。 */
+    private static volatile Music prefetchedNext;
     private static volatile Mode selectedMode = Mode.DEFAULT;
     private static volatile String selectedSubMode = "";
     private static volatile String status = "进入后获取 1 首私人 FM 推荐";
@@ -81,7 +89,13 @@ public final class PersonalFmManager {
     }
 
     public static String getStatus() {
-        return status;
+        Music pending = prefetchedNext;
+        return pending == null ? status : status + " · 已预备下一首";
+    }
+
+    /** 是否已经把下一首推荐预备进了活队列。 */
+    public static boolean hasPrefetchedNext() {
+        return prefetchedNext != null;
     }
 
     public static boolean isLoading() {
@@ -158,19 +172,7 @@ public final class PersonalFmManager {
 
         MultiThreadingUtil.runAsync(() -> {
             try {
-                String apiMode = selectedMode == Mode.AIDJ ? "aidj" : selectedMode.name();
-                RequestUtil.RequestAnswer answer = selectedMode == Mode.DEFAULT && selectedSubMode.isEmpty()
-                        ? CloudMusicApi.personalFm()
-                        : CloudMusicApi.personalFmMode(apiMode, selectedSubMode, BATCH_SIZE);
-                if (answer == null || answer.getStatus() != 200) {
-                    throw new IllegalStateException("接口响应状态 " + (answer == null ? "未知" : answer.getStatus()));
-                }
-
-                List<Music> loaded = parseSongs(answer.toJsonObject());
-                if (loaded.isEmpty()) {
-                    throw new IllegalStateException("未返回可播放的私人 FM 歌曲");
-                }
-
+                List<Music> loaded = fetchRecommendations();
                 currentBatch = Collections.unmodifiableList(loaded);
                 status = selectedMode.getDisplayName() + " · " + loaded.size() + " 首推荐";
                 // playFm() establishes the isolated FM session itself, so first entry must not
@@ -186,6 +188,101 @@ public final class PersonalFmManager {
                 notifyUi();
             }
         });
+    }
+
+    /**
+     * 按当前选中的模式拉一次推荐并解析。请求失败、响应状态异常、没有可播放曲目都直接抛出，由调用方
+     * 决定怎么反馈。抽出来给"用户触发的整批请求"和"后台预备下一首"共用，避免两条路径的接口参数和
+     * 解析行为日后慢慢分叉。
+     */
+    private static List<Music> fetchRecommendations() throws Exception {
+        String apiMode = selectedMode == Mode.AIDJ ? "aidj" : selectedMode.name();
+        RequestUtil.RequestAnswer answer = selectedMode == Mode.DEFAULT && selectedSubMode.isEmpty()
+                ? CloudMusicApi.personalFm()
+                : CloudMusicApi.personalFmMode(apiMode, selectedSubMode, BATCH_SIZE);
+        if (answer == null || answer.getStatus() != 200) {
+            throw new IllegalStateException("接口响应状态 " + (answer == null ? "未知" : answer.getStatus()));
+        }
+
+        List<Music> loaded = parseSongs(answer.toJsonObject());
+        if (loaded.isEmpty()) {
+            throw new IllegalStateException("未返回可播放的私人 FM 歌曲");
+        }
+        return loaded;
+    }
+
+    /**
+     * 私人 FM 的"预备下一首"：当前这首还在放的时候就把下一首拉回来，接到活队列尾部。
+     *
+     * <p>私人 FM 一次只拉一首（{@link #BATCH_SIZE}），旧流程是"当前这首播完 → 才去请求下一首 → 拿到
+     * 之后 {@link CloudMusic#playFm(List, int)} 重开一条播放线程"。中间必然横着一次网络请求加一整轮
+     * 下载解码的静音，而且因为队列里从来只有正在播的这一首，无缝切换（automix）预测下一首时永远拿到
+     * -1，在私人 FM 下等于完全没生效。提前接上队列之后，automix 能像普通歌单那样提前预解码并交接，
+     * 手动下一首也走同一条捷径。</p>
+     *
+     * <p>纯预备动作，边界刻意收得很紧：不提交 trash（那只属于用户点"跳过"）、不起播、不改面板上正在
+     * 显示的推荐、失败也不覆盖 {@link #getStatus()} 里用户能看到的文案。用户触发的请求（刷新 / 换模式
+     * / 跳过）正在跑时直接让路，避免两条路径抢同一份 {@code currentBatch}。</p>
+     *
+     * @param expectedQueue 发起预备时的活队列实例，回来时用它校验用户没有退出 FM 或换掉队列
+     */
+    public static void prefetchNextAsync(List<Music> expectedQueue) {
+        if (expectedQueue == null || !CloudMusic.isPersonalFmActive()) return;
+        if (prefetchedNext != null || LOADING.get()) return;
+        if (CloudMusic.profile == null || CloudMusic.profile.getId() <= 0L) return;
+        if (!PREFETCHING.compareAndSet(false, true)) return;
+
+        MultiThreadingUtil.runAsync(() -> {
+            try {
+                final Music candidate = fetchRecommendations().get(0);
+                // 队列改动统一回主线程做：界面线程正在遍历同一个 ArrayList。
+                MultiThreadingUtil.runOnMainThread(() -> acceptPrefetchedTrack(expectedQueue, candidate));
+            } catch (Throwable throwable) {
+                // 预备失败不打扰用户：这首播完之后仍会走旧的 requestNextBatchAsync() 兜底路径。
+                System.err.println("[NCM/FM] 预备下一首失败：" + safeMessage(throwable));
+            } finally {
+                PREFETCHING.set(false);
+            }
+        });
+    }
+
+    /** 主线程：把预备好的曲目接到活队列尾部。接不上就当没预备过，旧兜底路径照旧生效。 */
+    private static void acceptPrefetchedTrack(List<Music> expectedQueue, Music candidate) {
+        if (candidate == null || !CloudMusic.appendPrefetchedPersonalFmTrack(expectedQueue, candidate)) {
+            return;
+        }
+        prefetchedNext = candidate;
+        DownloadDynamicIsland.showPersonalFmPrefetched(candidate.getName());
+        NCMScreen.getInstance().reloadCurrentPanel();
+    }
+
+    /**
+     * 由播放线程在一首 FM 曲目真正开始出声时调用，普通起播与无缝交接两条路径都会走到。
+     *
+     * <p>做两件事：把已经消费掉的"预备下一首"标记清掉，让下一轮预备可以开始；把面板上显示的推荐换成
+     * 此刻真正在播的这一首。有了预备之后 FM 的推进不再每首都经过 {@link #requestBatch}，所以这里必须
+     * 补上原本由那次请求顺带完成的界面同步，否则私人 FM 页面会一直停在上一首。</p>
+     */
+    public static void noteFmTrackStarted(Music song) {
+        if (song == null || !CloudMusic.isPersonalFmActive()) return;
+
+        Music pending = prefetchedNext;
+        if (pending != null && pending.getId() == song.getId()) {
+            prefetchedNext = null;
+        }
+
+        List<Music> shown = currentBatch;
+        if (shown.size() == 1 && shown.get(0) != null && shown.get(0).getId() == song.getId()) {
+            return;
+        }
+        currentBatch = Collections.singletonList(song);
+        status = selectedMode.getDisplayName() + " · 正在播放推荐";
+        notifyUi();
+    }
+
+    /** 换歌单 / 退出 FM / 重开 FM 时调用：预备状态跟着旧的活队列一起作废。 */
+    public static void clearPrefetchState() {
+        prefetchedNext = null;
     }
 
     private static List<Music> parseSongs(JsonObject root) {

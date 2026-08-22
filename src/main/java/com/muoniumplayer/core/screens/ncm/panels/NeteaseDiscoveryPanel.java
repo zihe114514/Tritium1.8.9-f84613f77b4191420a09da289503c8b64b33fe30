@@ -8,6 +8,7 @@ import com.muoniumplayer.core.ncm.api.CloudMusicApi;
 import com.muoniumplayer.core.ncm.music.CadenceMusicService;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.MusicPlatform;
+import com.muoniumplayer.core.ncm.music.NeteaseRecentPlaysService;
 import com.muoniumplayer.core.ncm.music.dto.Music;
 import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.ui.container.ScrollPanel;
@@ -384,46 +385,12 @@ public final class NeteaseDiscoveryPanel extends NCMPanel {
     }
 
 
+    /**
+     * 最近播放的解析已经搬到 {@link NeteaseRecentPlaysService}：搜索结果起播也要用同一份数据，
+     * 两处各写一份解析迟早会分叉。这里保留一层薄封装，本页的调用点不必关心它在哪。
+     */
     private static List<Music> parseSongsFromRecentResponse(JsonObject root) {
-        List<Music> result = new ArrayList<>();
-        collectRecentSongs(root, result);
-        return result;
-    }
-
-    private static void collectRecentSongs(JsonElement element, List<Music> result) {
-        if (element == null || element.isJsonNull() || result.size() >= 100) return;
-        try {
-            if (element.isJsonObject()) {
-                JsonObject object = element.getAsJsonObject();
-                JsonObject song = object(object, "song");
-                if (song != null && number(song, "id") > 0) {
-                    List<Music> parsed = parseSongs(singleton(song));
-                    if (!parsed.isEmpty()) result.add(parsed.get(0));
-                    return;
-                }
-                if (number(object, "id") > 0 && object.has("name")) {
-                    List<Music> parsed = parseSongs(singleton(object));
-                    if (!parsed.isEmpty()) result.add(parsed.get(0));
-                    return;
-                }
-                for (JsonElement child : object.entrySet().stream().map(java.util.Map.Entry::getValue).collect(java.util.stream.Collectors.toList())) {
-                    collectRecentSongs(child, result);
-                    if (result.size() >= 100) return;
-                }
-            } else if (element.isJsonArray()) {
-                for (JsonElement child : element.getAsJsonArray()) {
-                    collectRecentSongs(child, result);
-                    if (result.size() >= 100) return;
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-    }
-
-    private static JsonArray singleton(JsonObject object) {
-        JsonArray array = new JsonArray();
-        array.add(object);
-        return array;
+        return NeteaseRecentPlaysService.parseRecentSongs(root, NeteaseRecentPlaysService.MAX_RECENT_SONGS);
     }
 
     private static List<Music> parseSongs(JsonArray songs) {
