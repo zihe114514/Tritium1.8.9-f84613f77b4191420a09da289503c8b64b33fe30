@@ -20,6 +20,7 @@ import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.StencilClipManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
+import com.muoniumplayer.core.screens.ncm.LyricDuetGroups;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
 import com.muoniumplayer.core.settings.ClientSettings;
 import com.muoniumplayer.core.settings.HudConfig;
@@ -288,17 +289,40 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
                 return;
             }
 
-            LyricLine currentLine = CloudMusic.lyrics.get(currentIndex);
-            LyricLayout currentLayout = createLyricLayout(currentLine);
+            // A duet section is two (rarely three) lines whose timelines genuinely overlap. All of
+            // them are the current line at once, so they are laid out and centered as one block:
+            // highlighting only one of them makes the other look already-sung, and the "current"
+            // line would visibly bounce between the two singers.
+            int groupStart = LyricDuetGroups.groupStart(CloudMusic.lyrics, currentIndex);
+            int groupEnd = LyricDuetGroups.groupEnd(CloudMusic.lyrics, currentIndex);
+            int groupSize = groupEnd - groupStart + 1;
+
+            LyricLayout[] groupLayouts = new LyricLayout[groupSize];
+            double blockHeight = 0.0;
+            double blockAdvance = 0.0;
+            for (int i = 0; i < groupSize; i++) {
+                groupLayouts[i] = createLyricLayout(CloudMusic.lyrics.get(groupStart + i));
+                // The last row contributes its glyph height only: its trailing line spacing is not
+                // part of what the eye reads as the block.
+                blockHeight = blockAdvance + groupLayouts[i].visualHeight;
+                blockAdvance += groupLayouts[i].rowHeight;
+            }
+
             double viewportTop = wpsInterface.getY();
             double viewportBottom = viewportTop + wpsInterface.getHeight();
             // Keep the active lyric block centered. This is especially important when
             // a narrow HUD wraps it into multiple physical text rows.
-            double currentTop = viewportTop + (wpsInterface.getHeight() - currentLayout.visualHeight) * .5;
+            double blockTop = viewportTop + (wpsInterface.getHeight() - blockHeight) * .5;
 
             if (singleLineMode) {
-                renderLyricLine(currentLine, currentIndex, currentIndex, currentTop,
-                        currentLayout, songProgress);
+                // Single-line mode still shows a whole duet: the point of the mode is to hide the
+                // lines that are not being sung, and in a duet both of them are.
+                double y = blockTop;
+                for (int i = 0; i < groupSize; i++) {
+                    renderLyricLine(CloudMusic.lyrics.get(groupStart + i), true, y,
+                            groupLayouts[i], songProgress);
+                    y += groupLayouts[i].rowHeight;
+                }
                 return;
             }
 
@@ -306,33 +330,36 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
             // visible. Lines just outside the clip are kept in the layout pass so their
             // motion and edge fade remain continuous while scrolling.
             double fadePadding = getEdgeFadeSize();
-            double y = currentTop;
-            for (int i = currentIndex - 1; i >= 0; i--) {
+            double y = blockTop;
+            for (int i = groupStart - 1; i >= 0; i--) {
                 LyricLayout layout = createLyricLayout(CloudMusic.lyrics.get(i));
                 y -= layout.rowHeight;
                 if (y + layout.visualHeight < viewportTop - fadePadding) {
                     break;
                 }
-                renderLyricLine(CloudMusic.lyrics.get(i), i, currentIndex, y, layout, songProgress);
+                renderLyricLine(CloudMusic.lyrics.get(i), false, y, layout, songProgress);
             }
 
-            renderLyricLine(currentLine, currentIndex, currentIndex, currentTop,
-                    currentLayout, songProgress);
+            y = blockTop;
+            for (int i = 0; i < groupSize; i++) {
+                renderLyricLine(CloudMusic.lyrics.get(groupStart + i), true, y,
+                        groupLayouts[i], songProgress);
+                y += groupLayouts[i].rowHeight;
+            }
 
-            y = currentTop + currentLayout.rowHeight;
-            for (int i = currentIndex + 1; i < CloudMusic.lyrics.size(); i++) {
+            for (int i = groupEnd + 1; i < CloudMusic.lyrics.size(); i++) {
                 if (y > viewportBottom + fadePadding) {
                     break;
                 }
                 LyricLine line = CloudMusic.lyrics.get(i);
                 LyricLayout layout = createLyricLayout(line);
-                renderLyricLine(line, i, currentIndex, y, layout, songProgress);
+                renderLyricLine(line, false, y, layout, songProgress);
                 y += layout.rowHeight;
             }
         }
     }
 
-    private void renderLyricLine(LyricLine line, int index, int currentIndex,
+    private void renderLyricLine(LyricLine line, boolean isCurrent,
                                  double targetY, LyricLayout layout, float songProgress) {
         double animatedY = updateLineY(line, targetY);
         double edgeAlpha = calculateEdgeAlpha(animatedY, layout.visualHeight);
@@ -343,8 +370,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         LyricRenderInfo renderInfo = new LyricRenderInfo();
         renderInfo.yPosition = animatedY;
         renderInfo.visibilityAlpha = edgeAlpha;
-        updateLyricAnimation(line, index == currentIndex, edgeAlpha);
-        renderLyricText(line, renderInfo, index, currentIndex, layout, songProgress);
+        updateLyricAnimation(line, isCurrent, edgeAlpha);
+        renderLyricText(line, renderInfo, isCurrent, layout, songProgress);
     }
 
     private double updateLineY(LyricLine line, double targetY) {
@@ -421,9 +448,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     }
 
     private void renderLyricText(LyricLine line, LyricRenderInfo renderInfo,
-                                 int index, int currentIndex, LyricLayout layout,
+                                 boolean isCurrent, LyricLayout layout,
                                  float songProgress) {
-        boolean isCurrent = index == currentIndex;
         // A KaraokeLayout is created only from parsed word-level timing. Whenever that
         // timing is available the current OSD line must use the one KTV renderer; an
         // optional legacy effect must never be able to replace its left-to-right fill.

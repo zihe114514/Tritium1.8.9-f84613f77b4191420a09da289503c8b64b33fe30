@@ -193,6 +193,13 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 lyric.computeHeight(width);
             }
 
+            // A duet is anchored as one block: its first line leads, and the block is lifted by
+            // half of the extra rows so the pair straddles the anchor instead of pushing the
+            // second singer out of the reading position.
+            int groupEnd = LyricDuetGroups.groupEnd(CloudMusic.lyrics, anchorIndex);
+            anchorIndex = LyricDuetGroups.groupStart(CloudMusic.lyrics, anchorIndex);
+            anchorY += groupAnchorLift(anchorIndex, groupEnd);
+
             setLyricPosition(CloudMusic.lyrics.get(anchorIndex), anchorY);
 
             double offsetY = anchorY;
@@ -209,6 +216,18 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 offsetY += lyric.height + getLyricLineSpacing();
             }
         }
+    }
+
+    /**
+     * 把一个对唱组整体抬起的偏移量：组内除第一行以外的行占掉多少高度，就抬起其一半，让整组
+     * 以锚点为中心，而不是把第二位歌手挤到阅读位置之外。独唱行返回 0。
+     */
+    private static double groupAnchorLift(int startIndex, int endIndex) {
+        double extra = 0.0;
+        for (int i = startIndex + 1; i <= endIndex && i < CloudMusic.lyrics.size(); i++) {
+            extra += CloudMusic.lyrics.get(i).height + getLyricLineSpacing();
+        }
+        return -extra * .5;
     }
 
     private static void setLyricPosition(LyricLine lyric, double positionY) {
@@ -348,11 +367,18 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             LyricLine currentLyric = displayedCurrentLyric;
             int indexOf = CloudMusic.lyrics.indexOf(currentLyric);
 
-            boolean isCurrentLyric = lyric == currentLyric;
+            // 对唱段落里同组的行一起算作当前行：两位歌手同时在唱，只点亮一行会让另一行看起来
+            // 像已经唱完或还没开始。
+            boolean isCurrentLyric = LyricDuetGroups.isActive(lyric, currentLyric);
             lyric.alpha = Interpolations.interpolate(lyric.alpha, isCurrentLyric ? 1f : 0f, isCurrentLyric ? 0.1f : .05f);
             boolean isHovering = isHovered(mouseX, mouseY - scrollOffset, lyricRenderOffsetX, lyric.posY, lyricsWidth, lyric.height);
             lyric.hoveringAlpha = Interpolations.interpolate(lyric.hoveringAlpha, isHovering ? 1f : 0f, 0.2f);
-            lyric.blurAlpha = Interpolations.interpolate(lyric.blurAlpha, !hoveringLyrics ? Math.min(1f, Math.abs(k - indexOf) * .85f) : 0f, 0.05f);
+            // 失焦模糊按到"活跃块"的距离算，而不是到单一当前行的距离：对唱组内的行距离为 0，
+            // 否则同时点亮的另一位歌手会被糊掉。
+            int groupFirst = LyricDuetGroups.groupStart(CloudMusic.lyrics, indexOf);
+            int groupLast = LyricDuetGroups.groupEnd(CloudMusic.lyrics, indexOf);
+            int activeDistance = k < groupFirst ? groupFirst - k : (k > groupLast ? k - groupLast : 0);
+            lyric.blurAlpha = Interpolations.interpolate(lyric.blurAlpha, !hoveringLyrics ? Math.min(1f, activeDistance * .85f) : 0f, 0.05f);
 
             if (isHovering) {
                 CursorUtils.setOverride(CursorUtils.HAND);
@@ -414,7 +440,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                         FontManager.pf65bold.drawString(word.word, renderX, renderY, hexColor(1, 1, 1, alpha * .5f));
                     }
 
-                    if (CloudMusic.lyrics.indexOf(currentLyric) - k <= 1) {
+                    if (isCurrentLyric || CloudMusic.lyrics.indexOf(currentLyric) - k <= 1) {
                         double progress = word.getProgress(songProgress);
                         double easedProgress = smoothKaraokeProgress(progress);
                         double stringWidthD = FontManager.pf65bold.getStringWidthD(word.word);
@@ -639,8 +665,16 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         int idxCurrent = CloudMusic.lyrics.indexOf(currentLyric);
 
         if (idxCurrent < 0 || idxCurrent >= CloudMusic.lyrics.size()) return;
-//
-        double offsetY = posY + height * lyricFraction()/* - (idxCurrent > 0 ? CloudMusic.lyrics.get(idxCurrent - 1).height : 0)*/;
+
+        // 对唱组以第一行为锚，整组抬高半个额外行高；组内各行的高度必须先算出来，否则抬升量为 0。
+        int idxGroupEnd = LyricDuetGroups.groupEnd(CloudMusic.lyrics, idxCurrent);
+        idxCurrent = LyricDuetGroups.groupStart(CloudMusic.lyrics, idxCurrent);
+        for (int i = idxCurrent; i <= idxGroupEnd && i < CloudMusic.lyrics.size(); i++) {
+            CloudMusic.lyrics.get(i).computeHeight(width);
+        }
+        double anchorLift = groupAnchorLift(idxCurrent, idxGroupEnd);
+
+        double offsetY = posY + height * lyricFraction() + anchorLift;
 
         synchronized (CloudMusic.lyrics) {
             List<LyricLine> subList = CloudMusic.lyrics.subList(0, idxCurrent);
@@ -660,7 +694,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                 lyric.posY = lyric.spring.getCurrentPosition();
             }
 
-            offsetY = posY + height * lyricFraction();
+            offsetY = posY + height * lyricFraction() + anchorLift;
             List<LyricLine> list = CloudMusic.lyrics.subList(idxCurrent, CloudMusic.lyrics.size());
             int oobCounter = 0;
             for (LyricLine lyric : list) {

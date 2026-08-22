@@ -47,6 +47,12 @@ public class LyricLine {
     public boolean renderEmphasizes = true;
     public boolean isBreakLine = false;
 
+    /**
+     * 对唱组编号，{@code -1} 表示独唱行。由 {@link LyricDuetGroups#mark(java.util.List)} 在歌词
+     * 提交时写入一次：同组的行时间轴真正重叠，渲染层要把它们当作同一个当前行整块点亮。
+     */
+    public int duetGroup = -1;
+
     public final SpringAnimation spring = new SpringAnimation(new SpringParams(.9, 15, 90, false));
 
     // MusicLyricsWidgets fields

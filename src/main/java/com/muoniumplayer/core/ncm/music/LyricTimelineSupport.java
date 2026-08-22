@@ -1,5 +1,6 @@
 package com.muoniumplayer.core.ncm.music;
 
+import com.muoniumplayer.core.screens.ncm.LyricDuetGroups;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
 
 import java.util.ArrayList;
@@ -30,6 +31,9 @@ final class LyricTimelineSupport {
 
         boolean haveNoWords = hasNoWords(timeline);
         addLongBreaks(timeline, haveNoWords);
+        // Overlapping lines only mean anything once the timeline is final: the break lines inserted
+        // above take part in the ordering, and a duet group must never straddle one.
+        LyricDuetGroups.mark(timeline);
         return new PreparedTimeline(timeline, haveNoWords);
     }
 
