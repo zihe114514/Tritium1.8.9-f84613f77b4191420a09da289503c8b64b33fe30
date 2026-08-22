@@ -1,0 +1,10 @@
+key.categories.muonium=MuoniumPlayer
+key.muonium.open_music=打开音乐界面
+key.muonium.edit_hud=编辑 HUD 位置
+
+key.muonium.previous_track=上一曲
+key.muonium.next_track=下一曲
+
+key.muonium.volume_up=增加音乐音量
+key.muonium.volume_down=降低音乐音量
+key.muonium.toggle_pause=暂停 / 继续播放

@@ -1,0 +1,10 @@
+key.categories.muonium=MuoniumPlayer
+key.muonium.open_music=Open Music GUI
+key.muonium.edit_hud=Edit HUD Position
+
+key.muonium.previous_track=Previous Track
+key.muonium.next_track=Next Track
+
+key.muonium.volume_up=Increase Music Volume
+key.muonium.volume_down=Decrease Music Volume
+key.muonium.toggle_pause=Pause / Resume Playback
