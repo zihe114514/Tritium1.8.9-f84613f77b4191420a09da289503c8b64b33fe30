@@ -1020,6 +1020,7 @@ public class CloudMusic implements SharedConstants {
                 // smooth ramp and already bound to the session/cancellation checks above.
                 driveAutomixFade();
                 maybeArmNextTrack(activePlayer);
+                maybePreRollArmedDeck(activePlayer);
                 if (tryAutomixHandover(activePlayer)) {
                     automixHandover = true;
                     return;
@@ -1361,6 +1362,23 @@ public class CloudMusic implements SharedConstants {
         private static final long ARM_RETRY_MILLIS = 20_000L;
         /** Ramp used when the handover fires with (almost) none of the outgoing track left. */
         private static final long LATE_FIRE_FADE_MILLIS = 700L;
+        /**
+         * How long before the planned handover the armed deck is started, silently.
+         *
+         * <p>A deck streams its PCM from disk through a small sliding window that is refilled from
+         * the JSyn engine thread, and starting one also adds units to the running synth and rewires
+         * its circuit. Doing that at the instant of the crossfade puts a file seek, a read and a
+         * graph change inside the audio callback that is simultaneously serving the outgoing deck -
+         * which is heard as a hitch exactly where the blend is supposed to be seamless. So the deck
+         * is started early at full silence, and the seam itself only moves gain.</p>
+         */
+        private static final long PRE_ROLL_MILLIS = 400L;
+
+        /**
+         * How far the outgoing track may fall behind the pre-roll point before the silent deck counts
+         * as stale. Only a deliberate seek moves it that far; ordinary tick jitter is 10 ms.
+         */
+        private static final long PRE_ROLL_REWIND_SLACK_MILLIS = 500L;
 
         /** The next track, fully decoded and waiting silently on the idle deck. */
         private static final class ArmedTrack {
@@ -1373,6 +1391,12 @@ public class CloudMusic implements SharedConstants {
             /** Queue revision the prediction was made under; a newer one means it predicted wrong. */
             private final long queueRevision;
             private volatile AutomixPlan plan;
+            /** Silent lead-in actually available, i.e. min(PRE_ROLL_MILLIS, plan.incomingCueMillis). */
+            private volatile long preRollMillis;
+            /** The deck is already sounding (silently) and must not be cued or started again. */
+            private volatile boolean preRolled;
+            /** True while the pre-rolled deck is held paused because playback itself is paused. */
+            private volatile boolean preRollPaused;
 
             private ArmedTrack(Music song, File file, AudioPlayer deck, int index, long generation,
                                long queueRevision) {
@@ -1554,6 +1578,13 @@ public class CloudMusic implements SharedConstants {
                         estimateLastVocalEndMillis(ownedPlayer));
                 if (track.plan == null || !armStillValid(armGeneration, armRevision)) return;
 
+                // Everything a start needs except making a sound, done here on the arming thread:
+                // cue the reader, wire the low shelf, pull the first streaming window off the disk.
+                track.preRollMillis = Math.min(PRE_ROLL_MILLIS, Math.max(0L, track.plan.incomingCueMillis));
+                deck.setBassGainDb(track.plan.incomingBassDb(0.0));
+                deck.prepareStart(track.plan.incomingCueMillis - track.preRollMillis);
+                if (!armStillValid(armGeneration, armRevision)) return;
+
                 armed = track;
                 deck = null;   // ownership handed to the armed track
                 System.out.println("[Automix] armed " + song.getName() + " · " + track.plan.summary);
@@ -1601,6 +1632,75 @@ public class CloudMusic implements SharedConstants {
             }
         }
 
+        /**
+         * Starts the armed deck at full silence shortly before the planned handover, so the seam
+         * itself only moves gain and nothing has to be allocated, cued, rewired or read from disk
+         * while both decks are being rendered. This mirrors what the reference implementation does
+         * with its arm/release split, adapted to a sample-reader engine.
+         *
+         * <p>The silent deck is kept in step with the pause state: left running it would sail past
+         * the cue point the plan aligned to a bar line while the listener has playback stopped.</p>
+         */
+        private void maybePreRollArmedDeck(AudioPlayer activePlayer) {
+            ArmedTrack track = armed;
+            if (track == null || track.plan == null || track.deck == null) return;
+            if (activePlayer == null || !activePlayer.isUsable()) return;
+
+            AudioPlayer deck = track.deck;
+            boolean playbackPaused = activePlayer.isPausing() || !playing.get();
+            if (track.preRolled) {
+                if (playbackPaused && !track.preRollPaused) {
+                    if (!deck.isPausing()) deck.pause();
+                    track.preRollPaused = true;
+                } else if (!playbackPaused && track.preRollPaused) {
+                    deck.startPrepared();
+                    track.preRollPaused = false;
+                }
+                // A seek backwards moves the handover far away again while this deck keeps running:
+                // by the time it finally fires it would enter the song at the wrong place, or have
+                // played itself out silently. Put it back on its cue and pre-roll again later.
+                long current = (long) activePlayer.getCurrentTimeMillis();
+                if (deck.isFinished() || current + PRE_ROLL_REWIND_SLACK_MILLIS
+                        < track.plan.fireMillis - track.preRollMillis) {
+                    rearmPreRoll(track, deck);
+                }
+                return;
+            }
+            if (playbackPaused || !deck.isPrepared()) return;
+            // Nothing to pre-roll into: the incoming track enters at (or almost at) its own start, so
+            // running it early would swallow the first moments of the song. It still starts warm.
+            if (track.preRollMillis <= 0L) return;
+            if (!armStillValid(track.generation, track.queueRevision)) return;
+
+            long position = (long) activePlayer.getCurrentTimeMillis();
+            if (position < track.plan.fireMillis - track.preRollMillis) return;
+
+            try {
+                deck.setVolume(CloudMusic.getVolume());
+                deck.setFadeGain(0.0f);
+                deck.setBassGainDb(track.plan.incomingBassDb(0.0));
+                deck.startPrepared();
+                track.preRolled = true;
+            } catch (Throwable failure) {
+                System.err.println("[Automix] pre-roll failed for " + track.song.getName() + ": "
+                        + failure.getMessage());
+            }
+        }
+
+        /** Puts an already pre-rolled deck back to silence at its cue so it can be pre-rolled again. */
+        private void rearmPreRoll(ArmedTrack track, AudioPlayer deck) {
+            try {
+                if (!deck.isPausing()) deck.pause();
+                deck.setFadeGain(0.0f);
+                deck.prepareStart(track.plan.incomingCueMillis - track.preRollMillis);
+            } catch (Throwable failure) {
+                System.err.println("[Automix] unable to re-cue the pre-rolled deck for "
+                        + track.song.getName() + ": " + failure.getMessage());
+            } finally {
+                track.preRolled = false;
+                track.preRollPaused = false;
+            }
+        }
         /**
          * Fires the handover once the outgoing track reaches the planned point, or immediately if it
          * already ended (a late arm still beats a silent gap).
@@ -1674,13 +1774,23 @@ public class CloudMusic implements SharedConstants {
                     return false;
                 }
                 incoming.setVolume(CloudMusic.getVolume());
-                incoming.setFadeGain(plan.incomingGain(0.0));
-                // Set before playFrom(): the deck attaches its low shelf as it starts, and picks up
-                // this value without slewing, so the incoming track never gets one loud bass hit in
-                // before the swap takes hold.
+                // Set before the deck sounds: it picks the value up without slewing, so the incoming
+                // track never gets one loud bass hit in before the swap takes hold.
                 incoming.setBassGainDb(plan.incomingBassDb(0.0));
+                incoming.setFadeGain(plan.incomingGain(0.0));
                 try {
-                    incoming.playFrom(plan.incomingCueMillis);
+                    if (track.preRolled) {
+                        // Already sounding at full silence since the pre-roll: the gain line above is
+                        // the entire handover, which is what makes the seam inaudible.
+                        if (track.preRollPaused) {
+                            incoming.startPrepared();
+                            track.preRollPaused = false;
+                        }
+                    } else if (incoming.isPrepared()) {
+                        incoming.startPrepared();
+                    } else {
+                        incoming.playFrom(plan.incomingCueMillis);
+                    }
                 } catch (Throwable startFailure) {
                     System.err.println("[Automix] incoming deck failed to start: " + startFailure.getMessage());
                     closeQuietly(incoming);

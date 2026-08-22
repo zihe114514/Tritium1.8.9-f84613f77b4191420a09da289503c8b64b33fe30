@@ -48,6 +48,9 @@ public class AudioPlayer {
      */
     private boolean closed;
 
+    /** Set by {@link #prepareStart(float)}: the reader is cued, the shelf is wired and the window warm. */
+    private volatile boolean prepared;
+
     public AudioPlayer(File file) {
         finished = false;
         this.player = loadUsableSoundFile(file);
@@ -67,6 +70,7 @@ public class AudioPlayer {
         this.player = next;
         finished = false;
         this.closed = false;
+        this.prepared = false;
         this.bassGainDb = 0.0f;
         this.playbackRate = 1.0f;
         this.sourceFile = file;
@@ -128,22 +132,108 @@ public class AudioPlayer {
         if (!isUsable())
             return;
 
-        attachBassSwap();
-
         finished = false;
-        float total = getTotalTimeMillis();
-        float safeMillis = total <= 0.0f
-                ? 0.0f
-                : Math.max(0.0f, Math.min(Math.max(0.0f, total - 50.0f), millis));
         try {
             this.player.amp(effectiveAmp());
-            if (safeMillis > 0.0f) this.player.cue(safeMillis / 1000F);
+            cueTo(millis);
+            // After cue(), never before: AudioSample.cue() goes through stop(), which rips the effect
+            // out of the circuit and never puts it back (JSyn's Processing wrapper has its own TODO
+            // about that). Attaching first meant the incoming deck of a blend played completely
+            // unfiltered - both tracks kept their full low end and the seam thumped.
+            attachBassSwap();
             this.player.play();
             this.player.amp(effectiveAmp());
         } catch (ChannelMismatchException mismatch) {
             throw mismatch;
         } catch (RuntimeException ignored) {
             // A decoder can become invalid between validation and playback.
+        }
+    }
+
+    /**
+     * Does everything a start needs <em>except</em> making a sound: cues the reader, wires the automix
+     * low shelf into the (idle) circuit and pulls the first streaming window off the disk.
+     *
+     * <p>This exists because of how a deck actually reads its audio. The decoded WAV is not held in
+     * RAM; a {@code RandomAccessFile} is read through a 4096-sample sliding window that is refilled
+     * <b>from the JSyn engine thread</b>. A deck that is started at the moment of a crossfade therefore
+     * pays for a file seek, an 8 KB read and a graph rewire inside the audio callback, right when the
+     * other deck also wants to be served - which is exactly the hitch a "seamless" handover must not
+     * have. Doing all of it on the arming thread, seconds early, leaves only the amplitude ramp for the
+     * seam itself.</p>
+     */
+    public void prepareStart(float millis) {
+        if (!isUsable()) return;
+        try {
+            finished = false;
+            this.player.amp(0.0f);
+            float cued = cueTo(millis);
+            attachBassSwap();
+            primeStreamWindow(cued);
+            this.prepared = true;
+        } catch (RuntimeException ignored) {
+            this.prepared = false;
+        }
+    }
+
+    /**
+     * Starts a deck made ready by {@link #prepareStart(float)}. Deliberately does not cue: cueing again
+     * would stop the reader, strip the low shelf back out and throw away the primed window.
+     */
+    public void startPrepared() {
+        if (!isUsable()) return;
+        if (!this.prepared) {
+            play();
+            return;
+        }
+        finished = false;
+        try {
+            this.player.amp(effectiveAmp());
+            attachBassSwap();   // idempotent; the shelf normally survives from prepareStart()
+            this.player.play();
+            this.player.amp(effectiveAmp());
+        } catch (ChannelMismatchException mismatch) {
+            throw mismatch;
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    /** True once {@link #prepareStart(float)} has cued and warmed this deck. */
+    public boolean isPrepared() {
+        return this.prepared;
+    }
+
+    /** Clamps to the sample and cues the reader. Returns the position actually cued to, in millis. */
+    private float cueTo(float millis) {
+        float total = getTotalTimeMillis();
+        float safeMillis = total <= 0.0f
+                ? 0.0f
+                : Math.max(0.0f, Math.min(Math.max(0.0f, total - 50.0f), millis));
+        if (safeMillis > 0.0f) this.player.cue(safeMillis / 1000F);
+        return safeMillis;
+    }
+
+    /**
+     * Forces the streaming window to the given position so the first read does not happen inside the
+     * audio callback. One sample is enough: the reader fills a whole window around the index it is
+     * asked for. Only ever called on a deck that is not sounding - moving the window of a playing
+     * sample is what used to crash the engine thread.
+     */
+    private void primeStreamWindow(float millis) {
+        try {
+            int channels = Math.max(1, this.player.channels());
+            int sampleRate = this.player.sampleRate();
+            if (sampleRate <= 0) return;
+            long frame = (long) ((millis / 1000.0f) * sampleRate);
+            int frames = this.player.frames();
+            if (frames <= 0) return;
+            if (frame < 0L) frame = 0L;
+            if (frame > frames - 1L) frame = frames - 1L;
+            long index = frame * channels;
+            if (index > Integer.MAX_VALUE - channels) return;
+            this.player.read((int) index);
+        } catch (RuntimeException ignored) {
+            // Priming is an optimisation; a decoder that refuses it still plays.
         }
     }
 
@@ -422,11 +512,11 @@ public class AudioPlayer {
         if (soundFile == null)
             return;
 
-        try {
-            if (isUsable(soundFile))
-                soundFile.jump(0.0f);
-        } catch (RuntimeException ignored) {
-        }
+        // Deliberately no jump(0) here. AudioSample.jump() clears the data queue and then *starts*
+        // playback: it adds the reader back into the running engine and queues a fresh data command,
+        // only for the stop() below to tear it down again. Harmless when a track ends on its own,
+        // but the outgoing deck of a crossfade is released while the incoming track is audible, so
+        // that pointless voice lands exactly on the seam.
         try {
             soundFile.stop();
         } catch (RuntimeException ignored) {
