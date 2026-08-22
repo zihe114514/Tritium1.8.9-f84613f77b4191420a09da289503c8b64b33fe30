@@ -59,6 +59,10 @@ public class ThemedTextureIconWidget extends AbstractWidget<ThemedTextureIconWid
         if (iconLocation != null) {
             try {
                 TextureManager.getInstance().bindTexture(iconLocation);
+                // 这些图标是 96×96 的画布，要缩进 ~20 逻辑像素的按钮里（约 4.8 倍缩小）。
+                // DynamicTexture 默认走 GL_NEAREST，那样 3 像素粗的描边会被整段抽掉，
+                // 图标看上去缺边少角、也比相邻的图标字体小一圈。改成线性采样后描边还在。
+                RenderSystem.linearFilter();
                 texture = TextureManager.getInstance().getTexture(iconLocation);
             } catch (Throwable ignored) {
                 // A resource pack or an outdated development jar can omit an

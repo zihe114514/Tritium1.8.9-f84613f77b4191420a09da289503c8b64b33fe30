@@ -14,6 +14,7 @@ public enum HudSetting {
     CURRENT_BLOOM("晕染程度", 0.00f, 1.00f),
     CURRENT_TRANSITION("染色过渡", 4.00f, 32.00f),
     CURRENT_BREATH("呼吸幅度", 0.00f, 0.08f),
+    FULLSCREEN_GLOW("全屏逐字发光", 0.00f, 1.00f),
     OSD_TRANSITION("OSD填涂过渡", 4.00f, 32.00f),
     OSD_GLOW("OSD发光程度", 0.00f, 1.00f),
     OSD_BLOOM("OSD晕染程度", 0.00f, 1.00f),
@@ -71,6 +72,7 @@ public enum HudSetting {
             case CURRENT_BLOOM: return HudConfig.currentBloomStrength;
             case CURRENT_TRANSITION: return HudConfig.currentTransitionWidth;
             case CURRENT_BREATH: return HudConfig.currentBreathStrength;
+            case FULLSCREEN_GLOW: return HudConfig.fullscreenGlowStrength;
             case OSD_TRANSITION: return HudConfig.osdKaraokeTransitionWidth;
             case OSD_GLOW: return HudConfig.osdKaraokeGlowStrength;
             case OSD_BLOOM: return HudConfig.osdKaraokeBloomStrength;
@@ -110,6 +112,7 @@ public enum HudSetting {
             case CURRENT_BLOOM: HudConfig.currentBloomStrength = clamped; break;
             case CURRENT_TRANSITION: HudConfig.currentTransitionWidth = clamped; break;
             case CURRENT_BREATH: HudConfig.currentBreathStrength = clamped; break;
+            case FULLSCREEN_GLOW: HudConfig.fullscreenGlowStrength = clamped; break;
             case OSD_TRANSITION: HudConfig.osdKaraokeTransitionWidth = clamped; break;
             case OSD_GLOW: HudConfig.osdKaraokeGlowStrength = clamped; break;
             case OSD_BLOOM: HudConfig.osdKaraokeBloomStrength = clamped; break;

@@ -33,31 +33,8 @@ final class DynamicIslandLayoutCalculator {
 
         boolean systemCard = style == DynamicIslandStyle.SYSTEM_CARD;
         boolean musicFocus = style == DynamicIslandStyle.MUSIC_FOCUS;
-        double minWidth;
-        double targetHeight;
-        if (style == DynamicIslandStyle.COMPACT) {
-            minWidth = noticeMode ? 118.0 : 146.0;
-            targetHeight = noticeMode ? 30.0 : 32.0;
-        } else if (style == DynamicIslandStyle.CARD) {
-            minWidth = noticeMode ? 146.0 : 170.0;
-            targetHeight = noticeMode ? 38.0 : 42.0;
-        } else if (musicFocus) {
-            minWidth = noticeMode ? 172.0 : 194.0;
-            targetHeight = noticeMode ? 50.0 : 56.0;
-        } else if (systemCard) {
-            minWidth = noticeMode ? 154.0 : 176.0;
-            targetHeight = noticeMode ? 46.0 : 52.0;
-        } else if (style == DynamicIslandStyle.LIQUID_GLASS) {
-            // 液态玻璃要给折射亮带和边缘光留出余量，所以比通透玻璃再高一点、宽一点。
-            minWidth = noticeMode ? 142.0 : 168.0;
-            targetHeight = noticeMode ? 38.0 : 42.0;
-        } else if (style == DynamicIslandStyle.GLASS) {
-            minWidth = noticeMode ? 132.0 : 158.0;
-            targetHeight = noticeMode ? 34.0 : 38.0;
-        } else {
-            minWidth = noticeMode ? 126.0 : 152.0;
-            targetHeight = noticeMode ? 34.0 : 38.0;
-        }
+        double minWidth = styleMinWidth(style, noticeMode);
+        double targetHeight = styleTargetHeight(style, noticeMode);
 
         if (volumeNotice) {
             targetHeight += systemCard ? 8.0 : 7.0;
@@ -68,9 +45,7 @@ final class DynamicIslandLayoutCalculator {
         double widestText = Math.max(titleWidth, valueWidth);
         double configuredTextScale = DynamicIslandMath.clamp(HudConfig.dynamicIslandTextScale,
                 minAutoTextScale, maxAutoTextScale);
-        double sideReserve = systemCard ? 60.0 : (musicFocus ? 68.0
-                : (style == DynamicIslandStyle.LIQUID_GLASS ? 50.0
-                : (style == DynamicIslandStyle.CARD ? 48.0 : 46.0)));
+        double sideReserve = styleSideReserve(style);
         if (!noticeMode) {
             sideReserve += Math.max(31.0, FontManager.pf12bold.getStringWidthD("100%")
                     * configuredTextScale + 14.0);
@@ -95,6 +70,67 @@ final class DynamicIslandLayoutCalculator {
         }
         double targetWidth = DynamicIslandMath.clamp(sideReserve + widestText * textScale, safeMinWidth, maxWidth);
         return new LayoutData(title, value, textScale, targetWidth, targetHeight);
+    }
+
+    /**
+     * 常驻状态的尺寸。常驻卡片与通知卡片都是「左图标 + 一行内容」的同一种版式,
+     * 因此直接复用通知态的最小宽度与高度表,不再维护第二套数字。
+     *
+     * @param contentWidth 已按固定位数模板量好的常驻内容宽度,数值跳动不会改变它
+     */
+    static LayoutData calculateAmbient(DynamicIslandStyle style, double contentWidth,
+                                       double configuredScale, double screenWidth, double compactWidth) {
+        double minWidth = styleMinWidth(style, true);
+        double targetHeight = styleTargetHeight(style, true);
+        double sideReserve = styleSideReserve(style);
+        double screenMaxWidth = Math.max(compactWidth, (screenWidth - 12.0) / configuredScale);
+        double configuredBaseWidth = DynamicIslandMath.clamp(HudConfig.dynamicIslandMaxWidth,
+                MIN_BASE_WIDTH, MAX_BASE_WIDTH);
+        double scaledMinWidth = minWidth * (configuredBaseWidth / DEFAULT_BASE_WIDTH);
+        double maxWidth = Math.min(screenMaxWidth, Math.max(scaledMinWidth, configuredBaseWidth));
+        double safeMinWidth = Math.min(scaledMinWidth, maxWidth);
+        double targetWidth = DynamicIslandMath.clamp(sideReserve + Math.max(0.0, contentWidth),
+                safeMinWidth, maxWidth);
+        return new LayoutData("", "", 1.0, targetWidth, targetHeight);
+    }
+
+    /** 常驻内容可用的横向空间,渲染层据此决定要不要丢掉优先级最低的条目。 */
+    static double ambientContentBudget(DynamicIslandStyle style, double configuredScale, double screenWidth) {
+        double screenMaxWidth = Math.max(60.0, (screenWidth - 12.0) / configuredScale);
+        double configuredBaseWidth = DynamicIslandMath.clamp(HudConfig.dynamicIslandMaxWidth,
+                MIN_BASE_WIDTH, MAX_BASE_WIDTH);
+        double maxWidth = Math.min(screenMaxWidth, configuredBaseWidth);
+        return Math.max(24.0, maxWidth - styleSideReserve(style));
+    }
+
+    private static double styleMinWidth(DynamicIslandStyle style, boolean noticeMode) {
+        if (style == DynamicIslandStyle.COMPACT) return noticeMode ? 118.0 : 146.0;
+        if (style == DynamicIslandStyle.CARD) return noticeMode ? 146.0 : 170.0;
+        if (style == DynamicIslandStyle.MUSIC_FOCUS) return noticeMode ? 172.0 : 194.0;
+        if (style == DynamicIslandStyle.SYSTEM_CARD) return noticeMode ? 154.0 : 176.0;
+        // 液态玻璃要给折射亮带和边缘光留出余量,所以比通透玻璃再宽一点。
+        if (style == DynamicIslandStyle.LIQUID_GLASS) return noticeMode ? 142.0 : 168.0;
+        if (style == DynamicIslandStyle.GLASS) return noticeMode ? 132.0 : 158.0;
+        return noticeMode ? 126.0 : 152.0;
+    }
+
+    private static double styleTargetHeight(DynamicIslandStyle style, boolean noticeMode) {
+        if (style == DynamicIslandStyle.COMPACT) return noticeMode ? 30.0 : 32.0;
+        if (style == DynamicIslandStyle.CARD) return noticeMode ? 38.0 : 42.0;
+        if (style == DynamicIslandStyle.MUSIC_FOCUS) return noticeMode ? 50.0 : 56.0;
+        if (style == DynamicIslandStyle.SYSTEM_CARD) return noticeMode ? 46.0 : 52.0;
+        if (style == DynamicIslandStyle.LIQUID_GLASS) return noticeMode ? 38.0 : 42.0;
+        if (style == DynamicIslandStyle.GLASS) return noticeMode ? 34.0 : 38.0;
+        return noticeMode ? 34.0 : 38.0;
+    }
+
+    /** 左侧图标托盘与右侧留白合计要占掉的宽度。 */
+    private static double styleSideReserve(DynamicIslandStyle style) {
+        if (style == DynamicIslandStyle.SYSTEM_CARD) return 60.0;
+        if (style == DynamicIslandStyle.MUSIC_FOCUS) return 68.0;
+        if (style == DynamicIslandStyle.LIQUID_GLASS) return 50.0;
+        if (style == DynamicIslandStyle.CARD) return 48.0;
+        return 46.0;
     }
 
     private static String safeValue(String value, String fallback) {

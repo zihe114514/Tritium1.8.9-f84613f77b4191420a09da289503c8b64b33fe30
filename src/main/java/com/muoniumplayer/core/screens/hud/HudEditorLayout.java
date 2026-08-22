@@ -19,7 +19,8 @@ final class HudEditorLayout {
         int contentHeight = sectionHeight * 5 + 8;
         if (currentExpanded) contentHeight += colorRowHeight * 3 + currentSliderCount * sliderRowHeight;
         if (normalExpanded) contentHeight += colorRowHeight * 3 + normalSliderCount * sliderRowHeight;
-        if (islandExpanded) contentHeight += colorRowHeight * 2 + islandSliderCount * sliderRowHeight;
+        // 灵动岛分组：开关、样式、常驻总开关、常驻三项内容，共 6 行等高控件。
+        if (islandExpanded) contentHeight += colorRowHeight * 6 + islandSliderCount * sliderRowHeight;
         if (coverExpanded) contentHeight += colorRowHeight;
         if (themeExpanded) contentHeight += colorRowHeight + themeGridHeight;
         return new Metrics(panelHeight, contentHeight, settingsMargin, settingsHeaderHeight, pickerWidth);

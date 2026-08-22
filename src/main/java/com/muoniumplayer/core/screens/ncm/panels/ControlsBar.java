@@ -193,9 +193,13 @@ public class ControlsBar extends NCMPanel {
         RoundedButtonWidget fmSkip = new RoundedButtonWidget("换一首", FontManager.pf12bold);
         this.addChild(fmSkip);
         fmSkip.setShouldOverrideMouseCursor(true);
+        // 显示与否必须由播放条来判定，不能写在按钮自己的回调里：AbstractWidget#renderWidget
+        // 在跑 beforeRenderCallback 之前就会因为 isHidden() 直接返回（父组件的渲染循环也会跳过
+        // 隐藏的子组件），而唯一能把它重新显示出来的代码就在那个回调里。播放条是常驻的，首帧
+        // 通常还没进入私人 FM，于是这个按钮会永久卡在隐藏状态，进了私人 FM 也不会出现。
+        this.setBeforeRenderCallback(() -> fmSkip.setHidden(!CloudMusic.isPersonalFmActive()));
         fmSkip.setBeforeRenderCallback(() -> {
             boolean active = CloudMusic.isPersonalFmActive();
-            fmSkip.setHidden(!active);
             fmSkip.setClickable(active && !PersonalFmManager.isLoading());
             fmSkip.setBounds(44, 17);
             fmSkip.setPosition(playMode.getRelativeX() + playMode.getWidth() + 10, playMode.getRelativeY() + 1);
@@ -465,8 +469,10 @@ public class ControlsBar extends NCMPanel {
                 .setMaxWidth(Math.max(0.0, qualitySelector.getWidth() - 14.0 * Math.max(.82, NCMPlayerConfig.getPlayerScale())))
                 .setPosition(7.0, Math.max(2.0, (qualitySelector.getHeight() - qualityText.getHeight()) * .5)));
 
-        // 下一首播放：队列抽屉的开关排在音质按钮左边，沿用右下角次级控件的同一条锚点链。
-        IconWidget queueToggle = PlayerQueueIcons.newPlayNextButton(18);
+        // 下一首播放列表：队列抽屉的开关排在音质按钮左边，沿用右下角次级控件的同一条锚点链。
+        // 用「播放三角 + 列表」（player-action-icons U+E144）而不是歌曲行那枚「下一首播放」
+        // （U+E309）：这里打开的是整张待播列表，和单曲的"插到下一首"不是同一个动作。
+        IconWidget queueToggle = PlayerQueueIcons.newPlayQueueButton(18);
         this.addChild(queueToggle);
         queueToggle.setShouldOverrideMouseCursor(true);
         queueToggle.setBeforeRenderCallback(() -> {

@@ -64,6 +64,7 @@ public class GuiHudEditor extends GuiScreen {
             HudSetting.CURRENT_BLOOM,
             HudSetting.CURRENT_TRANSITION,
             HudSetting.CURRENT_BREATH,
+            HudSetting.FULLSCREEN_GLOW,
             HudSetting.OSD_TRANSITION,
             HudSetting.OSD_GLOW,
             HudSetting.OSD_BLOOM,
@@ -442,6 +443,18 @@ public class GuiHudEditor extends GuiScreen {
                         x + 6, rowY, mouseX, mouseY);
                 rowY += COLOR_ROW_H;
                 drawChoiceRow(fr, "灵动岛样式", DownloadDynamicIsland.getStyleName(),
+                        x + 6, rowY, mouseX, mouseY);
+                rowY += COLOR_ROW_H;
+                drawToggleRow(fr, "常驻灵动岛", HudConfig.dynamicIslandAlwaysOn,
+                        x + 6, rowY, mouseX, mouseY);
+                rowY += COLOR_ROW_H;
+                drawToggleRow(fr, "常驻 · 帧率", HudConfig.dynamicIslandAmbientFps,
+                        x + 6, rowY, mouseX, mouseY);
+                rowY += COLOR_ROW_H;
+                drawToggleRow(fr, "常驻 · 延迟", HudConfig.dynamicIslandAmbientPing,
+                        x + 6, rowY, mouseX, mouseY);
+                rowY += COLOR_ROW_H;
+                drawToggleRow(fr, "常驻 · 时间", HudConfig.dynamicIslandAmbientClock,
                         x + 6, rowY, mouseX, mouseY);
                 rowY += COLOR_ROW_H;
                 for (HudSetting setting : ISLAND_SLIDERS) {
@@ -893,6 +906,30 @@ public class GuiHudEditor extends GuiScreen {
                 rowY += COLOR_ROW_H;
                 if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
                     DownloadDynamicIsland.cycleStyle();
+                    return;
+                }
+                rowY += COLOR_ROW_H;
+                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                    HudConfig.dynamicIslandAlwaysOn = !HudConfig.dynamicIslandAlwaysOn;
+                    HudConfig.save();
+                    return;
+                }
+                rowY += COLOR_ROW_H;
+                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                    HudConfig.dynamicIslandAmbientFps = !HudConfig.dynamicIslandAmbientFps;
+                    HudConfig.save();
+                    return;
+                }
+                rowY += COLOR_ROW_H;
+                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                    HudConfig.dynamicIslandAmbientPing = !HudConfig.dynamicIslandAmbientPing;
+                    HudConfig.save();
+                    return;
+                }
+                rowY += COLOR_ROW_H;
+                if (isInside(mouseX, mouseY, panelX + 6, rowY, SETTINGS_W - 12, COLOR_ROW_H)) {
+                    HudConfig.dynamicIslandAmbientClock = !HudConfig.dynamicIslandAmbientClock;
+                    HudConfig.save();
                     return;
                 }
                 rowY += COLOR_ROW_H;

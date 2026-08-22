@@ -20,6 +20,7 @@ import com.muoniumplayer.core.rendering.Rect;
 import com.muoniumplayer.core.rendering.StencilClipManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.rendering.font.CFontRenderer;
+import com.muoniumplayer.core.rendering.rendersystem.RenderSystem;
 import com.muoniumplayer.core.screens.ncm.LyricDuetGroups;
 import com.muoniumplayer.core.screens.ncm.LyricLine;
 import com.muoniumplayer.core.settings.ClientSettings;
@@ -489,97 +490,185 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         api.getGLStateManager().scale(scale, scale, 1);
         api.getGLStateManager().translate(-centerX, -centerY, 0);
         try {
-            // Keep the unsung lyric strictly on the base colour. The active colour is
-            // painted only by the clipped per-character KTV layers below; applying an
-            // active-colour glow to the complete row makes the whole sentence look sung.
-            renderWrappedPrimaryUnscaled(layout.primaryLines, y,
-                    getBaseLyricColor((int) (effectAlpha * .70f)));
-            renderKaraokeProgress(layout.karaokeLayout, y, songProgress, effectAlpha, visualStyle);
+            renderKaraokeCharacters(layout, y, songProgress, effectAlpha, visualStyle);
         } finally {
             api.getGLStateManager().popMatrix();
         }
     }
 
-    private void renderWrappedPrimaryUnscaled(String[] lines, double y, int color) {
-        for (int i = 0; i < lines.length; i++) {
-            String text = lines[i];
-            double lineY = y + i * (getFontRenderer().getHeight() + PRIMARY_LINE_SPACING);
-            bigFrString(text, calculateAlignmentX(text, this.alignMode.getValue()), lineY, color);
-        }
-    }
-
     /**
-     * Paints the active OSD lyric from the timed-word clock. The physical fill front
-     * moves through all characters continuously from left to right, karaoke-style.
+     * 逐字渲染当前 OSD 歌词：每个字只画一遍未唱底色、一遍已唱高亮。
+     *
+     * <p>旧实现把三层叠在一起——「整行未唱底色（原始尺寸）」+「按填涂前沿裁剪的高亮层
+     * （原始尺寸）」+「逐字放大的强调层（放大尺寸）」。同一个字形因此被画了两次且尺寸不同：
+     * 放大的只有最上面那层高亮，它下面还压着一份原始尺寸的同色字形，看上去就是重影；而这个
+     * 字还没唱到的部分仍由原始尺寸的底层提供，于是已唱/未唱交界处对不上，就是脱节。</p>
+     *
+     * <p>现在底色、高亮和裁剪矩形都在同一个逐字缩放矩阵内产生，遮罩必然跟着字形一起放大。
+     * 填涂前沿仍以未放大的布局坐标推进（跨字、跨换行连续），所以放大不会引起换行抖动。</p>
      */
-    private void renderKaraokeProgress(KaraokeLayoutBuilder.Layout layout, double y,
-                                       float songProgress, int effectAlpha, LyricVisualStyle visualStyle) {
+    private void renderKaraokeCharacters(LyricLayout layout, double y, float songProgress,
+                                         int effectAlpha, LyricVisualStyle visualStyle) {
+        KaraokeLayoutBuilder.Layout karaokeLayout = layout.karaokeLayout;
+        // 未唱底色始终使用普通歌词色；激活色只由下面裁剪过的高亮层负责，
+        // 否则整句看起来都像已经唱过了。
+        int baseColor = getBaseLyricColor((int) (effectAlpha * .70f));
         int highlightColor = getCurrentLyricColor(effectAlpha);
-        for (KaraokeLayoutBuilder.Segment segment : layout.segments) {
-            double rawProgress = getRawKaraokeProgress(segment.word, songProgress);
-            if (rawProgress <= .001) {
+        double lineStride = getFontRenderer().getHeight() + PRIMARY_LINE_SPACING;
+        // 羽化窗口必须按 OSD 自己的字号收敛。osdKaraokeTransitionWidth 的量程(4~32)是照全屏
+        // pf65bold 定的，直接套在 pf28bold 上时一个窗口就盖住整整一到两个汉字：整段已唱文本
+        // 于是全部落在半透明的羽化带里、永远到不了实心色，看上去就是"KTV 染色只染了一半"。
+        double featherLimit = Math.min(Math.max(1.5, HudConfig.osdKaraokeTransitionWidth),
+                Math.max(1.5, getFontRenderer().getFontHeight() * .42));
+
+        for (KaraokeLayoutBuilder.Segment segment : karaokeLayout.segments) {
+            if (segment.text.isEmpty()) {
                 continue;
             }
 
-            double lineX = calculateAlignmentX(layout.primaryLines[segment.lineIndex], this.alignMode.getValue());
-            double segmentX = lineX + segment.offsetX;
-            double segmentY = y + segment.lineIndex * (getFontRenderer().getHeight() + PRIMARY_LINE_SPACING);
+            String lineText = karaokeLayout.primaryLines[segment.lineIndex];
+            double segmentX = calculateAlignmentX(lineText, this.alignMode.getValue()) + segment.offsetX;
+            double segmentY = y + segment.lineIndex * lineStride;
+
+            double rawProgress = getRawKaraokeProgress(segment.word, songProgress);
+            double characterTimeline = Math.max(0.0, Math.min(1.0, rawProgress))
+                    * segment.totalCharacterCount;
 
             /*
-             * The full-screen renderer moves a single physical fill front through the
-             * whole timed word. Reproduce that model in the OSD instead of completing
-             * one glyph and then abruptly starting the next. This is important for a
-             * token such as "我爱你": the front exits "爱" and enters "你" continuously.
-             *
-             * A timed word may be wrapped into several KaraokeSegments. characterOffset
-             * maps each physical fragment back into the original timed word so the sweep
-             * remains continuous even across an OSD line break.
+             * 一个 timed word 可能被拆成多个 KaraokeSegment。characterOffset 把物理片段映射
+             * 回原始 timed word，因此填涂前沿跨字、跨换行都保持连续。
              */
             double wordWidth = Math.max(.05, getFontRenderer().getStringWidthD(segment.word.word));
             double segmentWordOffset = getWordPrefixWidth(segment.word.word, segment.characterOffset);
-            double paintedWidth = clampKaraokeWidth(wordWidth * rawProgress - segmentWordOffset,
+            double segmentFront = clampKaraokeWidth(wordWidth * rawProgress - segmentWordOffset,
                     0.0, segment.width);
-            renderKaraokeSweep(segment.text, segmentX, segmentY, paintedWidth, segment.width,
-                    highlightColor, visualStyle);
+            // 羽化窗口按整个片段的前沿计算，这样它可以跨越字与字的边界，
+            // 不会因为改成逐字绘制而在每个字里各自重新淡入一次。
+            double featherWidth = Math.min(featherLimit, segmentFront);
 
-            // The fill is continuous in pixel space. The retained per-character emphasis
-            // uses the same timed-word clock, making the scale wave follow its front.
-            renderKaraokeSegmentEmphasis(segment, segmentX, segmentY, rawProgress, highlightColor, visualStyle);
+            int offset = 0;
+            int characterIndex = 0;
+            double prefixWidth = 0.0;
+            while (offset < segment.text.length()) {
+                int next = segment.text.offsetByCodePoints(offset, 1);
+                String character = segment.text.substring(offset, next);
+                // 用「前缀宽度之差」步进：drawString 会加入 kerning，逐字宽度直接相加会丢掉
+                // 字距调整并沿行累积偏移，最终让高亮层与字形错开。
+                double nextPrefixWidth = getFontRenderer().getStringWidthD(segment.text.substring(0, next));
+                double characterWidth = nextPrefixWidth - prefixWidth;
+                double characterProgress = getCharacterKaraokeProgress(characterTimeline,
+                        segment.characterOffset + characterIndex);
+                renderKaraokeCharacter(character, segmentX + prefixWidth, segmentY, characterWidth,
+                        segmentFront - prefixWidth, featherWidth, characterProgress,
+                        baseColor, highlightColor, visualStyle);
+
+                prefixWidth = nextPrefixWidth;
+                offset = next;
+                characterIndex++;
+            }
         }
     }
 
     /**
-     * Paints the sung portion with a soft feather entirely inside the real playback front.
-     * The solid part preserves the completed lyric colour; the front fades smoothly from
-     * left to right, matching the full-screen KTV fill rather than swapping an entire word.
+     * 单个字的完整绘制：一次未唱底色 + 一次裁剪过的已唱高亮，两者共用同一个逐字缩放矩阵。
+     *
+     * @param front        填涂前沿相对本字左边缘的位置，可能为负（还没到）或大于字宽（已唱完）
+     * @param featherWidth 羽化窗口宽度，按整个片段的前沿计算，允许跨字边界
      */
-    private void renderKaraokeSweep(String text, double x, double y, double paintedWidth,
-                                    double textWidth, int highlightColor, LyricVisualStyle visualStyle) {
+    private void renderKaraokeCharacter(String character, double x, double y, double width,
+                                        double front, double featherWidth, double characterProgress,
+                                        int baseColor, int highlightColor,
+                                        LyricVisualStyle visualStyle) {
+        if (width <= .05) {
+            return;
+        }
+
+        boolean emphasisEnabled = HudConfig.osdKaraokeEmphasisEnabled
+                && HudConfig.osdKaraokePulseStrength > .001f;
+        /*
+         * 强调是"唱到这个字的一瞬间鼓一下"，而不是"唱过就一直保持放大"。
+         *
+         * 保持放大会让整段已唱文本长期停在一个非整数倍率上。字形图集是按 2 倍超采样、再以
+         * 精确 0.5 倍缩小来保证锐利的，任何额外的非整数倍率都会重新采样成一团发虚的墨；而且
+         * 每个字是绕自身中心放大的，放大后必然压到相邻字上，于是既模糊又带重影。改成脉冲后
+         * 只有正在唱的那一个字被放大，唱完立刻回到 1.0 倍恢复锐利。
+         */
+        double emphasis = emphasisEnabled
+                ? Math.sin(Math.PI * smoothStep(characterProgress))
+                : 0.0;
+        // 这一点放大量量化到 1/128，可以稳定 1.8.9 HUD 上的次像素采样。
+        double requestedScale = 1.0
+                + Math.min(.085, Math.max(0.0, HudConfig.osdKaraokePulseStrength)) * emphasis;
+        double characterScale = Math.round(requestedScale * 128.0) / 128.0;
+        boolean scaled = characterScale > 1.0005;
+
+        if (scaled) {
+            double centerX = x + width * .5;
+            // 用 getFontHeight() 而不是取整过的 getHeight()：锚点偏离字形真实中心会让
+            // 放大后的字形与裁剪框在纵向上错开半个像素。
+            double centerY = y + getFontRenderer().getFontHeight() * .5;
+            api.getGLStateManager().pushMatrix();
+            api.getGLStateManager().translate(centerX, centerY, 0);
+            api.getGLStateManager().scale(characterScale, characterScale, 1);
+            api.getGLStateManager().translate(-centerX, -centerY, 0);
+        }
+        try {
+            bigFrString(character, x, y, baseColor);
+            renderKaraokeSweep(character, x, y, front, featherWidth, width,
+                    highlightColor, visualStyle, emphasis);
+        } finally {
+            if (scaled) {
+                api.getGLStateManager().popMatrix();
+            }
+        }
+    }
+
+    /**
+     * 把本字已唱的部分画成实心 + 前沿羽化。羽化完全位于真实播放前沿的内侧，
+     * 并且窗口是按整个片段算出来的，所以前沿的软边可以横跨字与字的边界。
+     */
+    private void renderKaraokeSweep(String text, double x, double y, double front,
+                                    double featherWidth, double textWidth,
+                                    int highlightColor, LyricVisualStyle visualStyle,
+                                    double emphasis) {
+        double paintedWidth = Math.min(front, textWidth);
         if (paintedWidth <= .05 || textWidth <= .05) {
             return;
         }
-        if (paintedWidth >= textWidth - .05) {
-            renderKaraokeLayer(text, x, y, 0.0, textWidth, highlightColor, .24, visualStyle);
+
+        // 光晕整段只画一次，裁剪到真实已唱区域。以前每条羽化带都自带一圈光晕(8 次偏移绘制)，
+        // 十条就是八十次同字形叠加，前沿必然过曝糊成一团。
+        renderKaraokeGlowLayer(text, x, y, 0.0, paintedWidth, highlightColor,
+                .18 + .30 * emphasis, visualStyle);
+
+        double solidRight = KaraokeAnimationMath.solidRight(front, featherWidth, textWidth);
+        if (solidRight > .05) {
+            renderKaraokeLayer(text, x, y, 0.0, solidRight, highlightColor);
+        }
+        if (featherWidth <= .01) {
             return;
         }
 
-        double featherWidth = Math.min(Math.max(1.5, HudConfig.osdKaraokeTransitionWidth), paintedWidth);
-        double featherLeft = Math.max(0.0, paintedWidth - featherWidth);
-        if (featherLeft > .05) {
-            renderKaraokeLayer(text, x, y, 0.0, featherLeft, highlightColor, .16, visualStyle);
-        }
-
-        for (int step = 0; step < KARAOKE_FEATHER_STEPS; step++) {
-            double left = featherLeft + (paintedWidth - featherLeft) * step / KARAOKE_FEATHER_STEPS;
-            double right = featherLeft + (paintedWidth - featherLeft) * (step + 1) / KARAOKE_FEATHER_STEPS;
-            if (right <= left) {
+        // 羽化带条数按它在屏幕上真正占几个像素来定，避免亚像素窄条被取整撑开后互相重叠。
+        int steps = KaraokeAnimationMath.featherSteps(featherWidth,
+                karaokeScreenScale() * visualStyle.scale, KARAOKE_FEATHER_STEPS);
+        double[] strip = new double[2];
+        for (int step = 0; step < steps; step++) {
+            if (!KaraokeAnimationMath.featherStrip(front, featherWidth, textWidth,
+                    step, steps, strip)) {
                 continue;
             }
-            double distanceBehindFront = 1.0 - step / (double) KARAOKE_FEATHER_STEPS;
+            double distanceBehindFront = 1.0 - step / (double) steps;
             double opacity = .16 + .84 * smoothStep(distanceBehindFront);
-            renderKaraokeLayer(text, x, y, left, right, multiplyAlpha(highlightColor, opacity),
-                    .07 + .22 * distanceBehindFront, visualStyle);
+            renderKaraokeLayer(text, x, y, strip[0], strip[1],
+                    multiplyAlpha(highlightColor, opacity));
         }
+    }
+
+    /** 一个逻辑单位在屏幕上对应几个像素：GUI 缩放 × 本 HUD 的缩放。 */
+    private double karaokeScreenScale() {
+        double hudScale = editorPreviewActive ? editorPreviewScale : HudConfig.lyricScale;
+        return Math.max(.5, RenderSystem.getScaleFactor() * Math.max(.1, hudScale));
     }
 
     /** Returns the rendered advance from the start of a timed word to a code-point offset. */
@@ -597,70 +686,41 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         return Math.max(min, Math.min(max, value));
     }
 
-    private void renderKaraokeSegmentEmphasis(KaraokeLayoutBuilder.Segment segment, double x, double y,
-                                              double rawProgress, int highlightColor, LyricVisualStyle visualStyle) {
-        double characterTimeline = Math.max(0.0, Math.min(1.0, rawProgress))
-                * segment.totalCharacterCount;
-        int offset = 0;
-        int characterIndex = 0;
-        double characterX = x;
-        while (offset < segment.text.length()) {
-            int next = segment.text.offsetByCodePoints(offset, 1);
-            String character = segment.text.substring(offset, next);
-            double characterWidth = getFontRenderer().getStringWidthD(character);
-            int globalCharacterIndex = segment.characterOffset + characterIndex;
-            double characterProgress = getCharacterKaraokeProgress(characterTimeline, globalCharacterIndex);
-            if (characterProgress > .001 && characterWidth > .05) {
-                renderKaraokeCharacterEmphasis(character, characterX, y, characterWidth,
-                        characterProgress, highlightColor, visualStyle);
-            }
-            characterX += characterWidth;
-            offset = next;
-            characterIndex++;
-        }
+    /**
+     * 已唱高亮层的纵向裁剪范围。
+     *
+     * <p>{@code CFontRenderer.drawString} 内部先 {@code y -= 2} 再 {@code scale(0.5)}，因此一个
+     * 字形实际占据 {@code [y - 2, y - 2 + fontHeight * 0.5]}，也就是
+     * {@code [y - 2, y + getFontHeight() + 2.25]}。旧的裁剪框是
+     * {@code [y - 1, y - 1 + getHeight() + 4]}——上边界比墨迹顶端低了一个逻辑像素，而且行高还被
+     * {@code getHeight()} 向下取整过。结果是已唱高亮层的顶部被削平、未唱底色层却是完整的，
+     * 两层叠在一起就表现为"KTV 染色显示不全"。这里按真实墨迹盒给出上下各约一像素的余量。</p>
+     */
+    private static final double KARAOKE_CLIP_TOP_OFFSET = -3.0;
+
+    private double karaokeClipHeight() {
+        return getFontRenderer().getFontHeight() + 7.0;
     }
 
-    /**
-     * Matches the full-screen lyric emphasis model: every character owns a local
-     * transform, so characters that have already crossed the KTV fill front remain
-     * enlarged while the next character eases in. Keeping the layout coordinates
-     * unchanged prevents wrapping and neighbouring glyphs from shifting.
-     */
-    private void renderKaraokeCharacterEmphasis(String character, double x, double y,
-                                                 double width, double progress, int highlightColor,
-                                                 LyricVisualStyle visualStyle) {
-        if (!HudConfig.osdKaraokeEmphasisEnabled
-                || HudConfig.osdKaraokePulseStrength <= .001f || width <= .05) {
+    /** 只画光晕的一层，裁剪到给定区间。 */
+    private void renderKaraokeGlowLayer(String text, double x, double y, double clipLeft,
+                                        double clipRight, int color, double glowStrength,
+                                        LyricVisualStyle visualStyle) {
+        if (clipRight - clipLeft <= .05 || glowStrength <= .001) {
             return;
         }
 
-        double emphasis = smoothStep(progress);
-        // Atlas glyphs are intentionally kept close to their native size. Quantising the
-        // small retained enlargement stabilises sub-pixel sampling on the 1.8.9 HUD while
-        // preserving the completed-character emphasis and its left-to-right progression.
-        double requestedScale = 1.0 + Math.min(.085, HudConfig.osdKaraokePulseStrength) * emphasis;
-        double scale = Math.round(requestedScale * 128.0) / 128.0;
-        double centerX = x + width * .5;
-        double centerY = y + getFontRenderer().getHeight() * .5;
-
-        api.getGLStateManager().pushMatrix();
-        api.getGLStateManager().translate(centerX, centerY, 0);
-        api.getGLStateManager().scale(scale, scale, 1);
-        api.getGLStateManager().translate(-centerX, -centerY, 0);
+        ScissorClipManager.begin(x + clipLeft, y + KARAOKE_CLIP_TOP_OFFSET,
+                clipRight - clipLeft, karaokeClipHeight());
         try {
-            double paintedWidth = width * progress;
-            // Clip before scaling: the feather still sweeps left-to-right, while
-            // completed glyphs retain the same emphasis as full-screen lyrics.
-            renderKaraokeLayer(character, x, y, 0.0, paintedWidth,
-                    multiplyAlpha(highlightColor, .40 + .44 * emphasis),
-                    .14 + .34 * emphasis, visualStyle);
+            renderKaraokeGlow(text, x, y, color, glowStrength, visualStyle);
         } finally {
-            api.getGLStateManager().popMatrix();
+            ScissorClipManager.end();
         }
     }
+
     private void renderKaraokeLayer(String text, double x, double y, double clipLeft,
-                                     double clipRight, int color, double glowStrength,
-                                     LyricVisualStyle visualStyle) {
+                                     double clipRight, int color) {
         if (clipRight - clipLeft <= .05) {
             return;
         }
@@ -675,10 +735,9 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
          * any parent scissor. Therefore it clips the glow and glyph draw to the actual moving
          * KTV fill width without changing the outer viewport clip or foreign render state.
          */
-        ScissorClipManager.begin(x + clipLeft, y - 1,
-                clipRight - clipLeft, getFontRenderer().getHeight() + 4);
+        ScissorClipManager.begin(x + clipLeft, y + KARAOKE_CLIP_TOP_OFFSET,
+                clipRight - clipLeft, karaokeClipHeight());
         try {
-            renderKaraokeGlow(text, x, y, color, glowStrength, visualStyle);
             bigFrString(text, x, y, color);
         } finally {
             ScissorClipManager.end();

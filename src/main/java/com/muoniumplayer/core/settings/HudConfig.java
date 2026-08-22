@@ -63,6 +63,15 @@ public final class HudConfig {
     public static float currentTransitionWidth = 14.0f;
     public static float currentBreathStrength = 0.015f;
 
+    /**
+     * 全屏歌词页逐字发光的上限强度。
+     *
+     * <p>发光是"随这个字已经唱了多久"逐渐变亮的：每个字的发光透明度 = 该字的演唱进度 ×
+     * 这个上限。写成单独一个上限而不是复用 {@link #currentGlowStrength}，是因为后者同时
+     * 作用于 OSD 桌面歌词的整行光晕，调大它会让桌面歌词一起过曝。</p>
+     */
+    public static float fullscreenGlowStrength = 0.55f;
+
     // OSD KTV animation. These values are independent from the full-screen lyric renderer.
     public static float osdKaraokeTransitionWidth = 14.0f;
     public static float osdKaraokeGlowStrength = 0.68f;
@@ -114,6 +123,18 @@ public final class HudConfig {
     public static float dynamicIslandSpinnerSpeed = 1.0f;
 
     /**
+     * 常驻灵动岛。打开后即使没有下载和通知,灵动岛也留在屏幕顶部显示实时状态;
+     * 通知到来时它只做内容交叉淡入,不会重播入场动画,排队机制与关闭常驻时完全一致。
+     */
+    public static boolean dynamicIslandAlwaysOn = false;
+    /** 常驻时显示游戏帧率。 */
+    public static boolean dynamicIslandAmbientFps = true;
+    /** 常驻时显示服务器延迟。单机或未进服时显示 "--"。 */
+    public static boolean dynamicIslandAmbientPing = true;
+    /** 常驻时显示系统时间(时:分)。 */
+    public static boolean dynamicIslandAmbientClock = true;
+
+    /**
      * 网易云动态封面(需要外部 ffmpeg 抽帧)。关掉后桌面歌曲信息、全屏歌词页与播放条一律用静态封面。
      * 这里是唯一的真实来源,HUD 编辑器与模块开关都读写它。
      */
@@ -137,6 +158,7 @@ public final class HudConfig {
         currentBloomStrength = 0.42f;
         currentTransitionWidth = 14.0f;
         currentBreathStrength = 0.015f;
+        fullscreenGlowStrength = 0.55f;
         osdKaraokeTransitionWidth = 14.0f;
         osdKaraokeGlowStrength = 0.68f;
         osdKaraokeBloomStrength = 0.46f;
@@ -168,6 +190,10 @@ public final class HudConfig {
         dynamicIslandEntranceDuration = 420.0f;
         dynamicIslandOvershoot = 1.0f;
         dynamicIslandSpinnerSpeed = 1.0f;
+        dynamicIslandAlwaysOn = false;
+        dynamicIslandAmbientFps = true;
+        dynamicIslandAmbientPing = true;
+        dynamicIslandAmbientClock = true;
     }
 
     /** 恢复封面相关外观。 */
@@ -207,6 +233,7 @@ public final class HudConfig {
             currentBloomStrength = clamp01(getFloat(o, "currentBloomStrength", currentBloomStrength));
             currentTransitionWidth = clamp(getFloat(o, "currentTransitionWidth", currentTransitionWidth), 4.0f, 32.0f);
             currentBreathStrength = clamp(getFloat(o, "currentBreathStrength", currentBreathStrength), 0.0f, 0.08f);
+            fullscreenGlowStrength = clamp01(getFloat(o, "fullscreenGlowStrength", fullscreenGlowStrength));
 
             osdKaraokeTransitionWidth = clamp(getFloat(o, "osdKaraokeTransitionWidth", osdKaraokeTransitionWidth), 4.0f, 32.0f);
             osdKaraokeGlowStrength = clamp01(getFloat(o, "osdKaraokeGlowStrength", osdKaraokeGlowStrength));
@@ -238,6 +265,10 @@ public final class HudConfig {
             dynamicIslandEntranceDuration = clamp(getFloat(o, "dynamicIslandEntranceDuration", dynamicIslandEntranceDuration), 160.0f, 1200.0f);
             dynamicIslandOvershoot = clamp(getFloat(o, "dynamicIslandOvershoot", dynamicIslandOvershoot), 0.0f, 2.00f);
             dynamicIslandSpinnerSpeed = clamp(getFloat(o, "dynamicIslandSpinnerSpeed", dynamicIslandSpinnerSpeed), 0.30f, 3.00f);
+            dynamicIslandAlwaysOn = getBoolean(o, "dynamicIslandAlwaysOn", dynamicIslandAlwaysOn);
+            dynamicIslandAmbientFps = getBoolean(o, "dynamicIslandAmbientFps", dynamicIslandAmbientFps);
+            dynamicIslandAmbientPing = getBoolean(o, "dynamicIslandAmbientPing", dynamicIslandAmbientPing);
+            dynamicIslandAmbientClock = getBoolean(o, "dynamicIslandAmbientClock", dynamicIslandAmbientClock);
 
             animatedCoverEnabled = getBoolean(o, "animatedCoverEnabled", animatedCoverEnabled);
         } catch (Throwable ignored) {
@@ -269,6 +300,7 @@ public final class HudConfig {
             o.addProperty("currentBloomStrength", currentBloomStrength);
             o.addProperty("currentTransitionWidth", currentTransitionWidth);
             o.addProperty("currentBreathStrength", currentBreathStrength);
+            o.addProperty("fullscreenGlowStrength", fullscreenGlowStrength);
             o.addProperty("osdKaraokeTransitionWidth", osdKaraokeTransitionWidth);
             o.addProperty("osdKaraokeGlowStrength", osdKaraokeGlowStrength);
             o.addProperty("osdKaraokeBloomStrength", osdKaraokeBloomStrength);
@@ -298,6 +330,10 @@ public final class HudConfig {
             o.addProperty("dynamicIslandEntranceDuration", dynamicIslandEntranceDuration);
             o.addProperty("dynamicIslandOvershoot", dynamicIslandOvershoot);
             o.addProperty("dynamicIslandSpinnerSpeed", dynamicIslandSpinnerSpeed);
+            o.addProperty("dynamicIslandAlwaysOn", dynamicIslandAlwaysOn);
+            o.addProperty("dynamicIslandAmbientFps", dynamicIslandAmbientFps);
+            o.addProperty("dynamicIslandAmbientPing", dynamicIslandAmbientPing);
+            o.addProperty("dynamicIslandAmbientClock", dynamicIslandAmbientClock);
 
             o.addProperty("animatedCoverEnabled", animatedCoverEnabled);
 

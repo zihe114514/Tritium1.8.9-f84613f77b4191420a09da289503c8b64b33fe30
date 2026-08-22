@@ -83,6 +83,13 @@ public class NavigateBar extends NCMPanel {
             bg.setMargin(0);
             bg.setColor(this.getColor(NCMScreen.ColorType.NAVIGATION_BACKGROUND));
             bg.setAlpha(0.9f - NCMTheme.getLiquidGlassAmount() * 0.22f);
+
+            // 高亮条的布局必须由侧栏来跑，不能挂在高亮条自己的 beforeRenderCallback 上：
+            // AbstractWidget#renderWidget 在调用 beforeRenderCallback 之前就会因为 isHidden()
+            // 直接返回（父组件的渲染循环也会跳过隐藏的子组件），而唯一能把它重新显示出来的代码
+            // 就在那个回调里。于是首帧一旦因为列表还没完成布局而被判定为不可见，就会永久卡在隐藏
+            // 状态——选中项的强调色高亮框再也不会出现。
+            this.layoutSelectionIndicator();
         });
 
         this.setOnKeyTypedCallback((character, keyCode) -> {
@@ -270,7 +277,6 @@ public class NavigateBar extends NCMPanel {
         // 先加入高亮条，再加入列表：渲染顺序即层次，高亮条要在条目文字下面。
         this.addChild(selectionIndicator);
         this.selectionIndicator.setClickable(false);
-        this.selectionIndicator.setBeforeRenderCallback(this::layoutSelectionIndicator);
 
         this.addChild(playlistPanel);
         this.playlistPanel.setBeforeRenderCallback(() -> {
@@ -835,9 +841,14 @@ public class NavigateBar extends NCMPanel {
     private void layoutSelectionIndicator() {
         PlaylistItem selected = findSelectedItem();
         double panelTop = this.playlistPanel.getRelativeY();
-        double panelBottom = panelTop + this.playlistPanel.getHeight();
+        double panelHeight = this.playlistPanel.getHeight();
+        double panelBottom = panelTop + panelHeight;
 
-        if (selected != null) {
+        // 列表与条目要等到各自的 beforeRenderCallback 跑过一次才有真实宽高。在那之前不要落位，
+        // 否则高亮条会把一组全 0 的坐标当成起点，之后再从侧栏左上角滑进来。
+        boolean geometryReady = panelHeight > .5 && selected != null && selected.getWidth() > .5;
+
+        if (selected != null && geometryReady) {
             double targetTop = panelTop + selected.getRelativeY();
             double targetBottom = targetTop + selected.getHeight();
             double targetLeft = this.playlistPanel.getRelativeX() + selected.getRelativeX();
@@ -860,24 +871,27 @@ public class NavigateBar extends NCMPanel {
                 indicatorWidth = Interpolations.interpolate(indicatorWidth, targetWidth, .5);
             }
             indicatorAlpha = Interpolations.interpolate(indicatorAlpha, 1f, .4f);
-        } else {
+        } else if (selected == null) {
             indicatorAlpha = Interpolations.interpolate(indicatorAlpha, 0f, .4f);
         }
 
         double top = Math.max(panelTop, indicatorTop);
         double bottom = Math.min(panelBottom, indicatorBottom);
-        if (indicatorAlpha <= .01f || bottom - top <= .5 || indicatorWidth <= .5) {
-            this.selectionIndicator.setHidden(true);
+        boolean visible = indicatorPlaced && indicatorAlpha > .01f
+                && bottom - top > .5 && indicatorWidth > .5;
+        // 隐藏是安全的：这个方法由侧栏的回调驱动，下一帧照样会跑到，可以再把它显示回来。
+        this.selectionIndicator.setHidden(!visible);
+        if (!visible) {
             return;
         }
 
         this.selectionIndicator
-                .setHidden(false)
                 .setBounds(indicatorWidth, bottom - top)
                 .setPosition(indicatorLeft, top)
                 .setRadius(4)
-                .setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER))
-                .setAlpha(this.getAlpha() * .2f * indicatorAlpha);
+                // 选中项用主题强调色，而不是和悬停一样的中性灰，否则"选中"和"鼠标经过"看起来一样。
+                .setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT))
+                .setAlpha(this.getAlpha() * .22f * indicatorAlpha);
     }
 
     /** 列表里当前被选中的条目，没有选中项时返回 {@code null}。 */

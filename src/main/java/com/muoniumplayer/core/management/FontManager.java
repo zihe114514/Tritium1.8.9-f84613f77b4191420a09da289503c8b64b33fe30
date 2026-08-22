@@ -48,6 +48,14 @@ public class FontManager extends AbstractManager {
      * 会按按钮边长挑墨迹最接近目标比例的那一档，把两处的观感对齐到相邻贴图图标的水平。</p>
      */
     public static CFontRenderer queueIcon34, queueIcon38;
+    /**
+     * 播放器动作图标字体（player-action-icons，fontello U+E113 添加到歌单 / U+E144 下一首播放列表）的两档字号。
+     *
+     * <p>和 {@code queueIcon*} 同样的理由要两档：同一枚字形出现在 20 像素与 18 像素的按钮里。
+     * 单独一份字体文件而不是并入 player-queue-icons：两份是不同批次的 fontello 导出，各自独立
+     * 才不会在私有区码位上互相覆盖。</p>
+     */
+    public static CFontRenderer actionIcon34, actionIcon38;
     /** QQ Music brand icon font; deliberately separate from Fontello login glyphs. */
     public static CFontRenderer qqMusicIcon16, qqMusicIcon20;
 
@@ -120,6 +128,8 @@ public class FontManager extends AbstractManager {
         qqMusicIcon20 = create(20, "qq-music-icons");
         queueIcon34 = create(34, "player-queue-icons");
         queueIcon38 = create(38, "player-queue-icons");
+        actionIcon34 = create(34, "player-action-icons");
+        actionIcon38 = create(38, "player-action-icons");
     }
 
     /**

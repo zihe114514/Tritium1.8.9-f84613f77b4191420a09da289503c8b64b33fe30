@@ -64,6 +64,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
     boolean prevMouse = false;
 
+    /** 左上角「A-Z」逐字特效快捷面板；只影响全屏歌词页的两项配置，实时预览。 */
+    private final LyricStyleQuickPanel styleQuickPanel = new LyricStyleQuickPanel();
+
     ScrollText stMusicName = new ScrollText(), stArtists = new ScrollText();
     IconWidget playPauseButton = new IconWidget("G", FontManager.music40, 0, 0, 24, 24);
     IconWidget prev = new IconWidget("E", FontManager.music40, 0, 0, 32, 32);
@@ -135,6 +138,64 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     /** Individual characters ease into the active state in a short cascading wave. */
     private static double getCharacterKaraokeProgress(double wordProgress, int characterIndex) {
         return LyricsPanelGeometry.characterKaraokeProgress(wordProgress, characterIndex);
+    }
+
+    /** 归一化后的逐字发光上限；为 0 表示整条发光链路完全关闭。 */
+    private static double karaokeGlowStrength() {
+        if (!HudConfig.currentLyricEffectsEnabled) {
+            return 0.0;
+        }
+        return Math.max(0f, Math.min(1f, HudConfig.fullscreenGlowStrength));
+    }
+
+    /**
+     * 逐字发光在 KTV 纹理四周需要的留白（逻辑像素，整数）。
+     *
+     * <p>发光是围绕字形向外扩的，如果 FBO 不留白就会被纹理边界切成一个方块。留白必须是整数，
+     * 这样 {@code fbWidth / 2}、{@code fbHeight / 2} 仍然是整数，合成四边形与纹理保持一一对应、
+     * 不会引入额外的重采样。发光关闭时返回 0，此时整条链路与加发光之前完全等价。</p>
+     */
+    private static int karaokeGlowPadding() {
+        return karaokeGlowStrength() <= .004 ? 0 : 6;
+    }
+
+    /**
+     * 一个字的发光，亮度只取决于"这个字已经唱了多久"。
+     *
+     * <p>{@code progress} 是该字自己的演唱进度（0 = 还没唱到，1 = 唱完），所以同一个字词里
+     * 靠前的字先亮、靠后的字后亮，整体是一道跟着人声推进的光。上限由
+     * {@link HudConfig#fullscreenGlowStrength} 控制。</p>
+     *
+     * <p>1.8.9 没有可用的后处理管线，这里沿用项目里其它发光的做法：把同一个字形按环形偏移
+     * 多画几遍、逐层降低透明度，得到一个免着色器的柔和光晕。</p>
+     */
+    private void drawKaraokeCharacterGlow(String text, double x, double y,
+                                          double progress, float alpha) {
+        double strength = karaokeGlowStrength() * Math.max(0.0, Math.min(1.0, progress));
+        if (strength <= .004 || alpha <= .004f) {
+            return;
+        }
+
+        double radius = 1.0 + 2.0 * strength;
+        drawKaraokeGlowRing(text, x, y, radius, (float) (alpha * strength * .34));
+        drawKaraokeGlowRing(text, x, y, radius * 1.7, (float) (alpha * strength * .15));
+    }
+
+    private void drawKaraokeGlowRing(String text, double x, double y, double radius, float ringAlpha) {
+        if (ringAlpha <= .002f) {
+            return;
+        }
+        int cardinal = hexColor(1f, 1f, 1f, ringAlpha);
+        int diagonal = hexColor(1f, 1f, 1f, ringAlpha * .72f);
+        double diagonalRadius = radius * .7071;
+        FontManager.pf65bold.drawString(text, x - radius, y, cardinal);
+        FontManager.pf65bold.drawString(text, x + radius, y, cardinal);
+        FontManager.pf65bold.drawString(text, x, y - radius, cardinal);
+        FontManager.pf65bold.drawString(text, x, y + radius, cardinal);
+        FontManager.pf65bold.drawString(text, x - diagonalRadius, y - diagonalRadius, diagonal);
+        FontManager.pf65bold.drawString(text, x + diagonalRadius, y - diagonalRadius, diagonal);
+        FontManager.pf65bold.drawString(text, x - diagonalRadius, y + diagonalRadius, diagonal);
+        FontManager.pf65bold.drawString(text, x + diagonalRadius, y + diagonalRadius, diagonal);
     }
 
     private static double getLyricLineSpacing() {
@@ -292,6 +353,8 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         this.renderBackground(posX, posY, width, height, alpha, snapshot);
         this.renderControlsPart(mouseX, mouseY, posX, posY, width, height, alpha, snapshot);
         this.renderLyrics(mouseX, mouseY, posX, posY, width, height, dWheel, alpha, snapshot);
+        // 快捷面板画在最后：它是浮层，必须盖在封面与歌词之上。
+        this.styleQuickPanel.render(mouseX, mouseY, posX, posY, alpha);
         api.getGLStateManager().popMatrix();
     }
 
@@ -424,39 +487,95 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                     double emphasizeTarget = 1;
                     double emphasizeSpeed = 0.05;
 
-                    if (isCurrentLyric) {
-                        if (charArray.length > 1) {
-                            double x = renderX;
-                            for (int j = 0; j < charArray.length; j++) {
-                                char c = charArray[j];
+                    /*
+                     * 逐字放大必须让「字形本体」和「KTV 填涂遮罩」共用同一个变换。
+                     *
+                     * 旧实现只给 FBO 合成出来的高亮层套上 karaokeScale，未唱底层和唱完后的
+                     * 文本仍以原始尺寸直接画在 Minecraft framebuffer 上。于是同一个字同时存在
+                     * 两份大小不同的拷贝（重影）；而且这个字未唱的部分来自没放大的底层、已唱的
+                     * 部分来自放大后的合成层，两者交界处必然对不上（脱节）。
+                     *
+                     * 因此缩放倍率与锚点在字词开头就一次算好，本字词后面每一次直接绘制都套用
+                     * 同一份变换。布局推进量 renderX / wordWidth 仍然是未放大的，换行不会抖动。
+                     */
+                    double progress = word.getProgress(songProgress);
+                    double easedProgress = smoothKaraokeProgress(progress);
+                    double stringWidthD = wordWidth;
+                    // 宽度向上取整：直接截断会削掉最后一个字形的右边缘，也会让 KTV 前沿
+                    // (progress * stringWidthD) 超出纹理宽度。
+                    double karaokeQuadWidth = Math.max(2, Math.ceil(stringWidthD));
+                    double karaokePulse = Math.sin(Math.PI * easedProgress);
+                    // 逐字放大程度直接取配置值（HudConfig 已把它夹在 0~0.28）。这里原先又写死了
+                    // 0.14 的上限，于是"逐字放大"滑块拖过一半之后完全没有反应。
+                    double karaokeScale = 1.0
+                            + Math.max(0.0, HudConfig.currentWordScale) * karaokePulse;
+                    // 锚点默认在字词中心，但要约束在歌词视口内：行首字词的左边缘正好压在视口
+                    // 裁剪边界上，按中心放大会有一半放大量被裁掉（首字缺一块），因此贴边时把
+                    // 锚点收拢到边界，只向视口内侧生长。
+                    double karaokeAnchorX = LyricsPanelGeometry.clampScaleAnchorX(renderX, karaokeQuadWidth,
+                            karaokeScale, lyricsViewportLeft, lyricsViewportRight);
+                    double karaokeAnchorY = renderY + FontManager.pf65bold.getHeight() * .5;
+                    boolean karaokeScaled = karaokeScale > 1.0001;
 
-                                FontManager.pf65bold.drawString(String.valueOf(c), x, renderY - word.emphasizes[j], hexColor(1, 1, 1, alpha * .5f));
-                                x += FontManager.pf65bold.getCharWidth(c, j + 1 < charArray.length ? charArray[j + 1] : '\0');
+                    if (karaokeScaled) {
+                        api.getGLStateManager().pushMatrix();
+                        api.getGLStateManager().translate(karaokeAnchorX, karaokeAnchorY, 0);
+                        api.getGLStateManager().scale(karaokeScale, karaokeScale, 1);
+                        api.getGLStateManager().translate(-karaokeAnchorX, -karaokeAnchorY, 0);
+                    }
+                    try {
+                        if (isCurrentLyric) {
+                            if (charArray.length > 1) {
+                                double x = renderX;
+                                for (int j = 0; j < charArray.length; j++) {
+                                    char c = charArray[j];
+
+                                    FontManager.pf65bold.drawString(String.valueOf(c), x, renderY - word.emphasizes[j], hexColor(1, 1, 1, alpha * .5f));
+                                    x += FontManager.pf65bold.getCharWidth(c, j + 1 < charArray.length ? charArray[j + 1] : '\0');
+                                }
+                            } else {
+                                FontManager.pf65bold.drawString(word.word, renderX, renderY - word.emphasizes[0], hexColor(1, 1, 1, alpha * .5f));
                             }
                         } else {
-                            FontManager.pf65bold.drawString(word.word, renderX, renderY - word.emphasizes[0], hexColor(1, 1, 1, alpha * .5f));
+                            FontManager.pf65bold.drawString(word.word, renderX, renderY, hexColor(1, 1, 1, alpha * .5f));
                         }
-                    } else {
-                        FontManager.pf65bold.drawString(word.word, renderX, renderY, hexColor(1, 1, 1, alpha * .5f));
+                    } finally {
+                        if (karaokeScaled) {
+                            api.getGLStateManager().popMatrix();
+                        }
                     }
 
                     if (isCurrentLyric || CloudMusic.lyrics.indexOf(currentLyric) - k <= 1) {
-                        double progress = word.getProgress(songProgress);
-                        double easedProgress = smoothKaraokeProgress(progress);
-                        double stringWidthD = FontManager.pf65bold.getStringWidthD(word.word);
-
                         boolean shouldClip = progress > .001 && progress < .999;
 
                         if (progress >= .999) {
-                            double x = renderX;
-                            for (int j = 0; j < charArray.length; j++) {
-                                char c = charArray[j];
-                                if (lyric.renderEmphasizes) {
-                                    word.emphasizes[j] = Interpolations.interpolate(word.emphasizes[j], 1.85, .12);
+                            // 唱完后仍保留抬升，并且和上面的底层、下面的 KTV 合成层
+                            // 共用同一个缩放变换，避免任何一层单独放大造成错位。
+                            if (karaokeScaled) {
+                                api.getGLStateManager().pushMatrix();
+                                api.getGLStateManager().translate(karaokeAnchorX, karaokeAnchorY, 0);
+                                api.getGLStateManager().scale(karaokeScale, karaokeScale, 1);
+                                api.getGLStateManager().translate(-karaokeAnchorX, -karaokeAnchorY, 0);
+                            }
+                            try {
+                                double x = renderX;
+                                for (int j = 0; j < charArray.length; j++) {
+                                    char c = charArray[j];
+                                    if (lyric.renderEmphasizes) {
+                                        word.emphasizes[j] = Interpolations.interpolate(word.emphasizes[j], 1.85, .12);
+                                    }
+                                    // 唱完的字词不再走 KTV 纹理合成，发光要在这里以满亮度补上，
+                                    // 否则字词唱完的那一帧发光会突然消失。
+                                    drawKaraokeCharacterGlow(String.valueOf(c), x,
+                                            renderY - word.emphasizes[j], 1.0, alpha * lyric.alpha);
+                                    FontManager.pf65bold.drawString(String.valueOf(c), x,
+                                            renderY - word.emphasizes[j], hexColor(1, 1, 1, alpha * lyric.alpha));
+                                    x += FontManager.pf65bold.getCharWidth(c, j + 1 < charArray.length ? charArray[j + 1] : '\0');
                                 }
-                                FontManager.pf65bold.drawString(String.valueOf(c), x,
-                                        renderY - word.emphasizes[j], hexColor(1, 1, 1, alpha * lyric.alpha));
-                                x += FontManager.pf65bold.getCharWidth(c, j + 1 < charArray.length ? charArray[j + 1] : '\0');
+                            } finally {
+                                if (karaokeScaled) {
+                                    api.getGLStateManager().popMatrix();
+                                }
                             }
                         }
 
@@ -468,10 +587,16 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                             lyricScissorActive = false;
 
                             int scale = 2;
-                            // 纹理宽度向上取整：直接截断会削掉最后一个字形的右边缘，也会让 KTV
-                            // 前沿 (progress * stringWidthD) 超出纹理宽度。
-                            int fbWidth = Math.max(2, (int) Math.ceil(stringWidthD)) * scale,
-                                    fbHeight = (FontManager.pf65bold.getHeight() + 6) * scale;
+                            // 纹理宽度沿用上面已经向上取整的 karaokeQuadWidth，保证 FBO 里的
+                            // 字形、遮罩前沿与最终合成四边形三者宽度完全一致。
+                            //
+                            // glowPad 是逐字发光需要的四周留白：发光是围绕字形向外扩的，
+                            // 不留白就会被 FBO 边界切成方块。发光关闭时留白为 0，此时 FBO 的
+                            // 尺寸、遮罩坐标与合成四边形和加发光之前完全一致（零行为变化）。
+                            int glowPad = karaokeGlowPadding();
+                            int quadWidth = (int) karaokeQuadWidth;
+                            int fbWidth = (quadWidth + glowPad * 2) * scale,
+                                    fbHeight = (FontManager.pf65bold.getHeight() + 6 + glowPad * 2) * scale;
 
 //                            if (StencilClipManager.stencilClipping())
 //                                GL11.glDisable(GL11.GL_STENCIL_TEST);
@@ -500,12 +625,15 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                                 StencilClipManager.disableStencilTest();
 
                                 // 严格以真实播放前沿裁剪，渐变只位于已播放区域内部。
+                                // 遮罩整体右移 glowPad（与 base 纹理里的字形同步），左侧那一段留白
+                                // 一并放行，否则行首那个字向左扩散的发光会被遮罩切掉。
                                 double front = progress * stringWidthD;
                                 double activeGradientWidth = Math.min(gradientWidth, front);
                                 double solidWidth = Math.max(0.0, front - activeGradientWidth);
-                                Rect.draw(0, 0, solidWidth, FontManager.pf65bold.getHeight() + 6, -1);
-                                RenderSystem.drawGradientRectLeftToRight(solidWidth, 0, front,
-                                        FontManager.pf65bold.getHeight() + 6, -1, 0);
+                                double maskHeight = fbHeight * .5;
+                                Rect.draw(0, 0, glowPad + solidWidth, maskHeight, -1);
+                                RenderSystem.drawGradientRectLeftToRight(glowPad + solidWidth, 0,
+                                        glowPad + front, maskHeight, -1, 0);
                             }
 
                             // base texture: every character gets a tiny cascading lift.
@@ -519,7 +647,7 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 
                                 StencilClipManager.disableStencilTest();
 
-                                double x = 0;
+                                double x = glowPad;
                                 double characterTimeline = progress * charArray.length;
                                 for (int j = 0; j < charArray.length; j++) {
                                     char c = charArray[j];
@@ -530,7 +658,13 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                                     }
 
                                     double characterAlpha = .70 + .30 * characterProgress;
-                                    FontManager.pf65bold.drawString(String.valueOf(c), x, 2 - word.emphasizes[j],
+                                    double characterY = 2 + glowPad - word.emphasizes[j];
+                                    // 发光画在字形底下、并且亮度只跟"这个字已经唱了多久"有关。
+                                    // 因为它和字形一起进 base 纹理，最终会被 KTV 遮罩一起裁掉未唱的部分，
+                                    // 所以发光是随着填涂前沿一个字一个字亮起来的。
+                                    drawKaraokeCharacterGlow(String.valueOf(c), x, characterY,
+                                            characterProgress, (float) (alpha * lyric.alpha));
+                                    FontManager.pf65bold.drawString(String.valueOf(c), x, characterY,
                                             hexColor(1, 1, 1, (float) (alpha * lyric.alpha * characterAlpha)));
                                     x += FontManager.pf65bold.getCharWidth(c, j + 1 < charArray.length ? charArray[j + 1] : '\0');
                                 }
@@ -555,20 +689,17 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 //                                GL11.glEnable(GL11.GL_STENCIL_TEST);
 
                             // 当前字词在演唱期间平滑放大，布局宽度保持不变，避免换行抖动。
-                            // 锚点默认在字词中心，但要约束在歌词视口内：行首字词的左边缘正好压在
-                            // 视口裁剪边界上，按中心放大会有一半放大量被裁掉（首字缺一块），
-                            // 因此贴边时把锚点收拢到边界，只向视口内侧生长。
-                            double pulse = Math.sin(Math.PI * easedProgress);
-                            double karaokeScale = 1.0 + Math.min(.14, Math.max(0.0, HudConfig.currentWordScale)) * pulse;
-                            double karaokeQuadWidth = fbWidth * .5;
-                            double karaokeAnchorX = LyricsPanelGeometry.clampScaleAnchorX(renderX, karaokeQuadWidth,
-                                    karaokeScale, lyricsViewportLeft, lyricsViewportRight);
-                            double wordCenterY = renderY + FontManager.pf65bold.getHeight() * .5;
+                            // 倍率与锚点在字词开头就算好了（见上），未唱底层、唱完后的文本和
+                            // 这里的 KTV 合成层共用同一份变换，因此不会出现"遮罩放大、字形没
+                            // 放大"的重影与脱节。
                             api.getGLStateManager().pushMatrix();
-                            api.getGLStateManager().translate(karaokeAnchorX, wordCenterY, 0);
+                            api.getGLStateManager().translate(karaokeAnchorX, karaokeAnchorY, 0);
                             api.getGLStateManager().scale(karaokeScale, karaokeScale, 1);
-                            api.getGLStateManager().translate(-karaokeAnchorX, -wordCenterY, 0);
-                            Shaders.STENCIL.draw(baseFb.framebufferTexture, stencilFb.framebufferTexture, renderX, renderY - 2, karaokeQuadWidth, fbHeight * .5);
+                            api.getGLStateManager().translate(-karaokeAnchorX, -karaokeAnchorY, 0);
+                            // 合成四边形按 glowPad 反向平移，并且用 fbWidth/fbHeight 的一半作为尺寸：
+                            // 纹理与四边形一一对应（无重采样），glowPad = 0 时与加发光之前完全等价。
+                            Shaders.STENCIL.draw(baseFb.framebufferTexture, stencilFb.framebufferTexture,
+                                    renderX - glowPad, renderY - 2 - glowPad, fbWidth * .5, fbHeight * .5);
                             api.getGLStateManager().popMatrix();
 
                             if (ClientSettings.SHOW_WIDGET_BOUNDARY) {
@@ -942,6 +1073,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
     }
 
     public void mouseClicked(double mouseX, double mouseY, int mouseButton) {
+        // 浮层优先吃掉点击，避免穿透到下面的播放控件。
+        if (this.styleQuickPanel.consumeClick(mouseX, mouseY, mouseButton)) {
+            return;
+        }
         playPauseButton.onMouseClickReceived(mouseX, mouseY, mouseButton);
         prev.onMouseClickReceived(mouseX, mouseY, mouseButton);
         next.onMouseClickReceived(mouseX, mouseY, mouseButton);

@@ -9,6 +9,7 @@ import com.muoniumplayer.core.ncm.music.dto.PlayList;
 import com.muoniumplayer.core.rendering.PlayerQueueIcons;
 import com.muoniumplayer.core.rendering.TextureManager;
 import com.muoniumplayer.core.rendering.animation.Interpolations;
+import com.muoniumplayer.core.rendering.font.CFontRenderer;
 import com.muoniumplayer.core.rendering.texture.Textures;
 import com.muoniumplayer.core.rendering.ui.widgets.IconWidget;
 import com.muoniumplayer.core.rendering.ui.widgets.LabelWidget;
@@ -29,6 +30,15 @@ import java.awt.*;
 public class MusicWidget extends RoundedRectWidget {
 
     private static final long ENTRANCE_DURATION_MILLIS = 280L;
+
+    /** 时长文本与行右边缘之间的留白。 */
+    private static final double DURATION_RIGHT_MARGIN = 8.0;
+    /** 右侧每一枚操作图标的边长。 */
+    private static final double ACTION_ICON_SIZE = 20.0;
+    /** 右侧控件彼此之间的间距。 */
+    private static final double ACTION_GAP = 4.0;
+    /** 一小时的毫秒数：到这个长度 {@link #formatDuration(long)} 才会多出小时位。 */
+    private static final long ONE_HOUR_MILLIS = 3600_000L;
 
     public PlayList playList;
     public Music music;
@@ -169,7 +179,7 @@ public class MusicWidget extends RoundedRectWidget {
                     lblMusicName.setPosition(cover.getRelativeX() + cover.getWidth() + 4, lblMusicName.getRelativeY() - lblMusicName.getHeight() * .5 - 2);
                     // Reserve space for duration/actions and licensing badges so no badge can overlap a trimmed title.
                     lblMusicName.setMaxWidth(Math.max(1.0, this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4
-                            + (music.isNetease() ? 80 : 40) + (musicDirty ? (dirtyIndicatorSize + 4) : 0)
+                            + rightActionsReserve() + (musicDirty ? (dirtyIndicatorSize + 4) : 0)
                             + accessBadgeReserve)));
                 });
         lblMusicName.setClickable(false);
@@ -323,7 +333,7 @@ public class MusicWidget extends RoundedRectWidget {
                         lblMusicArtist.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
                     lblMusicArtist.centerVertically();
                     lblMusicArtist.setPosition(cover.getRelativeX() + cover.getWidth() + 4, lblMusicArtist.getRelativeY() + lblMusicArtist.getHeight() * .5 + 2);
-                    lblMusicArtist.setMaxWidth(this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4 + (music.isNetease() ? 80 : 40)));
+                    lblMusicArtist.setMaxWidth(this.getWidth() - (cover.getRelativeX() + cover.getWidth() + 4 + rightActionsReserve()));
                 });
 
         lblMusicArtist.setClickable(false);
@@ -355,7 +365,10 @@ public class MusicWidget extends RoundedRectWidget {
             btnLike.setColor(liked ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
                     : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             btnLike.centerVertically();
-            btnLike.setPosition(lblMusicDuration.getRelativeX() - 4 - btnLike.getWidth(), btnLike.getRelativeY());
+            // 挂在固定的时长槽位左边缘上，而不是时长标签的左边缘：后者的宽度随数字变化，
+            // 会让每一行的图标列各自漂移，上下两行对不齐。
+            btnLike.setPosition(actionsAnchorX(lblMusicDuration) - ACTION_GAP - btnLike.getWidth(),
+                    btnLike.getRelativeY());
         });
         btnLike.setOnClickCallback((x, y, button) -> {
             if (button != 0 || !music.isNetease())
@@ -384,8 +397,9 @@ public class MusicWidget extends RoundedRectWidget {
             return true;
         });
 
-        ThemedTextureIconWidget btnAddToPlaylist = new ThemedTextureIconWidget(
-                PlayerIconAssets.PLAYLIST, "+", FontManager.pf16bold, 0, 0, 20, 20);
+        // 图标走字体（player-action-icons U+E113 方框加号）而不是 playlist.png：字形按实际字号
+        // 运行时生成，不再受离线烘图的尺寸/裁切影响，也和相邻的「下一首播放」共用同一套墨迹对齐。
+        IconWidget btnAddToPlaylist = PlayerQueueIcons.newAddToPlaylistButton(20);
         this.addChild(btnAddToPlaylist);
         btnAddToPlaylist.setShouldOverrideMouseCursor(true);
         btnAddToPlaylist.setHidden(!music.isNetease());
@@ -393,7 +407,8 @@ public class MusicWidget extends RoundedRectWidget {
         btnAddToPlaylist.setBeforeRenderCallback(() -> {
             btnAddToPlaylist.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             btnAddToPlaylist.centerVertically();
-            btnAddToPlaylist.setPosition(btnLike.getRelativeX() - 4 - btnAddToPlaylist.getWidth(), btnAddToPlaylist.getRelativeY());
+            btnAddToPlaylist.setPosition(btnLike.getRelativeX() - ACTION_GAP - btnAddToPlaylist.getWidth(),
+                    btnAddToPlaylist.getRelativeY());
         });
         btnAddToPlaylist.setOnClickCallback((x, y, button) -> {
             if (button != 0 || !music.isNetease())
@@ -416,11 +431,11 @@ public class MusicWidget extends RoundedRectWidget {
                     : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
             btnPlayNext.centerVertically();
             // The two Netease-only controls are hidden for third-party tracks, and a hidden widget's
-            // position is not a reliable anchor, so fall back to the duration label in that case.
+            // position is not a reliable anchor, so fall back to the fixed duration slot in that case.
             double anchorX = music.isNetease()
                     ? btnAddToPlaylist.getRelativeX()
-                    : lblMusicDuration.getRelativeX();
-            btnPlayNext.setPosition(anchorX - 4 - btnPlayNext.getWidth(), btnPlayNext.getRelativeY());
+                    : actionsAnchorX(lblMusicDuration);
+            btnPlayNext.setPosition(anchorX - ACTION_GAP - btnPlayNext.getWidth(), btnPlayNext.getRelativeY());
         });
         btnPlayNext.setOnClickCallback((x, y, button) -> {
             if (button != 0)
@@ -463,6 +478,59 @@ public class MusicWidget extends RoundedRectWidget {
             this.entranceAnimationFinished = true;
         }
     }
+    /**
+     * 时长文本占用的固定槽位宽度。
+     *
+     * <p>时长用的是比例字体：pf14bold 里 {@code '1'} 只有 3.5 逻辑像素，{@code '0'} / {@code '8'} 是 5.0，
+     * 于是同样五个字符的 {@code "11:11"} 量出来 16.0、{@code "00:00"} 量出来 22.0，宽度能差 6 个逻辑像素。
+     * 右侧那几枚图标原来是一路挂在时长标签左边缘上的，因此每一行的图标列都跟着自己那首歌的数字宽度
+     * 左右漂移，上下相邻两行就对不齐——尤其是列表末尾几行凑在一起时最明显。</p>
+     *
+     * <p>这里按"用最宽的那个数字铺满模板"算出一个固定槽位：图标挂在槽位左边缘，列因此是死的；时长文本
+     * 本身仍然右对齐贴着行的右边缘（数字按右边缘对齐，与主流播放器一致）。宽度是从字体现量的，以后换
+     * 字体或改字号都会自己跟着变，不留经验常数。</p>
+     *
+     * <p>是否留出小时位按这一行自己的时长决定。一个歌单里"有小时"基本是全有或全无（普通歌单一首都没有，
+     * 混音 / 播客歌单全都有），所以两种常见情况下都是完美对齐；极少数混排歌单里也只是退回到原来的行为，
+     * 不会比现在更差，而给每一行都无条件留出小时位会白扔 12 个逻辑像素。</p>
+     *
+     * <p>刻意做成包级可见而不是私有：这条算式的正确性完全取决于字体的真实度量，需要能离线量。</p>
+     */
+    static double durationSlotWidth(boolean withHours) {
+        CFontRenderer fr = FontManager.pf14bold;
+        double digit = 0.0;
+        for (char c = '0'; c <= '9'; c++) {
+            digit = Math.max(digit, fr.getCharWidth(c, '\0'));
+        }
+        double colon = fr.getCharWidth(':', '\0');
+        return digit * (withHours ? 6 : 4) + colon * (withHours ? 2 : 1);
+    }
+
+    private double durationSlotWidth(LabelWidget lblMusicDuration) {
+        // 再拿标签自己的实测宽度兜一层底：字形是懒加载的，首帧 getCharWidth 会返回 0；万一以后
+        // formatDuration 的格式变了，槽位也不会窄到把文本压进图标底下。
+        return Math.max(durationSlotWidth(this.music.getDuration() >= ONE_HOUR_MILLIS),
+                lblMusicDuration.getWidth());
+    }
+
+    /** 右侧图标列的锚点，也就是时长槽位的左边缘。 */
+    private double actionsAnchorX(LabelWidget lblMusicDuration) {
+        return this.getWidth() - DURATION_RIGHT_MARGIN - durationSlotWidth(lblMusicDuration);
+    }
+
+    /**
+     * 右侧那一组控件（时长 + 图标）实际占掉的宽度，标题与艺术家按它留白。
+     *
+     * <p>原先这里写的是固定 {@code 80 / 40}。那是「加入歌单」与「下一首播放」两枚图标加进来之前的数字，
+     * 现在实际占用是 102 / 54，于是长标题会一直滑到图标底下（标题用的是滚动式限宽，看起来就是文字从图标
+     * 下面穿过去）。改成和图标锚点同一套算式之后，两边永远一致。</p>
+     */
+    private double rightActionsReserve() {
+        double slot = durationSlotWidth(this.music.getDuration() >= ONE_HOUR_MILLIS);
+        int iconCount = this.music.isNetease() ? 3 : 1;
+        return DURATION_RIGHT_MARGIN + slot + iconCount * (ACTION_GAP + ACTION_ICON_SIZE);
+    }
+
     private String formatDuration(long totalMillis) {
         long totalSeconds = totalMillis / 1000;
 
