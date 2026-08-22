@@ -14,6 +14,8 @@ public final class PlayerIconAssets {
 
     public static final Location FAVORITE = Location.of("muonium/textures/player/icons/favorite.png");
     public static final Location PLAYLIST = Location.of("muonium/textures/player/icons/playlist.png");
+    /** Queue-next glyph: three list lines with a play wedge on the shortest one. */
+    public static final Location PLAY_NEXT = Location.of("muonium/textures/player/icons/play-next.png");
     public static final Location HISTORY = Location.of("muonium/textures/player/icons/history.png");
     public static final Location PERSONAL_FM = Location.of("muonium/textures/player/icons/personal-fm.png");
     public static final Location PLAY_MODE_SEQUENTIAL = Location.of("muonium/textures/player/icons/play-mode-sequential.png");

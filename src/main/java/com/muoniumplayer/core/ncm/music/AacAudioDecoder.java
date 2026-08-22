@@ -586,6 +586,13 @@ final class AacAudioDecoder {
             if (dataBytes + data.length > 0xFFFFFFFFL) {
                 throw new IOException("Decoded AAC WAV exceeds the 4 GiB RIFF limit");
             }
+            // A third-party link can point at an hours-long upload. Abort while decoding instead of
+            // filling the cache and then failing the player's single large heap allocation.
+            long pcmLimit = PlaybackMemoryLimits.maxDecodedPcmBytes();
+            if (dataBytes + data.length > pcmLimit) {
+                throw new IOException("解码中止：" + PlaybackMemoryLimits.describeOverLimit(dataBytes)
+                        + "（避免游戏内存溢出）");
+            }
             output.write(data);
             dataBytes += data.length;
         }

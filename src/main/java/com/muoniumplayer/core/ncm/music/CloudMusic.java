@@ -77,6 +77,11 @@ public class CloudMusic implements SharedConstants {
     public static volatile PlaybackSession currentSession = null;
 
     public static volatile AudioPlayer player;
+    /**
+     * The deck that is fading out during an automix handover. It is not the active player any more, but
+     * it is still audible, so volume changes have to reach it too.
+     */
+    static volatile AudioPlayer fadingOutPlayer;
     private static final Object PLAYER_STATE_LOCK = new Object();
     private static final long PLAY_THREAD_JOIN_TIMEOUT_MS = 1000L;
     // 当前播放列表
@@ -115,6 +120,15 @@ public class CloudMusic implements SharedConstants {
 
     public static final List<LyricLine> lyrics = new CopyOnWriteArrayList<>();
     public static volatile LyricLine currentLyric = null;
+    /**
+     * Stable key of the track {@link #lyrics} belongs to, or {@code null} when nothing is committed.
+     *
+     * <p>The lyric list is global and is only replaced when a load succeeds, so after a failed load it
+     * still holds the <em>previous</em> track's timeline. Anything that draws conclusions from those
+     * timestamps - automix picks its mix-out point from the last sung line - has to know whose lyrics
+     * they are, otherwise it silently applies one song's structure to another.</p>
+     */
+    public static volatile String lyricsTrackKey = null;
     public static boolean hasTransLyrics = false;
     public static boolean hasRomanization = false;
     public static boolean haveNoWords = false;
@@ -419,6 +433,96 @@ public class CloudMusic implements SharedConstants {
         }
     }
 
+
+    // ─────────────────────────── 下一首播放（用户指定队列） ───────────────────────────
+    //
+    // Mainstream players let the user pin a few tracks in front of whatever the playlist would do
+    // next, then fall back to the playlist once those are done. That is exactly an insertion into the
+    // live queue: the chosen tracks sit immediately after the current one, in the order they were
+    // chosen, and nothing else about the queue or the play mode changes. {@link #playList} is already
+    // a private copy of the source list (see startPlaybackList), so the playlist the user is browsing
+    // is never touched, and a user who never uses the control gets byte-for-byte the old behaviour.
+
+    /** Guards the insertion so two quick clicks cannot interleave into the wrong order. */
+    private static final Object PLAY_NEXT_LOCK = new Object();
+    /**
+     * Absolute index of the last track queued through {@link #playNext(Music)} that has not been
+     * reached yet. The block heals itself: once playback passes the tail the value is simply below
+     * {@link #curIdx} again, so the next insertion starts a fresh block after the current track.
+     */
+    private static volatile int playNextTail = -1;
+    /**
+     * Bumped on every queue change. Automix pre-decodes whatever it predicts will play next, so a deck
+     * armed before the user changed their mind has to be thrown away.
+     */
+    static volatile long queueRevision;
+
+    /** Whether user-queued tracks are still waiting to be played. */
+    static boolean hasQueuedNext() {
+        int tail = playNextTail;
+        return tail > curIdx && tail < playList.size();
+    }
+
+    /** How many user-queued tracks are still waiting; 0 when the user queue is empty. */
+    public static int getQueuedNextCount() {
+        int tail = playNextTail;
+        int current = curIdx;
+        if (tail <= current || tail >= playList.size()) return 0;
+        return tail - current;
+    }
+
+    /** Whether this track is one of the tracks currently waiting in the user queue. */
+    public static boolean isQueuedNext(Music song) {
+        if (song == null) return false;
+        List<Music> queue = playList;
+        int tail = playNextTail;
+        int current = curIdx;
+        if (queue == null || tail <= current || tail >= queue.size()) return false;
+        for (int index = Math.max(0, current + 1); index <= tail; index++) {
+            Music queued = queue.get(index);
+            if (queued != null && queued.equals(song)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Queues {@code song} to play after the current track, behind anything already queued this way.
+     *
+     * @return whether the track was queued, or started when there was no queue to insert into
+     */
+    public static boolean playNext(Music song) {
+        if (song == null) return false;
+
+        List<Music> queue = playList;
+        if (queue == null || queue.isEmpty() || currentlyPlaying == null || curIdx < 0) {
+            // Nothing is playing, so there is no "next" to insert into. Starting the track is what a
+            // mainstream player does here, and it is more useful than silently doing nothing.
+            play(Collections.singletonList(song), 0);
+            DownloadDynamicIsland.showQueuedNextStarted(song.getName());
+            return true;
+        }
+
+        int pending;
+        synchronized (PLAY_NEXT_LOCK) {
+            int current = Math.max(0, curIdx);
+            int tail = playNextTail;
+            int insertAt = (tail > current && tail < queue.size()) ? tail + 1 : current + 1;
+            if (insertAt > queue.size()) insertAt = queue.size();
+            queue.add(insertAt, song);
+            playNextTail = insertAt;
+            queueRevision++;
+            pending = Math.max(1, insertAt - current);
+        }
+        DownloadDynamicIsland.showQueuedNext(song.getName(), pending);
+        return true;
+    }
+
+    /** Forgets the user queue; the tracks themselves stay wherever they were inserted. */
+    private static void clearQueuedNext() {
+        playNextTail = -1;
+        queueRevision++;
+    }
+
     /**
      * Returns the persisted player volume normalized to {@code 0.0..1.0}.
      * The mod-owned HUD configuration is the source of truth, so the value
@@ -457,6 +561,11 @@ public class CloudMusic implements SharedConstants {
         AudioPlayer activePlayer = player;
         if (activePlayer != null) {
             activePlayer.setVolume(safeVolume);
+        }
+        // Keep a deck that is still fading out in step, otherwise the blend jumps in level.
+        AudioPlayer fadingPlayer = fadingOutPlayer;
+        if (fadingPlayer != null && fadingPlayer != activePlayer) {
+            fadingPlayer.setVolume(safeVolume);
         }
 
         if (showNotice) {
@@ -592,6 +701,7 @@ public class CloudMusic implements SharedConstants {
         startIdx = normalizeStartIndex(startIdx);
         loadMusicCover(safeSongList.get(Math.min(startIdx, safeSongList.size() - 1)));
         playList = safeSongList;
+        clearQueuedNext();
         startNewPlayThread(safeSongList, startIdx);
     }
 
@@ -694,6 +804,19 @@ public class CloudMusic implements SharedConstants {
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
         private PlaybackSession session;
         private volatile AudioPlayer ownedPlayer;
+        /** Next track already decoded and waiting silently on the idle deck. */
+        private volatile ArmedTrack armed;
+        /** True while the background arm task is running, so only one arm is ever in flight. */
+        private volatile boolean arming;
+        /** Arm attempts made for the current track, so a transient failure retries but a broken one stops. */
+        private volatile int armAttempts;
+        /** Earliest wall-clock time the next arm attempt may start, i.e. the retry cooldown. */
+        private volatile long nextArmAt;
+        /** Last queue revision this thread reacted to, so a user queue change resets the arm. */
+        private volatile long seenQueueRevision = -1L;
+        /** Set by the wait loop when the armed deck took over, so {@code run()} skips a fresh start. */
+        private volatile boolean automixHandover;
+        private volatile AutomixFade activeFade;
 
         public PlayThread(List<Music> songs, int startIdx) {
             this.songs = songs;
@@ -705,34 +828,56 @@ public class CloudMusic implements SharedConstants {
         public void run() {
             curIdx = startIdx;
 
-            while (shouldContinuePlayback()) {
-                if (playListChanged()) {
-                    break;
-                }
+            try {
+                while (shouldContinuePlayback()) {
+                    if (playListChanged()) {
+                        break;
+                    }
 
-                Music currentSong = playList.get(curIdx);
-                prepareForPlayback();
+                    if (automixHandover) {
+                        // The armed deck is already audible and owns curIdx/session/lyrics. Nothing has
+                        // to be started; just resume supervising the track that is now playing.
+                        automixHandover = false;
+                        resetArmState();
+                    } else {
+                        Music currentSong = playList.get(curIdx);
+                        prepareForPlayback();
 
-                if (!playSong(currentSong)) {
-                    // Never skip a failed track automatically. Keep the failed song selected and
-                    // wait for the user to retry it, choose next/previous, or select another song.
-                    awaitingPlaybackAction = !isPlaybackCancelled() && !playListChanged() && !doBreak;
-                    playing.set(false);
-                    break;
-                }
+                        if (!playSong(currentSong)) {
+                            // Never skip a failed track automatically. Keep the failed song selected and
+                            // wait for the user to retry it, choose next/previous, or select another song.
+                            awaitingPlaybackAction = !isPlaybackCancelled() && !playListChanged() && !doBreak;
+                            playing.set(false);
+                            break;
+                        }
 
-                awaitingPlaybackAction = false;
-                preloadNextCover();
-                waitForPlaybackCompletion();
-                if (isPlaybackCancelled() || playListChanged() || session == null || !session.isActive()) {
-                    break;
+                        awaitingPlaybackAction = false;
+                        resetArmState();
+                        preloadNextCover();
+                    }
+
+                    waitForPlaybackCompletion();
+                    if (automixHandover) {
+                        // curIdx, session and the active player were advanced by the handover itself.
+                        continue;
+                    }
+
+                    cancelArmedTrack();
+                    finishAutomixFade();
+                    if (isPlaybackCancelled() || playListChanged() || session == null || !session.isActive()) {
+                        break;
+                    }
+                    handlePlaybackCompletion();
+                    updateCurrentIndex();
+                    if (personalFmActive && curIdx >= playList.size()) {
+                        PersonalFmManager.requestNextBatchAsync();
+                        break;
+                    }
                 }
-                handlePlaybackCompletion();
-                updateCurrentIndex();
-                if (personalFmActive && curIdx >= playList.size()) {
-                    PersonalFmManager.requestNextBatchAsync();
-                    break;
-                }
+            } finally {
+                // A deck that is mid-blend is not the active player, so nothing else would release it.
+                cancelArmedTrack();
+                finishAutomixFade();
             }
         }
 
@@ -754,6 +899,11 @@ public class CloudMusic implements SharedConstants {
             PlaybackSession activeSession = session;
             if (activeSession != null) activeSession.invalidate();
             interrupt();
+
+            // Release the automix decks first: neither of them is CloudMusic.player, so the block below
+            // would leave them running and audible.
+            cancelArmedTrack();
+            finishAutomixFade();
 
             synchronized (PLAYER_STATE_LOCK) {
                 AudioPlayer activePlayer = ownedPlayer;
@@ -842,6 +992,13 @@ public class CloudMusic implements SharedConstants {
 
             if (!isSessionUsable(targetSession)) return false;
 
+            // Third-party search responses (GD Studio) carry no duration. The decoder knows the real
+            // length now, so record it before the lyric/progress consumers read it.
+            AudioPlayer startedPlayer = ownedPlayer;
+            if (startedPlayer != null) {
+                song.applyDecodedDuration((long) startedPlayer.getTotalTimeMillis());
+            }
+
             // 歌词异步加载绑定本 Session（两阶段提交），歌词可先到或后到。
             // 网盘歌曲额外携带本地缓存文件，用于优先读取音频标签中的内嵌 LRC/YRC。
             loadLyric(song, targetSession, musicFile);
@@ -851,13 +1008,26 @@ public class CloudMusic implements SharedConstants {
         }
 
         private void waitForPlaybackCompletion() {
-            while (playing.get()) {
+            while (true) {
                 if (doBreak || !isSessionUsable(session)) break;
 
                 AudioPlayer activePlayer = ownedPlayer;
                 if (activePlayer == null) break;
                 CloudMusic.updateCurrentLyric(activePlayer.getCurrentTimeMillis());
                 NeteasePlaybackHistoryReporter.observe(activePlayer);
+
+                // The 10 ms supervision tick doubles as the crossfade clock: fine-grained enough for a
+                // smooth ramp and already bound to the session/cancellation checks above.
+                driveAutomixFade();
+                maybeArmNextTrack(activePlayer);
+                if (tryAutomixHandover(activePlayer)) {
+                    automixHandover = true;
+                    return;
+                }
+
+                // Checked after the handover attempt so a track that just ended can still hand over to an
+                // armed deck instead of falling back to the close/download/decode gap.
+                if (!playing.get()) break;
 
                 try {
                     Thread.sleep(10L);
@@ -905,10 +1075,25 @@ public class CloudMusic implements SharedConstants {
 
         private void handlePlayerInitializationError(Music song, Exception e) {
             e.printStackTrace();
-            String message = e.getMessage();
+            String message = rootCauseMessage(e);
             DownloadDynamicIsland.showPlaybackFailure(song == null ? "当前歌曲" : song.getName(),
-                    message == null || message.trim().isEmpty() ? "音频加载或解码失败" : "音频加载失败");
+                    message.isEmpty() ? "音频加载或解码失败" : message);
             System.err.printf(EnumChatColor.RED + "[NCM] Failed to initiate audio player! Error: %s\n", message);
+        }
+
+        /** Surfaces the deepest cause so a decode/memory limit is explained instead of hidden. */
+        private String rootCauseMessage(Throwable throwable) {
+            Throwable cause = throwable;
+            String message = "";
+            int depth = 0;
+            while (cause != null && depth++ < 6) {
+                String candidate = cause.getMessage();
+                if (candidate != null && !candidate.trim().isEmpty()) {
+                    message = candidate.trim();
+                }
+                cause = cause.getCause();
+            }
+            return message.length() > 90 ? message.substring(0, 90) : message;
         }
 
         private boolean startPlayback(Music song, Tuple<String, String> playUrl, File musicFile,
@@ -1160,6 +1345,474 @@ public class CloudMusic implements SharedConstants {
             playing.set(false);
         }
 
+        // ─────────────────────────── automix (seamless handover) ───────────────────────────
+        //
+        // The original sequence was: track ends → close the player → sleep(250) → resolve URL →
+        // download → decode → start. That is seconds of silence between two tracks. Automix moves all
+        // of that work forward: while the current track still plays, the next one is resolved, decoded
+        // and held silent on a second deck, and at the planned moment the two decks cross-fade. With
+        // AutomixSettings disabled none of this runs and the original sequence is used unchanged.
+
+        /** Playback position after which the next track may start being armed. */
+        private static final long EARLY_ARM_MILLIS = 10_000L;
+        /** Attempts allowed per track before automix gives up and lets the ordinary switch run. */
+        private static final int MAX_ARM_ATTEMPTS = 3;
+        /** Cooldown between arm attempts, so a failing source is not hammered every tick. */
+        private static final long ARM_RETRY_MILLIS = 20_000L;
+        /** Ramp used when the handover fires with (almost) none of the outgoing track left. */
+        private static final long LATE_FIRE_FADE_MILLIS = 700L;
+
+        /** The next track, fully decoded and waiting silently on the idle deck. */
+        private static final class ArmedTrack {
+            private final Music song;
+            private final File file;
+            private final AudioPlayer deck;
+            private final int index;
+            /** Playback generation the arm was made for; a newer one means the arm is stale. */
+            private final long generation;
+            /** Queue revision the prediction was made under; a newer one means it predicted wrong. */
+            private final long queueRevision;
+            private volatile AutomixPlan plan;
+
+            private ArmedTrack(Music song, File file, AudioPlayer deck, int index, long generation,
+                               long queueRevision) {
+                this.song = song;
+                this.file = file;
+                this.deck = deck;
+                this.index = index;
+                this.generation = generation;
+                this.queueRevision = queueRevision;
+            }
+        }
+
+        /**
+         * A crossfade in progress. Driven off the wall clock so a lag spike cannot stretch the ramp,
+         * but the clock is held still while playback is paused - otherwise a pause during the blend
+         * would let the ramp run to completion with only the outgoing deck audible.
+         */
+        private static final class AutomixFade {
+            private final AudioPlayer outgoing;
+            private final AudioPlayer incoming;
+            private final AutomixPlan plan;
+            /**
+             * Effective ramp length. Usually {@code plan.overlapMillis}, but shortened when the
+             * handover fires late: ramping in over four seconds while the outgoing track has already
+             * ended would open the new song from near silence.
+             */
+            private final long overlapMillis;
+            private long startedAt;
+            private long tickedAt;
+            /** True only when this fade paused the outgoing deck, so it is never resumed by accident. */
+            private boolean outgoingPaused;
+
+            private AutomixFade(AudioPlayer outgoing, AudioPlayer incoming, AutomixPlan plan,
+                                long overlapMillis, long startedAt) {
+                this.outgoing = outgoing;
+                this.incoming = incoming;
+                this.plan = plan;
+                this.overlapMillis = Math.max(1L, overlapMillis);
+                this.startedAt = startedAt;
+                this.tickedAt = startedAt;
+            }
+        }
+
+        /**
+         * Predicts the index {@link #updateCurIdx()} will land on, without touching any queue state.
+         * Returns -1 whenever the next track cannot be known ahead of time (a pending manual switch, the
+         * random-mode reshuffle at the end of a cycle, an FM batch that still has to be fetched), in
+         * which case automix simply does not arm and the ordinary switch runs.
+         */
+        private int peekNextIndex() {
+            List<Music> queue = playList;
+            if (queue == null || queue.isEmpty()) return -1;
+            if (dontAdd) return -1;
+            if (personalFmActive) {
+                int next = curIdx + 1;
+                return next < queue.size() ? next : -1;
+            }
+            if (playMode == PlayMode.LoopSingle) {
+                if (hasQueuedNext()) {
+                    int queuedNext = curIdx + 1;
+                    return queuedNext < queue.size() ? queuedNext : -1;
+                }
+                // Single loop replays this exact track. Blending it into itself would trim its tail on
+                // every repeat, which is the opposite of what "repeat one" asks for, so nothing is armed
+                // and the track plays to its natural end before restarting.
+                return -1;
+            }
+            int next = curIdx + 1;
+            if (next < queue.size()) return next;
+            // Random reshuffles the queue when it wraps, so the next track is genuinely unknown here.
+            if (playMode == PlayMode.LoopInList) return 0;
+            return -1;
+        }
+
+        /**
+         * An arm is only useful while this exact playback generation is still the current one, and
+         * while the queue still predicts the same next track. Queueing something with "play next"
+         * changes that prediction, so the revision is part of the validity check.
+         */
+        private boolean armStillValid(long armGeneration, long armRevision) {
+            return !isPlaybackCancelled() && !playListChanged() && !doBreak
+                    && generation.get() == armGeneration
+                    && CloudMusic.queueRevision == armRevision
+                    && AutomixSettings.isEnabled();
+        }
+
+        /** Clears the arm bookkeeping so the newly started track gets its own attempts. */
+        private void resetArmState() {
+            armAttempts = 0;
+            nextArmAt = 0L;
+        }
+
+        /**
+         * Starts resolving and decoding the next track. This deliberately begins very early in the
+         * current track rather than a few seconds before its end: a third-party source may have to be
+         * resolved, downloaded, transcoded and only then decoded, which regularly takes longer than the
+         * overlap itself. An arm that is not ready in time is not a blend, so being early is the whole
+         * feature. A failed attempt is retried a couple of times behind a cooldown, because one
+         * flaky URL should not silently disable the blend for the rest of the track.
+         */
+        private void maybeArmNextTrack(AudioPlayer activePlayer) {
+            long revision = CloudMusic.queueRevision;
+            if (revision != seenQueueRevision) {
+                // The user changed what plays next. Whatever was armed decoded the wrong track, and
+                // the attempt budget belongs to the old prediction, so both are reset.
+                seenQueueRevision = revision;
+                armAttempts = 0;
+                nextArmAt = 0L;
+                cancelArmedTrack();
+            }
+            if (armed != null || arming) return;
+            if (armAttempts >= MAX_ARM_ATTEMPTS) return;
+            if (!AutomixSettings.isEnabled() || awaitingPlaybackAction) return;
+            if (activePlayer == null || !isSessionUsable(session)) return;
+
+            long now = System.currentTimeMillis();
+            if (now < nextArmAt) return;
+
+            long total = (long) activePlayer.getTotalTimeMillis();
+            long position = (long) activePlayer.getCurrentTimeMillis();
+            if (total <= 0L) return;
+
+            long lead = AutomixSettings.getOverlapMillis() + AutomixSettings.ARM_LEAD_MILLIS;
+            // Either the track has settled into playback, or it is close enough to the end that the
+            // arm can no longer wait. Whichever comes first.
+            if (position < EARLY_ARM_MILLIS && total - position > lead) return;
+
+            int nextIndex = peekNextIndex();
+            if (nextIndex < 0 || nextIndex >= playList.size()) {
+                armAttempts = MAX_ARM_ATTEMPTS;
+                return;
+            }
+            Music nextSong = playList.get(nextIndex);
+            if (nextSong == null) {
+                armAttempts = MAX_ARM_ATTEMPTS;
+                return;
+            }
+
+            armAttempts++;
+            nextArmAt = now + ARM_RETRY_MILLIS;
+            arming = true;
+            final long armGeneration = generation.get();
+            final Music song = nextSong;
+            final int index = nextIndex;
+            final long armRevision = revision;
+            MultiThreadingUtil.runAsync(() -> armTrack(song, index, armGeneration, armRevision));
+        }
+
+        /** Resolve, download, decode and hold the next track. Runs off the playback thread. */
+        private void armTrack(Music song, int index, long armGeneration, long armRevision) {
+            AudioPlayer deck = null;
+            try {
+                if (!armStillValid(armGeneration, armRevision)) return;
+
+                Tuple<String, String> playUrl = song.getPlayUrl();
+                if (playUrl == null || !armStillValid(armGeneration, armRevision)) return;
+
+                File file = getMusicFile(playUrl, song);
+                if (file == null || !file.isFile() || !armStillValid(armGeneration, armRevision)) return;
+
+                // A second live deck doubles the resident PCM, so an oversized track is never armed.
+                long limit = AutomixSettings.maxDeckBytes();
+                if (file.length() > limit) {
+                    System.out.println("[Automix] skipping arm for " + song.getName()
+                            + ": decoded size " + PlaybackMemoryLimits.megabytes(file.length())
+                            + "MB exceeds the " + PlaybackMemoryLimits.megabytes(limit) + "MB deck budget");
+                    return;
+                }
+
+                deck = new AudioPlayer(file);
+                deck.setVolume(CloudMusic.getVolume());
+                deck.setFadeGain(0.0f);
+                // Third-party search results carry no duration; the decoder knows the real one now.
+                song.applyDecodedDuration((long) deck.getTotalTimeMillis());
+                if (!armStillValid(armGeneration, armRevision)) return;
+
+                ArmedTrack track = new ArmedTrack(song, file, deck, index, armGeneration, armRevision);
+                track.plan = AutomixPlanner.plan(ownedPlayer, deck,
+                        estimateLastVocalEndMillis(ownedPlayer));
+                if (track.plan == null || !armStillValid(armGeneration, armRevision)) return;
+
+                armed = track;
+                deck = null;   // ownership handed to the armed track
+                System.out.println("[Automix] armed " + song.getName() + " · " + track.plan.summary);
+                DownloadDynamicIsland.showAutomixArmed(song.getName());
+            } catch (Throwable failure) {
+                System.err.println("[Automix] unable to arm " + (song == null ? "next track" : song.getName())
+                        + ": " + failure.getMessage());
+            } finally {
+                if (deck != null) closeQuietly(deck);
+                arming = false;
+            }
+        }
+
+        /**
+         * End of the currently playing track's last lyric line, or {@code -1} when it has no timed
+         * lyrics. Mixing out after the last word is what keeps two sets of vocals from colliding.
+         */
+        private long estimateLastVocalEndMillis(AudioPlayer outgoing) {
+            try {
+                Music current = currentlyPlaying;
+                if (current == null) return -1L;
+                // The lyric list survives a failed load, so it may still describe the previous track.
+                // Using those timestamps would place the mix-out by the wrong song's structure.
+                String owner = CloudMusic.lyricsTrackKey;
+                if (owner == null || !owner.equals(current.getStableKey())) return -1L;
+
+                List<LyricLine> lines = CloudMusic.lyrics;
+                if (lines == null || lines.isEmpty()) return -1L;
+                for (int index = lines.size() - 1; index >= 0; index--) {
+                    LyricLine line = lines.get(index);
+                    if (line == null || line.lyric == null || line.lyric.trim().isEmpty()) continue;
+                    // A plain LRC line carries no duration; assume a short sung phrase.
+                    long span = line.duration > 0L ? line.duration : 2_500L;
+                    long end = line.timestamp + span;
+                    if (end <= 0L) return -1L;
+                    // Lyrics that run past the end of the audio belong to a different edit of the song.
+                    long total = outgoing == null ? 0L : (long) outgoing.getTotalTimeMillis();
+                    if (total > 0L && end > total) return -1L;
+                    return end;
+                }
+                return -1L;
+            } catch (Throwable ignored) {
+                // Lyrics are replaced concurrently by the loader; missing them is not an error.
+                return -1L;
+            }
+        }
+
+        /**
+         * Fires the handover once the outgoing track reaches the planned point, or immediately if it
+         * already ended (a late arm still beats a silent gap).
+         */
+        private boolean tryAutomixHandover(AudioPlayer activePlayer) {
+            ArmedTrack track = armed;
+            if (track == null || track.plan == null || activePlayer == null) return false;
+            if (!armStillValid(track.generation, track.queueRevision)) {
+                cancelArmedTrack();
+                return false;
+            }
+            if (track.index < 0 || track.index >= playList.size()) {
+                cancelArmedTrack();
+                return false;
+            }
+            long position = (long) activePlayer.getCurrentTimeMillis();
+            boolean ended = activePlayer.isFinished() || !playing.get();
+            // A paused track must not hand over: the incoming deck would start sounding on its own
+            // while the interface still shows playback as paused.
+            if (!ended && activePlayer.isPausing()) return false;
+            if (!ended && position < track.plan.fireMillis) return false;
+            return performAutomixHandover(activePlayer, track);
+        }
+
+        /**
+         * Promotes the armed deck to the active player: the outgoing track keeps sounding while it fades,
+         * and the incoming one takes over the queue index, session, lyrics and history reporting at once.
+         */
+        private boolean performAutomixHandover(AudioPlayer outgoing, ArmedTrack track) {
+            armed = null;
+            AutomixPlan plan = track.plan;
+            AudioPlayer incoming = track.deck;
+            if (incoming == null || !incoming.isUsable()) {
+                closeQuietly(incoming);
+                return false;
+            }
+
+            // How much of the outgoing track is actually left decides how long the ramp may be. An
+            // arm that only became ready after the planned point - a slow source, a long transcode -
+            // would otherwise fade the new track in over four seconds with nothing playing against it,
+            // which sounds like a gap followed by a track sneaking in rather than like a blend.
+            long remaining = Math.max(0L,
+                    (long) outgoing.getTotalTimeMillis() - (long) outgoing.getCurrentTimeMillis());
+            long effectiveOverlap = plan.overlapMillis;
+            if (!outgoing.isUsable() || outgoing.isFinished() || remaining < 400L) {
+                effectiveOverlap = LATE_FIRE_FADE_MILLIS;
+            } else if (remaining < effectiveOverlap) {
+                effectiveOverlap = Math.max(LATE_FIRE_FADE_MILLIS, remaining);
+            }
+            System.out.println("[Automix] handover -> " + track.song.getName() + " · " + plan.summary
+                    + (effectiveOverlap == plan.overlapMillis
+                            ? "" : " (ramp shortened to " + effectiveOverlap + "ms, " + remaining + "ms left)"));
+
+            // Attribute the outgoing track before the queue index moves on.
+            try {
+                NeteasePlaybackHistoryReporter.finish(outgoing,
+                        NeteasePlaybackHistoryReporter.EndReason.COMPLETED);
+            } catch (Throwable ignored) {
+            }
+            if (!dontAdd && playedFrom != null && curIdx >= 0 && curIdx < playList.size()) {
+                try {
+                    playList.get(curIdx).updPlayCount(playedFrom, outgoing.getCurrentTimeSeconds());
+                } catch (Throwable ignored) {
+                }
+            }
+
+            PlaybackSession nextSession;
+            synchronized (PLAYER_STATE_LOCK) {
+                if (!isSessionUsable(session) || ownedPlayer != outgoing) {
+                    closeQuietly(incoming);
+                    return false;
+                }
+                incoming.setVolume(CloudMusic.getVolume());
+                incoming.setFadeGain(plan.incomingGain(0.0));
+                // Set before playFrom(): the deck attaches its low shelf as it starts, and picks up
+                // this value without slewing, so the incoming track never gets one loud bass hit in
+                // before the swap takes hold.
+                incoming.setBassGainDb(plan.incomingBassDb(0.0));
+                try {
+                    incoming.playFrom(plan.incomingCueMillis);
+                } catch (Throwable startFailure) {
+                    System.err.println("[Automix] incoming deck failed to start: " + startFailure.getMessage());
+                    closeQuietly(incoming);
+                    return false;
+                }
+
+                curIdx = track.index;
+                currentlyPlaying = track.song;
+                nextSession = CloudMusic.beginNewSession(track.song);
+                session = nextSession;
+                nextSession.player = incoming;
+                nextSession.audioActive = true;
+                player = incoming;
+                ownedPlayer = incoming;
+                fadingOutPlayer = outgoing;
+                activeFade = new AutomixFade(outgoing, incoming, plan, effectiveOverlap,
+                        System.currentTimeMillis());
+                playing.set(true);
+            }
+
+            final AudioPlayer callbackPlayer = incoming;
+            final PlaybackSession callbackSession = nextSession;
+            incoming.setAfterPlayed(() -> {
+                if (ownedPlayer == callbackPlayer && isSessionUsable(callbackSession)) {
+                    this.notifyWaitLock();
+                }
+            });
+
+            loadMusicCover(track.song);
+            loadDynamicMusicCover(track.song);
+            loadLyric(track.song, nextSession, track.file);
+            NeteasePlaybackHistoryReporter.start(track.song, currentPlaylistContext, incoming);
+            DownloadDynamicIsland.showAutomixHandover(track.song.getName(), plan.summary);
+            return true;
+        }
+
+        /** Advances the equal-power ramp. Called from the same 10 ms tick that supervises playback. */
+        private void driveAutomixFade() {
+            AutomixFade fade = activeFade;
+            if (fade == null) return;
+
+            long now = System.currentTimeMillis();
+            AudioPlayer active = ownedPlayer;
+            boolean paused = active != null && active.isUsable() && !active.isFinished() && active.isPausing();
+            if (paused) {
+                // Hold the ramp instead of letting the wall clock run through the pause, and take the
+                // outgoing deck down with the active one - nothing else in the player knows about it.
+                fade.startedAt += Math.max(0L, now - fade.tickedAt);
+                fade.tickedAt = now;
+                if (!fade.outgoingPaused && fade.outgoing != null && fade.outgoing.isUsable()
+                        && !fade.outgoing.isPausing()) {
+                    fade.outgoing.pause();
+                    fade.outgoingPaused = true;
+                }
+                return;
+            }
+            if (fade.outgoingPaused && fade.outgoing != null) {
+                // Only ever resumed when this fade was the one that paused it: unpause() restarts a
+                // deck that stopped on its own from wherever it was cued, which would replay the
+                // outgoing track from the beginning.
+                fade.outgoing.unpause();
+                fade.outgoingPaused = false;
+            }
+            fade.tickedAt = now;
+
+            double progress = (now - fade.startedAt) / (double) fade.overlapMillis;
+            if (fade.incoming != null) {
+                fade.incoming.setFadeGain(fade.plan.incomingGain(progress));
+                fade.incoming.setBassGainDb(fade.plan.incomingBassDb(progress));
+            }
+            if (fade.outgoing != null) {
+                fade.outgoing.setFadeGain(fade.plan.outgoingGain(progress));
+                fade.outgoing.setBassGainDb(fade.plan.outgoingBassDb(progress));
+                fade.outgoing.setPlaybackRate(fade.plan.outgoingRate(progress));
+            }
+            if (progress < 1.0) return;
+
+            activeFade = null;
+            if (fade.incoming != null) {
+                fade.incoming.setFadeGain(1.0f);
+                // Flat response and natural tempo for the rest of the track: nothing from the blend
+                // may survive into ordinary playback.
+                fade.incoming.resetAutomixProcessing();
+            }
+            releaseFadedDeck(fade.outgoing);
+        }
+
+        /** Ends a blend early (cancellation, manual switch) without leaving a deck audible. */
+        private void finishAutomixFade() {
+            AutomixFade fade = activeFade;
+            activeFade = null;
+            if (fade == null) return;
+            if (fade.incoming != null && fade.incoming == ownedPlayer) {
+                fade.incoming.setFadeGain(1.0f);
+                fade.incoming.resetAutomixProcessing();
+            }
+            releaseFadedDeck(fade.outgoing);
+        }
+
+        private void releaseFadedDeck(AudioPlayer deck) {
+            if (deck == null) return;
+            synchronized (PLAYER_STATE_LOCK) {
+                if (fadingOutPlayer == deck) fadingOutPlayer = null;
+                // Promoted to the active player by a switch that raced this fade: not ours to close.
+                if (deck == ownedPlayer || deck == CloudMusic.player) {
+                    // It has to be flattened though, or it would keep playing with the blend's bass cut
+                    // and bent tempo for the rest of the track.
+                    deck.resetAutomixProcessing();
+                    return;
+                }
+            }
+            closeQuietly(deck);
+        }
+
+        /** Drops an arm that was never fired, releasing its decoded sample. */
+        private void cancelArmedTrack() {
+            ArmedTrack track = armed;
+            armed = null;
+            if (track == null || track.deck == null) return;
+            if (track.deck == ownedPlayer || track.deck == CloudMusic.player) return;
+            closeQuietly(track.deck);
+        }
+
+        private void closeQuietly(AudioPlayer deck) {
+            if (deck == null) return;
+            try {
+                deck.close();
+            } catch (Throwable ignored) {
+                // A deck that never fully initialised must not block the switch.
+            }
+        }
+
         private void loadMusicCover(Music song) {
             CloudMusic.loadMusicCover(song);
         }
@@ -1175,6 +1828,10 @@ public class CloudMusic implements SharedConstants {
                 // 单曲循环只影响自然播放结束；用户手动上一首/下一首仍可正常切歌。
                 if (dontAdd) {
                     dontAdd = false;
+                } else if (hasQueuedNext()) {
+                    // A track the user explicitly queued outranks single-track repeat, exactly once:
+                    // the queue is consumed, and repeat resumes on whatever lands here next.
+                    curIdx++;
                 }
 
                 if (curIdx < 0 || curIdx >= playList.size()) {
@@ -1255,6 +1912,7 @@ public class CloudMusic implements SharedConstants {
             lyrics.addAll(timeline.lines);
             currentLyric = lyrics.get(0);
             haveNoWords = timeline.haveNoWords;
+            lyricsTrackKey = music == null ? null : music.getStableKey();
         }
 
         MusicLyricsPanel.updateLyricPositionsImmediate(NCMScreen.getInstance().getPanelWidth() * MusicLyricsPanel.getLyricWidthFactor());

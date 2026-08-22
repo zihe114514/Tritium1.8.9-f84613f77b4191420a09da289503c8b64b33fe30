@@ -320,7 +320,10 @@ public class MusicWidget extends RoundedRectWidget {
 
         lblMusicArtist.setClickable(false);
 
-        LabelWidget lblMusicDuration = new LabelWidget(formatDuration(music.getDuration()), FontManager.pf14bold);
+        // Third-party sources ship no duration in their search response; it is measured while
+        // decoding, so the label reads the value live instead of freezing 00:00 at build time.
+        LabelWidget lblMusicDuration = new LabelWidget(
+                () -> formatDuration(music.getDuration()), FontManager.pf14bold);
         this.addChild(lblMusicDuration);
         lblMusicDuration.setBeforeRenderCallback(() -> {
             if (CloudMusic.currentlyPlaying != null && CloudMusic.currentlyPlaying.equals(music))
@@ -388,6 +391,32 @@ public class MusicWidget extends RoundedRectWidget {
             if (button != 0 || !music.isNetease())
                 return false;
             NCMScreen.getInstance().openAddToPlaylist(music);
+            return true;
+        });
+
+        // ===== 下一首播放：把这首歌插到当前歌曲之后，按点击顺序排队 =====
+        // Available for every source, not just Netease: it only reorders the local play queue, so it
+        // needs nothing from any account or API.
+        ThemedTextureIconWidget btnPlayNext = new ThemedTextureIconWidget(
+                PlayerIconAssets.PLAY_NEXT, "»", FontManager.pf16bold, 0, 0, 20, 20);
+        this.addChild(btnPlayNext);
+        btnPlayNext.setShouldOverrideMouseCursor(true);
+        btnPlayNext.setBeforeRenderCallback(() -> {
+            boolean queued = CloudMusic.isQueuedNext(music);
+            btnPlayNext.setColor(queued ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
+                    : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+            btnPlayNext.centerVertically();
+            // The two Netease-only controls are hidden for third-party tracks, and a hidden widget's
+            // position is not a reliable anchor, so fall back to the duration label in that case.
+            double anchorX = music.isNetease()
+                    ? btnAddToPlaylist.getRelativeX()
+                    : lblMusicDuration.getRelativeX();
+            btnPlayNext.setPosition(anchorX - 4 - btnPlayNext.getWidth(), btnPlayNext.getRelativeY());
+        });
+        btnPlayNext.setOnClickCallback((x, y, button) -> {
+            if (button != 0)
+                return false;
+            CloudMusic.playNext(music);
             return true;
         });
     }

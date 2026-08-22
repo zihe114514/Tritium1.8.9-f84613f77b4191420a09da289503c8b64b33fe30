@@ -258,7 +258,8 @@ public final class CadenceMusicService {
         if (music.isGd()) {
             try {
                 com.muoniumplayer.core.utils.Tuple<String, String> lrc =
-                        GdStudioMusicService.getLyric(music.getGdPlatform(), music.getGdLyricId());
+                        GdStudioMusicService.getLyricWithFallback(music.getGdPlatform(),
+                                music.getGdLyricId(), music.getName(), music.getArtistsName());
                 if (lrc == null) return null;
                 String original = lrc.getA() == null ? "" : lrc.getA();
                 String translated = lrc.getB() == null ? "" : lrc.getB();

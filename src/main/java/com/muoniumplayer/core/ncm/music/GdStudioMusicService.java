@@ -58,6 +58,8 @@ public final class GdStudioMusicService {
     /** A cross-source rescue costs one search plus one url request. */
     private static final int CROSS_SOURCE_MIN_BUDGET = 10;
     private static final int CROSS_SOURCE_LIMIT = 1;
+    /** A lyric rescue is decoration; it only runs while playback has ample budget to spare. */
+    private static final int LYRIC_FALLBACK_MIN_BUDGET = 20;
     /** Wall-clock guards so a slow provider cannot chain three full read timeouts. */
     private static final long LADDER_DEADLINE_MILLIS = 18_000L;
     private static final long CROSS_SOURCE_DEADLINE_MILLIS = 22_000L;
@@ -78,6 +80,7 @@ public final class GdStudioMusicService {
     private static final Map<String, CacheEntry<List<GdTrack>>> SEARCH_CACHE = new LinkedHashMap<>();
     private static final Map<String, CacheEntry<String>> COVER_CACHE = new LinkedHashMap<>();
     private static final Map<String, CacheEntry<Tuple<String, String>>> LYRIC_CACHE = new LinkedHashMap<>();
+    private static final Map<String, CacheEntry<Tuple<String, String>>> LYRIC_FALLBACK_CACHE = new LinkedHashMap<>();
     private static final Object HEALTH_LOCK = new Object();
     private static final Map<String, SourceHealth> HEALTH = new LinkedHashMap<>();
     private static final List<Platform> PLATFORMS = buildPlatforms();
@@ -301,7 +304,11 @@ public final class GdStudioMusicService {
             }
         }
         List<GdTrack> immutable = Collections.unmodifiableList(result);
-        cacheSearch(cacheKey, immutable);
+        // Never pin an empty answer: some sources intermittently return an empty array, and a cached
+        // miss would make an immediate retry (or the user searching again) pointless for 15 seconds.
+        if (!immutable.isEmpty()) {
+            cacheSearch(cacheKey, immutable);
+        }
         return new ArrayList<>(immutable);
     }
 
@@ -323,6 +330,12 @@ public final class GdStudioMusicService {
         if (!isHardBlocked(requested)) {
             try {
                 List<GdTrack> tracks = search(requested, name, count, page);
+                if (tracks.isEmpty() && isFlakyEmptySource(requested)
+                        && remainingRequestBudget() >= LADDER_MIN_BUDGET) {
+                    // Bilibili answers HTTP 200 with an empty array at random, so the source the user
+                    // actually selected gets one more chance before the query leaves it.
+                    tracks = search(requested, name, count, page);
+                }
                 if (!tracks.isEmpty()) {
                     return new SearchOutcome(tracks, requested, requested, "", false);
                 }
@@ -340,6 +353,7 @@ public final class GdStudioMusicService {
         }
 
         for (String candidate : fallbackCandidates(requested)) {
+            if (isCancelled()) break;
             if (remainingRequestBudget() < LADDER_MIN_BUDGET) break;
             try {
                 List<GdTrack> tracks = search(candidate, name, count, page);
@@ -436,6 +450,51 @@ public final class GdStudioMusicService {
     }
 
     /**
+     * Lyrics with fallback protection. Bilibili never returns an LRC, and other sources occasionally
+     * have none, so a healthy source is matched by title/artist once and the answer (hit or miss) is
+     * cached. The rescue only runs while there is plenty of request budget left, because it costs a
+     * search plus a lyric request and must never compete with playback.
+     */
+    public static Tuple<String, String> getLyricWithFallback(String source, String lyricId,
+                                                            String trackName, String artist) {
+        Tuple<String, String> primary = getLyric(source, lyricId);
+        if (primary != null && !safe(primary.getA()).isEmpty()) return primary;
+
+        String requested = normalizePlatform(source);
+        String title = safe(trackName);
+        if (requested.isEmpty() || title.isEmpty()) return primary;
+
+        String cacheKey = requested + ':' + safe(lyricId) + ':' + title.toLowerCase(Locale.ROOT);
+        Tuple<String, String> cached = cached(LYRIC_FALLBACK_CACHE, cacheKey);
+        if (cached != null) {
+            return safe(cached.getA()).isEmpty() ? primary : cached;
+        }
+        if (remainingRequestBudget() < LYRIC_FALLBACK_MIN_BUDGET) return primary;
+
+        int attempts = 0;
+        for (String candidate : fallbackCandidates(requested)) {
+            if (isCancelled()) break;
+            if (attempts >= CROSS_SOURCE_LIMIT) break;
+            attempts++;
+            try {
+                List<GdTrack> tracks = search(candidate, searchQuery(title, artist), 10, 1);
+                GdTrack match = bestMatch(tracks, title, artist);
+                if (match == null || safe(match.lyricId).isEmpty()) continue;
+                Tuple<String, String> rescued = getLyric(candidate, match.lyricId);
+                if (rescued != null && !safe(rescued.getA()).isEmpty()) {
+                    cache(LYRIC_FALLBACK_CACHE, cacheKey, rescued, LYRIC_CACHE_MILLIS);
+                    return rescued;
+                }
+            } catch (Throwable ignored) {
+                // Lyrics are decoration: a failed rescue must never surface as an error.
+            }
+        }
+        // Remember the miss so the lyric panel does not retry it on every playback.
+        cache(LYRIC_FALLBACK_CACHE, cacheKey, new Tuple<>("", ""), NEGATIVE_CACHE_MILLIS);
+        return primary;
+    }
+
+    /**
      * Resolves exactly the selected source/id pair from the search response, walking the documented
      * bitrate ladder when a source answers with an empty URL for the preferred tier.
      */
@@ -482,6 +541,7 @@ public final class GdStudioMusicService {
         if (!title.isEmpty()) {
             int attempts = 0;
             for (String candidate : fallbackCandidates(requested)) {
+                if (isCancelled()) break;
                 if (attempts >= CROSS_SOURCE_LIMIT) break;
                 if (remainingRequestBudget() < CROSS_SOURCE_MIN_BUDGET) break;
                 if (System.currentTimeMillis() - started > CROSS_SOURCE_DEADLINE_MILLIS) break;
@@ -510,6 +570,7 @@ public final class GdStudioMusicService {
         long ladderStarted = System.currentTimeMillis();
         Exception firstError = null;
         for (int index = 0; index < ladder.length; index++) {
+            if (isCancelled()) break;
             if (index > 0 && remainingRequestBudget() < LADDER_MIN_BUDGET) break;
             if (index > 0 && System.currentTimeMillis() - ladderStarted > LADDER_DEADLINE_MILLIS) break;
             try {
@@ -529,6 +590,8 @@ public final class GdStudioMusicService {
             }
         }
         if (firstError != null) throw firstError;
+        // A cancelled attempt says nothing about the source, so it must not be flagged as broken.
+        ensureNotCancelled();
         markEmptyPlayback(platform);
         return null;
     }
@@ -545,6 +608,11 @@ public final class GdStudioMusicService {
             candidates.add(platform.key);
         }
         return candidates;
+    }
+
+    /** Sources observed to answer HTTP 200 with an empty array even for a matching query. */
+    private static boolean isFlakyEmptySource(String source) {
+        return "bilibili".equals(safe(source).toLowerCase(Locale.ROOT));
     }
 
     private static String searchQuery(String title, String artist) {
@@ -737,6 +805,16 @@ public final class GdStudioMusicService {
         }
     }
 
+    private static void ensureNotCancelled() throws InterruptedException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException("GD音乐台请求已取消");
+        }
+    }
+
+    private static boolean isCancelled() {
+        return Thread.currentThread().isInterrupted();
+    }
+
     private static boolean hasCosmeticBudget() {
         return remainingRequestBudget() > COSMETIC_BUDGET_RESERVE;
     }
@@ -862,6 +940,9 @@ public final class GdStudioMusicService {
     }
 
     private static JsonElement json(String query, RequestKind kind, String source) throws Exception {
+        // A resolve abandoned by its caller (timeout cancels the future with an interrupt) must not
+        // keep consuming the documented 50 requests / 5 minutes for a result nobody will read.
+        ensureNotCancelled();
         acquireRequestSlot(kind);
         HttpURLConnection connection = (HttpURLConnection) new URL(API_ENDPOINT + "?" + query).openConnection();
         connection.setConnectTimeout(kind.connectTimeout);

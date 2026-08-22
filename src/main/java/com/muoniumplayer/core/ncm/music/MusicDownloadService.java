@@ -21,6 +21,10 @@ import java.util.Map;
  */
 final class MusicDownloadService {
 
+    /** Audio payloads are large; a stalled CDN read must not be treated as a failure after 8s. */
+    private static final int STREAM_CONNECT_TIMEOUT_MILLIS = 15_000;
+    private static final int STREAM_READ_TIMEOUT_MILLIS = 45_000;
+
     private MusicDownloadService() {
     }
 
@@ -35,7 +39,8 @@ final class MusicDownloadService {
         DownloadDynamicIsland.beginDownload();
 
         try {
-            InputStream stream = new WrappedInputStream(HttpUtils.get(playUrl, null, streamHeaders),
+            InputStream stream = new WrappedInputStream(HttpUtils.get(playUrl, null, streamHeaders,
+                    STREAM_CONNECT_TIMEOUT_MILLIS, STREAM_READ_TIMEOUT_MILLIS),
                     new WrappedInputStream.ProgressListener() {
                         com.muoniumplayer.core.utils.timing.Timer timer = new com.muoniumplayer.core.utils.timing.Timer();
 

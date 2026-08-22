@@ -81,6 +81,13 @@ public class Music {
     @SerializedName("dt")
     private final long duration;
 
+    /**
+     * Length measured from the decoded stream. GD Studio search responses carry no duration, so
+     * without this the list, Coverflow and progress readouts would stay at 00:00 for those tracks.
+     * {@code transient} keeps it out of Lombok equality and out of serialized playlist data.
+     */
+    private transient volatile long decodedDurationMillis;
+
     @SerializedName("mark")
     private final long featureFlag;
 
@@ -334,6 +341,18 @@ public class Music {
         music.gdLyricId = nonNull(track.lyricId);
         music.externalCoverUrl = "";
         return music;
+    }
+
+    /** Source metadata duration, falling back to the length measured while decoding. */
+    public long getDuration() {
+        return duration > 0L ? duration : decodedDurationMillis;
+    }
+
+    /** Records the decoder-reported length for a source that shipped no duration metadata. */
+    public void applyDecodedDuration(long millis) {
+        if (millis > 0L && duration <= 0L) {
+            decodedDurationMillis = millis;
+        }
     }
 
     public Track toCadenceTrack() {

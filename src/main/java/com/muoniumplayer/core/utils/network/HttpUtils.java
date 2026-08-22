@@ -15,6 +15,9 @@ import java.util.Map;
 
 public class HttpUtils {
 
+    private static final int DEFAULT_CONNECT_TIMEOUT_MILLIS = 5000;
+    private static final int DEFAULT_READ_TIMEOUT_MILLIS = 8000;
+
     public static InputStream get(String url, Map<String, String> params) throws IOException {
         return get(url, params, null);
     }
@@ -33,6 +36,16 @@ public class HttpUtils {
 
     public static InputStream get(String url, Map<String, String> params, Map<String, String> headers) throws IOException {
         return request(mapToString(url, params, "?"), null, headers, "GET");
+    }
+
+    /**
+     * GET with explicit timeouts. Large audio transfers need a longer read window than the 8s
+     * default, otherwise a slow CDN stalls the transfer and the track is reported unplayable.
+     */
+    public static InputStream get(String url, Map<String, String> params, Map<String, String> headers,
+                                  int connectTimeoutMillis, int readTimeoutMillis) throws IOException {
+        return request(mapToString(url, params, "?"), null, headers, "GET",
+                "application/x-www-form-urlencoded", connectTimeoutMillis, readTimeoutMillis);
     }
 
     public static String getString(String url, Map<String, String> params, Map<String, String> headers) throws IOException {
@@ -108,6 +121,12 @@ public class HttpUtils {
     }
 
     public static InputStream request(String url, String params, Map<String, String> headers, String method, String mediaType) throws IOException {
+        return request(url, params, headers, method, mediaType,
+                DEFAULT_CONNECT_TIMEOUT_MILLIS, DEFAULT_READ_TIMEOUT_MILLIS);
+    }
+
+    public static InputStream request(String url, String params, Map<String, String> headers, String method,
+                                      String mediaType, int connectTimeoutMillis, int readTimeoutMillis) throws IOException {
         if (url == null || url.trim().isEmpty()) {
             return null;
         }
@@ -119,8 +138,8 @@ public class HttpUtils {
             conn.setDoOutput(true);
             conn.setUseCaches(false);
         }
-        conn.setReadTimeout(8000);
-        conn.setConnectTimeout(5000);
+        conn.setReadTimeout(Math.max(1000, readTimeoutMillis));
+        conn.setConnectTimeout(Math.max(1000, connectTimeoutMillis));
         conn.setRequestMethod(method);
 //        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 //        conn.setRequestProperty("Accept-Charset", "utf-8");

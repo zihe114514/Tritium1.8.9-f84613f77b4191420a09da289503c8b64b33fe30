@@ -75,6 +75,8 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static volatile long downloadCompletedAt;
     private static volatile boolean transcoding;
     private static volatile double transcodeProgress;
+    /** Last moment {@link #transcodeProgress} actually moved; drives the transcode stall watchdog. */
+    private static volatile long transcodeProgressAdvancedAt;
 
     private static volatile IslandNoticeType noticeType = IslandNoticeType.NONE;
     private static volatile String noticeTitle = "";
@@ -89,6 +91,18 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     private static final long PLAYLIST_REFRESH_NOTICE_TIMEOUT_MILLIS = 30_000L;
     /** GD URL resolution has a longer network budget, but its loading card must still terminate. */
     private static final long GD_SOURCE_NOTICE_TIMEOUT_MILLIS = 45_000L;
+    /** Playlist membership submits are short requests; a lost callback must not pin the card. */
+    private static final long PLAYLIST_TRACK_ADD_NOTICE_TIMEOUT_MILLIS = 20_000L;
+    /** Transcoding may legitimately run for minutes, so it is watched for stalls, not total time. */
+    private static final long TRANSCODE_STALL_TIMEOUT_MILLIS = 30_000L;
+    /** Safety net: a persistent card without a dedicated channel still terminates on its own. */
+    private static final long DEFAULT_PERSISTENT_NOTICE_TIMEOUT_MILLIS = 30_000L;
+    /**
+     * Absolute moment the active persistent card gives up. It is captured once per status channel, so
+     * repeated "still working" updates (clicking refresh again, a retried resolve) can no longer slide
+     * the deadline forward and leave the island stuck in a loading state forever.
+     */
+    private static volatile long noticeDeadlineAt;
     /** True only for ordinary notices that are part of a multi-message queue. */
     private static volatile boolean noticeUsesQueueInterval;
 
@@ -156,13 +170,17 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     public static void beginTranscode(String sourceName, String targetName) {
         transcoding = true;
         transcodeProgress = 0.0;
+        transcodeProgressAdvancedAt = System.currentTimeMillis();
         publishNotice(IslandNoticeType.TRANSCODING, "音频转码",
                 formatTranscodeValue(sourceName, targetName), true);
     }
 
     /** Updates the transcode progress without publishing a new notice revision. */
     public static void updateTranscodeProgress(double progress) {
-        transcodeProgress = DynamicIslandMath.clamp01(progress);
+        double clamped = DynamicIslandMath.clamp01(progress);
+        // A stalled decoder stops moving the bar; that is what the watchdog below reacts to.
+        if (clamped > transcodeProgress) transcodeProgressAdvancedAt = System.currentTimeMillis();
+        transcodeProgress = clamped;
     }
 
     /** Shows the verified conversion result for the configured completion hold duration. */
@@ -273,6 +291,48 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                         + Math.max(0L, elapsedMillis) + "ms · "
                         + safeNoticeValue(reason, "请求失败"));
     }
+    /**
+     * Announces a seamless automix handover. An ordinary notice on purpose: the blend is already
+     * audible, so this card must queue politely behind anything the user actually triggered instead of
+     * interrupting it.
+     */
+    public static void showAutomixHandover(String trackName, String detail) {
+        publishNotice(IslandNoticeType.AUTOMIX, "无缝切换",
+                safeNoticeValue(trackName, "下一首") + " · " + safeNoticeValue(detail, "已交接"));
+    }
+
+    /** Reports that the next track is decoded and waiting on the idle deck. */
+    public static void showAutomixArmed(String trackName) {
+        publishNotice(IslandNoticeType.AUTOMIX, "下一首已就绪",
+                safeNoticeValue(trackName, "下一首") + " · 将无缝接入");
+    }
+
+    /**
+     * Confirms that a track was queued to play next. An ordinary notice: the user triggered it, but it
+     * changes nothing audible right now, so it queues politely like every other confirmation.
+     *
+     * @param pending how many user-queued tracks are now waiting, including this one
+     */
+    public static void showQueuedNext(String trackName, int pending) {
+        String detail = pending > 1
+                ? "已排在第 " + pending + " 位 · 播完后回到歌单"
+                : "下一首就播 · 播完后回到歌单";
+        publishNotice(IslandNoticeType.PLAY_NEXT, "已加入下一首播放",
+                safeNoticeValue(trackName, "所选歌曲") + " · " + detail);
+    }
+
+    /** Reports that "play next" had no queue to insert into and simply started the track. */
+    public static void showQueuedNextStarted(String trackName) {
+        publishNotice(IslandNoticeType.PLAY_NEXT, "开始播放",
+                safeNoticeValue(trackName, "所选歌曲") + " · 当前没有播放队列，已直接播放");
+    }
+
+    /** Reports the automix switch itself being turned on or off. */
+    public static void showAutomixToggle(boolean enabled, String detail) {
+        publishNotice(IslandNoticeType.AUTOMIX, enabled ? "无缝切换已开启" : "无缝切换已关闭",
+                safeNoticeValue(detail, enabled ? "切歌时自动交叉淡化" : "切歌恢复为直接切换"));
+    }
+
     /** Feedback for GD Studio API URL resolution. */
     public static void showGdSourceResolving(String sourceName) {
         publishNotice(IslandNoticeType.GD_SOURCE_LOADING, "GD音乐台获取链接",
@@ -442,6 +502,11 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
 
     private static void publishActiveNoticeLocked(IslandNoticeType type, String title, String value,
                                                    boolean persistent, boolean useQueueInterval, long shownAt) {
+        // Keep the deadline of a status channel that is merely re-announcing itself, so a repeated
+        // "still working" update cannot postpone the timeout indefinitely.
+        boolean sameChannel = persistent && noticePersistent && noticeType == type && noticeDeadlineAt > 0L;
+        noticeDeadlineAt = !persistent ? 0L
+                : sameChannel ? noticeDeadlineAt : shownAt + persistentNoticeTimeoutMillis(type);
         noticeType = type;
         noticeTitle = title;
         noticeValue = value;
@@ -466,6 +531,22 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     } else if (noticeType == IslandNoticeType.GD_SOURCE_LOADING) {
                         publishActiveNoticeLocked(IslandNoticeType.GD_SOURCE_ERROR, "GD音乐台链接超时",
                                 "45 秒内未获取到播放链接 · 请稍后重试", false, queueMode, now);
+                    } else if (noticeType == IslandNoticeType.PLAYLIST_TRACK_ADDING) {
+                        publishActiveNoticeLocked(IslandNoticeType.PLAYLIST_TRACK_ADD_ERROR, "加入歌单超时",
+                                "20 秒内未收到确认 · 请稍后重试", false, queueMode, now);
+                    } else if (noticeType == IslandNoticeType.TRANSCODING) {
+                        transcoding = false;
+                        transcodeProgress = 0.0;
+                        publishActiveNoticeLocked(IslandNoticeType.PLAYBACK_ERROR, "转码无响应",
+                                "30 秒内解码进度没有变化 · 已结束提示", false, queueMode, now);
+                    } else if (!NOTICE_QUEUE.isEmpty()) {
+                        // Unknown channel: hand the island back to the waiting notices instead of
+                        // pinning a card that has no terminal message of its own.
+                        QueuedNotice next = NOTICE_QUEUE.removeFirst();
+                        publishActiveNoticeLocked(next.type, next.title, next.value, next.persistent,
+                                next.useQueueInterval, now);
+                    } else {
+                        publishActiveNoticeLocked(IslandNoticeType.NONE, "", "", false, false, now);
                     }
                 }
                 return;
@@ -486,12 +567,21 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
     /** Persistent refresh and GD-link cards have independent timeout/completion channels. */
     private static boolean isPersistentNoticeTimedOut(long now) {
         if (noticeShownAt <= 0L) return false;
-        long timeout = noticeType == IslandNoticeType.REFRESHING
-                ? PLAYLIST_REFRESH_NOTICE_TIMEOUT_MILLIS
-                : noticeType == IslandNoticeType.GD_SOURCE_LOADING
-                ? GD_SOURCE_NOTICE_TIMEOUT_MILLIS
-                : Long.MAX_VALUE;
-        return now - noticeShownAt >= timeout;
+        if (noticeType == IslandNoticeType.TRANSCODING) {
+            // A long track may decode for minutes, so only a stalled decoder ends the card.
+            long advancedAt = transcodeProgressAdvancedAt;
+            return advancedAt > 0L && now - advancedAt >= TRANSCODE_STALL_TIMEOUT_MILLIS;
+        }
+        return noticeDeadlineAt > 0L && now >= noticeDeadlineAt;
+    }
+
+    /** Every live status card needs a finite budget; an unlisted one falls back to the default. */
+    private static long persistentNoticeTimeoutMillis(IslandNoticeType type) {
+        if (type == IslandNoticeType.REFRESHING) return PLAYLIST_REFRESH_NOTICE_TIMEOUT_MILLIS;
+        if (type == IslandNoticeType.GD_SOURCE_LOADING) return GD_SOURCE_NOTICE_TIMEOUT_MILLIS;
+        if (type == IslandNoticeType.PLAYLIST_TRACK_ADDING) return PLAYLIST_TRACK_ADD_NOTICE_TIMEOUT_MILLIS;
+        if (type == IslandNoticeType.TRANSCODING) return TRANSCODE_STALL_TIMEOUT_MILLIS;
+        return DEFAULT_PERSISTENT_NOTICE_TIMEOUT_MILLIS;
     }
     private static final class QueuedNotice {
         private final IslandNoticeType type;
@@ -1169,7 +1259,20 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
                     RenderSystem.reAlpha(accentColor, alpha * .52f));
             return;
         }
-        if (type == IslandNoticeType.QUALITY) {
+        if (type == IslandNoticeType.PLAY_NEXT) {
+            // Three queue lines with a play wedge: the same idea as the row control that produced it.
+            roundedRect(centerX - 5.6, centerY - 4.6, 8.4, 1.4, .7, foreground);
+            roundedRect(centerX - 5.6, centerY - 1.0, 8.4, 1.4, .7, foreground);
+            roundedRect(centerX - 5.6, centerY + 2.6, 4.6, 1.4, .7, foreground);
+            roundedRect(centerX + 1.6, centerY + 1.4, 1.2, 3.8, .6,
+                    RenderSystem.reAlpha(accentColor, alpha));
+            roundedRect(centerX + 2.8, centerY + 2.1, 1.2, 2.4, .6,
+                    RenderSystem.reAlpha(accentColor, alpha));
+            roundedRect(centerX + 4.0, centerY + 2.7, 1.2, 1.2, .6,
+                    RenderSystem.reAlpha(accentColor, alpha));
+            return;
+        }
+        if (type == IslandNoticeType.QUALITY || type == IslandNoticeType.AUTOMIX) {
             // A compact equalizer makes a playback-quality notice distinct from other status states.
             roundedRect(centerX - 5.1, centerY + 1.5, 2.2, 3.5, 1.1,
                     RenderSystem.reAlpha(accentColor, alpha));
@@ -1313,7 +1416,9 @@ public final class DownloadDynamicIsland implements SharedConstants, SharedRende
         GD_SOURCE_LOADING,
         GD_SOURCE_SUCCESS,
         GD_SOURCE_HEALTHY,
-        GD_SOURCE_ERROR
+        GD_SOURCE_ERROR,
+        AUTOMIX,
+        PLAY_NEXT
     }
 
 

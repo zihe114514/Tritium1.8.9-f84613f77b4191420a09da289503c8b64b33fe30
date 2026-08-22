@@ -3,6 +3,7 @@ package com.muoniumplayer.core.screens.ncm.panels;
 import org.lwjgl.input.Mouse;
 import com.muoniumplayer.core.management.FontManager;
 import com.muoniumplayer.core.ncm.music.AudioPlayer;
+import com.muoniumplayer.core.ncm.music.AutomixSettings;
 import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.PersonalFmManager;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
@@ -155,6 +156,14 @@ public class ControlsBar extends NCMPanel {
                 .setOnClickCallback((x, y, mouseButton) -> {
                     if (mouseButton == 0) {
                         if (!CloudMusic.isPersonalFmActive()) CloudMusic.cyclePlayMode();
+                    } else if (mouseButton == 1) {
+                        // Right click toggles the seamless handover, next to the mode it applies to.
+                        boolean enabled = !AutomixSettings.isEnabled();
+                        AutomixSettings.setEnabled(enabled);
+                        DownloadDynamicIsland.showAutomixToggle(enabled, enabled
+                                ? String.format(java.util.Locale.ROOT, "重叠 %.1fs · 下一首将提前解码",
+                                        AutomixSettings.getOverlapSeconds())
+                                : "切歌恢复为原有的直接切换");
                     }
                     return true;
                 });

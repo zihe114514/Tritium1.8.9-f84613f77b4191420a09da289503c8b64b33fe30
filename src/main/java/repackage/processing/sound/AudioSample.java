@@ -163,6 +163,11 @@ public class AudioSample extends SoundObject {
 	 * @webBrief Changes the amplitude/volume of the player.
 	 **/
 	public void amp(float amp) {
+		// Also keep the inherited field in step: SoundObject.play() re-applies it through
+		// setAmplitude(), so an amplitude set only on the port would be thrown away (and replaced by
+		// the default 1.0) the next time playback starts. That matters for a crossfade, whose
+		// incoming deck is deliberately started at zero.
+		this.amp = amp;
 		this.player.amplitude.set(amp);
 	}
 

@@ -25,6 +25,9 @@ public final class ConfigPaths {
     /** User-selected GD Studio aggregated platform (netease/joox/...), persisted separately. */
     public static final File GD_SOURCE = new File("config", "muonium/gd_source.json");
 
+    /** Automix (seamless track handover) preferences. */
+    public static final File AUTOMIX = new File("config", "muonium/automix.json");
+
     static {
         migrateLegacyFiles();
     }
