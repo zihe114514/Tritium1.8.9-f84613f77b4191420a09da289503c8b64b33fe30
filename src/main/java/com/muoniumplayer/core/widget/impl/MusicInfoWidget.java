@@ -34,6 +34,9 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
     public BooleanValue turnComposerIntoLyric = api.getValueManager().createBoolean("Turn Composer Into Lyric", false);
 
+    /** 网易云动态封面(需要 ffmpeg 抽帧)。关掉后桌面歌曲信息与全屏歌词页一律用静态封面。 */
+    public BooleanValue animatedCover = api.getValueManager().createBoolean("Animated Cover", true);
+
     public NumberValue volume = api.getValueManager().createDouble("Volume", 0.1, 0.0, 1.0, 0.01);
 
     public ExtensionWidget widget;
@@ -51,7 +54,7 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
                 CloudMusic.player.setVolume(val.floatValue());
         });
         
-        this.addValues(this.turnComposerIntoLyric, this.volume);
+        this.addValues(this.turnComposerIntoLyric, this.animatedCover, this.volume);
         this.setEventHandler(this);
     }
 
@@ -100,13 +103,9 @@ public class MusicInfoWidget extends ExtensionModule implements SharedConstants,
 
         if (playingMusic != null) {
 
-            // Dynamic cover is optional. The normal small static cover remains the guaranteed fallback.
-            Location cover = playingMusic.getDynamicCoverLocation();
+            // 动态封面就绪时优先用它;没有(或用户关掉)时仍是静态小封面。
+            Location cover = CloudMusic.preferredCoverLocation(playingMusic, playingMusic.getSmallCoverLocation());
             ITextureObject texture = TextureManager.getInstance().getTexture(cover);
-            if (texture == null) {
-                cover = playingMusic.getSmallCoverLocation();
-                texture = TextureManager.getInstance().getTexture(cover);
-            }
 
             double imgSpacing = 4;
 

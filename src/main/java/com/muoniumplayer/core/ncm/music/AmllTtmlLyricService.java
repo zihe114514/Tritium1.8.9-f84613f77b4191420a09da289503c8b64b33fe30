@@ -37,6 +37,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>请求间隔不低于 25 毫秒,远低于文档标注的单 IP 50 次/秒上限。</li>
  *   <li>404(词库没有这首歌)按"未命中"处理并短期负缓存,不计入故障;连接失败、读取超时、429 等
  *       连续 3 次会打开熔断,5 分钟内不再请求,歌词加载因此永远不会拖慢播放。</li>
+ *   <li>只有"词库确实没有"才写负缓存。接口不可用时不写,否则一次网络抖动就会让这首歌在接下来的
+ *       十分钟里被降级成平台歌词——而这条链路的优先级必须始终高于官方平台。</li>
  *   <li>命中结果缓存的是原始 TTML 文本而不是解析后的 LyricLine:渲染对象带有滚动/透明度状态,
  *       跨次播放复用同一批对象会把上一次的动画状态带进新的一次播放。</li>
  *   <li>线程被中断(调用方已放弃)时立即返回,不再消耗请求。</li>
@@ -62,6 +64,11 @@ final class AmllTtmlLyricService {
     private static final Map<String, CacheEntry> CACHE = new ConcurrentHashMap<String, CacheEntry>();
     private static final Object REQUEST_LOCK = new Object();
     private static final AtomicInteger CONSECUTIVE_FAILURES = new AtomicInteger();
+    /**
+     * 本次解析途中是否出现过"不是 404"的失败（连接失败、读取超时、429 等）。每次解析在自己的线程上
+     * 进行（歌词加载是异步的，automix 预备还会并发解析下一首），所以这个标记必须是线程私有的。
+     */
+    private static final ThreadLocal<Boolean> TRANSIENT_FAILURE = new ThreadLocal<Boolean>();
 
     private static long nextRequestAtMillis;
     private static volatile long breakerOpenUntilMillis;
@@ -87,6 +94,7 @@ final class AmllTtmlLyricService {
         if (now < breakerOpenUntilMillis) return Collections.emptyList();
 
         String ttml = null;
+        TRANSIENT_FAILURE.set(Boolean.FALSE);
         try {
             ttml = fetchByPlatformId(music);
             if (ttml == null) ttml = fetchBySearch(music);
@@ -94,7 +102,15 @@ final class AmllTtmlLyricService {
             System.err.println("[AMLL] Lyric lookup failed for " + cacheKey + ": " + failure.getMessage());
         }
 
-        store(cacheKey, ttml);
+        boolean transientFailure = Boolean.TRUE.equals(TRANSIENT_FAILURE.get());
+        TRANSIENT_FAILURE.remove();
+
+        // 只有词库明确没有这首歌（404 或搜索无命中）才写负缓存。网络抖动、超时、429 不能把这首歌
+        // 在接下来的十分钟里降级成平台歌词：逐字歌词的优先级永远高于官方平台，官方只是兜底。
+        // 熔断本身已经防止了连续重试打爆接口，所以这里不缓存失败是安全的。
+        if (ttml != null || !transientFailure) {
+            store(cacheKey, ttml);
+        }
         return parse(ttml, cacheKey);
     }
 
@@ -344,6 +360,8 @@ final class AmllTtmlLyricService {
     }
 
     private static void noteFailure(String reason) {
+        // 让调用方知道这次"没取到"是接口不可用，而不是词库里没有这首歌。
+        TRANSIENT_FAILURE.set(Boolean.TRUE);
         if (CONSECUTIVE_FAILURES.incrementAndGet() >= BREAKER_FAILURE_THRESHOLD) {
             CONSECUTIVE_FAILURES.set(0);
             breakerOpenUntilMillis = System.currentTimeMillis() + BREAKER_COOLDOWN_MILLIS;

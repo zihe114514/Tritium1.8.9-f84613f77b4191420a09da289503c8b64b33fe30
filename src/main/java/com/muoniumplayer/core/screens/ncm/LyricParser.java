@@ -30,6 +30,10 @@ public class LyricParser {
     private static final Pattern ENHANCED_LRC_WORD = Pattern.compile("<(\\d{1,3}):(\\d{1,2})[.:](\\d{1,3})>([^<]*)");
     private static final Pattern YRC_LINE = Pattern.compile("^\\[(\\d+),(\\d+)](.*)$");
     private static final Pattern YRC_WORD = Pattern.compile("\\((\\d+),(\\d+)(?:,(\\d+))?\\)([^()]*)");
+    /** QRC 行头:{@code [行起始毫秒,行时长毫秒]}。歌词元数据行([ti:]/[ar:]/...)匹配不到,天然被跳过。 */
+    private static final Pattern QRC_LINE = Pattern.compile("^\\[(\\d+),(\\d+)](.*)$");
+    /** QRC 音节:文本在前,{@code (绝对起始毫秒,时长毫秒)} 在后。 */
+    private static final Pattern QRC_WORD = Pattern.compile("([^()]*?)\\((\\d+),(\\d+)\\)");
 
     public static List<LyricLine> parse(JsonObject input) {
         if (input == null || input.has("uncollected")) return new ArrayList<>();
@@ -314,6 +318,113 @@ public class LyricParser {
         lyricLines.sort(Comparator.comparingLong(LyricLine::getTimestamp));
         inferLineDurations(lyricLines, 0L);
         normalizeWordDurations(lyricLines);
+    }
+
+    /**
+     * QQ 音乐 QRC 逐字歌词解析,输出与 YRC/TTML 完全相同的渲染模型。
+     *
+     * <p>格式为 {@code [行起始,行时长]文本(绝对起始,时长)文本(绝对起始,时长)...}。<b>音节时间是绝对
+     * 毫秒</b>(不是相对行首),但个别歌曲混用相对值,所以仍然走 {@link #normalizeWordStart} 兼容两者。
+     * 文件头部的 {@code [ti:]/[ar:]/[al:]/[by:]/[offset:]} 元数据行匹配不到行头正则,会被跳过。</p>
+     *
+     * <p>{@code (0,0)} 这类零时长音节是标点/空格的续接标记,折进前一个音节而不是生成时间戳为 0 的
+     * 假词——否则逐字扫词会在行首闪回。</p>
+     */
+    public static void parseQrc(String qrc, List<LyricLine> lyricLines) {
+        lyricLines.clear();
+        if (qrc == null || qrc.trim().isEmpty()) return;
+        String[] lines = qrc.split("\\r?\\n");
+        if (lines.length == 1) lines = qrc.split("\\\\n");
+
+        for (String rawLine : lines) {
+            Matcher lineMatcher = QRC_LINE.matcher(rawLine.trim());
+            if (!lineMatcher.matches()) continue;
+
+            long start;
+            long duration;
+            try {
+                start = Long.parseLong(lineMatcher.group(1));
+                duration = Long.parseLong(lineMatcher.group(2));
+            } catch (NumberFormatException overflow) {
+                continue;
+            }
+            String content = lineMatcher.group(3);
+
+            List<TimedText> words = new ArrayList<>();
+            String pendingPrefix = "";
+            Matcher wordMatcher = QRC_WORD.matcher(content);
+            while (wordMatcher.find()) {
+                String wordText = replace(wordMatcher.group(1));
+                if (wordText.isEmpty()) continue;
+
+                long wordStart;
+                long wordDuration;
+                try {
+                    wordStart = Long.parseLong(wordMatcher.group(2));
+                    wordDuration = Long.parseLong(wordMatcher.group(3));
+                } catch (NumberFormatException overflow) {
+                    continue;
+                }
+
+                if (wordDuration <= 0L) {
+                    if (!words.isEmpty()) words.get(words.size() - 1).text += wordText;
+                    else pendingPrefix += wordText;
+                    continue;
+                }
+
+                words.add(new TimedText(pendingPrefix + wordText,
+                        normalizeWordStart(start, duration, wordStart), wordDuration));
+                pendingPrefix = "";
+            }
+            if (!pendingPrefix.isEmpty() && !words.isEmpty()) words.get(words.size() - 1).text += pendingPrefix;
+            if (words.isEmpty()) continue;
+
+            StringBuilder text = new StringBuilder();
+            for (TimedText word : words) text.append(word.text);
+            if (text.toString().trim().isEmpty()) continue;
+
+            LyricLine line = new LyricLine(start, text.toString());
+            line.duration = Math.max(0L, duration);
+            addWords(line, words);
+            lyricLines.add(line);
+        }
+        lyricLines.sort(Comparator.comparingLong(LyricLine::getTimestamp));
+        inferLineDurations(lyricLines, 0L);
+        normalizeWordDurations(lyricLines);
+    }
+
+    /**
+     * 把 QQ 的翻译/罗马音贴到已解析的逐字行上。QQ 这两个字段有时是普通 LRC,有时也是 QRC(带音节
+     * 时间),所以两种都试;行首时间与主歌词不总是完全相等,按最近的一行匹配,容差 1 秒。
+     */
+    public static void applyQrcSidecar(String sidecar, List<LyricLine> lyricLines, boolean translation) {
+        if (sidecar == null || sidecar.trim().isEmpty() || lyricLines == null || lyricLines.isEmpty()) return;
+
+        List<LyricLine> side = new ArrayList<>();
+        try {
+            parseQrc(sidecar, side);
+        } catch (Throwable ignored) {
+            side.clear();
+        }
+        if (side.isEmpty()) side = parseSingleLine(sidecar);
+        if (side.isEmpty()) return;
+
+        Map<Long, String> values = new HashMap<>();
+        for (LyricLine line : side) {
+            String text = line.lyric == null ? "" : line.lyric.trim();
+            // QQ 用 "//" 之类的占位符标记"这一行没有翻译"。
+            if (text.isEmpty() || text.equals("//")) continue;
+            values.put(line.timestamp, text);
+        }
+        if (values.isEmpty()) return;
+
+        for (LyricLine line : lyricLines) {
+            String value = values.get(line.timestamp);
+            if (value == null) value = findNearbySecondary(values, line.timestamp, 1000L);
+            if (value == null || value.isEmpty()) continue;
+            if (translation && line.translationText == null) line.translationText = value;
+            if (!translation && line.romanizationText == null) line.romanizationText = value;
+        }
     }
 
     /**

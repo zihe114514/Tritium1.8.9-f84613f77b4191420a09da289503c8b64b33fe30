@@ -25,7 +25,9 @@ import java.util.List;
  *
  * <p><b>Priority.</b> The AMLL TTML database is asked first: its entries are hand-checked
  * word-by-word timelines and beat every platform response, so once it answers nothing else is
- * requested at all. Everything below it (cloud-drive lyrics, embedded tags, the unified provider
+ * requested at all. QQ Music's QRC comes second — still syllable-level, with much wider coverage
+ * than any open database — and it short-circuits the rest of the chain the same way. Everything
+ * below the two word-by-word sources (cloud-drive lyrics, embedded tags, the unified provider
  * model, the NetEase lyric API, the bundled YRC files) is line-level fallback, and each of those
  * steps is still skipped when the previous one already produced real word timing.</p>
  */
@@ -45,6 +47,14 @@ final class LyricLoadService {
         if (LyricParser.hasWordByWordTiming(amllLyrics)) {
             System.out.println("[Music/AMLL] Loaded word-by-word TTML lyrics for " + trackKey);
             return new LyricLoadResult(rawJson, amllLyrics);
+        }
+
+        // 逐字第二顺位:QQ 音乐 QRC。AMLL 词库是人工投稿、覆盖率有限,QQ 自己的 QRC 覆盖面大得多,
+        // 所以它排在所有普通歌词之前;同样只有"真的是逐字"才采用,行级结果留给下面带翻译的兜底链路。
+        List<LyricLine> qqQrcLyrics = QQQrcLyricService.resolve(music);
+        if (LyricParser.hasWordByWordTiming(qqQrcLyrics)) {
+            System.out.println("[Music/QQ-QRC] Loaded word-by-word QRC lyrics for " + trackKey);
+            return new LyricLoadResult(rawJson, qqQrcLyrics);
         }
         if (music.isCloudSong() && profileId > 0L) {
             try {

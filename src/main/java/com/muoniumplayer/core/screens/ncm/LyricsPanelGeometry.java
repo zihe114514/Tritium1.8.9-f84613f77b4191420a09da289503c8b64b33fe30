@@ -37,6 +37,34 @@ final class LyricsPanelGeometry {
         return new Viewport(left, top, right - left, bottom - top);
     }
 
+    /**
+     * 逐字高亮把当前字词以某个锚点放大（{@code currentWordScale}），布局坐标保持不变。
+     *
+     * <p>默认锚点是字词中心，但行首字词的左边缘正好压在歌词视口的裁剪边界上，按中心放大
+     * 会有一半的放大量落到视口外被裁掉，表现为"首字被切掉一块"。这里把锚点约束到能让
+     * 放大后的矩形完整留在 {@code [clipLeft, clipRight]} 内的区间：能用中心就用中心，
+     * 贴边的字词则把锚点收拢到边界，只向视口内侧生长。</p>
+     *
+     * @param left     字词矩形在布局坐标系中的左边缘
+     * @param width    字词矩形宽度（未放大）
+     * @param scale    本帧的放大倍率，{@code <= 1} 时直接返回中心
+     * @return 应当传给 translate/scale/translate 的 X 锚点
+     */
+    static double clampScaleAnchorX(double left, double width, double scale, double clipLeft, double clipRight) {
+        double center = left + width * .5;
+        if (scale <= 1.0001 || width <= 0) return center;
+
+        double right = left + width;
+        // 放大后左边缘 = scale * left + anchor * (1 - scale)，要求 >= clipLeft；右边缘同理。
+        double maxAnchor = (scale * left - clipLeft) / (scale - 1.0);
+        double minAnchor = (scale * right - clipRight) / (scale - 1.0);
+
+        // 放大后比视口还宽，无解：保持原来的中心放大行为。
+        if (minAnchor > maxAnchor) return center;
+
+        return Math.max(minAnchor, Math.min(maxAnchor, center));
+    }
+
     static double coverSizeMax(double width, double height) {
         return Math.min(height * .46, width * .36);
     }

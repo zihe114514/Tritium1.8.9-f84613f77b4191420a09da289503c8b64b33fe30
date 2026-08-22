@@ -483,6 +483,13 @@ public class AudioPlayer {
             candidate = new SoundFile(file.getAbsolutePath());
         } catch (OutOfMemoryError error) {
             throw new IllegalStateException("音频过长，内存不足以载入：" + file.getName());
+        } catch (LinkageError error) {
+            // 解码器（jflac / jsyn）随 mod 一起打包，且按需加载：FLAC 只有在带标签时才会第一次用到
+            // VorbisComment/VorbisString。若运行期间重新编译或替换了 mod 文件，这些还没加载过的类
+            // 就再也读不到字节码，抛 NoClassDefFoundError。第三方源的无损文件普遍带标签，所以往往
+            // 是它先撞上，看起来像"只有第三方源不能播放"。这与歌曲本身无关，提示重启比抛类名有用。
+            throw new IllegalStateException("音频解码器加载失败，请重启游戏后重试："
+                    + error.getClass().getSimpleName());
         }
         if (isUsable(candidate))
             return candidate;

@@ -25,6 +25,7 @@ import com.muoniumplayer.core.screens.ncm.panels.HomePanel;
 import com.muoniumplayer.core.screens.ncm.panels.NavigateBar;
 import com.muoniumplayer.core.screens.ncm.panels.PlaylistPanel;
 import com.muoniumplayer.core.screens.ncm.panels.PersonalFmPanel;
+import com.muoniumplayer.core.screens.ncm.panels.PlayQueuePanel;
 import com.muoniumplayer.core.utils.cursor.CursorUtils;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
 
@@ -61,6 +62,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
     @Getter
     ControlsBar controlsBar;
+
+    /** 底部“下一首播放”抽屉；与 controlsBar 一样由本屏幕直接渲染，不属于 basePanel。 */
+    @Getter
+    PlayQueuePanel playQueuePanel;
 
     public MusicLyricsPanel musicLyricsPanel = null;
 
@@ -183,6 +188,9 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         this.controlsBar = new ControlsBar();
         this.controlsBar.onInit();
+
+        this.playQueuePanel = new PlayQueuePanel();
+        this.playQueuePanel.onInit();
     }
 
     public double getSpacing() {
@@ -269,10 +277,6 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         this.checkDirty();
 
         int dWheel = Mouse.getDWheel();
-        // 加入歌单弹窗为模态：滚轮只应作用于弹窗内歌单列表，不能穿透到下方 basePanel/controlsBar。
-        // 否则在弹窗内滚动时会同时滚动下层的歌单/歌曲列表。
-        int baseDWheel = (this.addToPlaylistOverlay != null || this.accountManagerOverlay != null
-                || this.confirmationOverlay != null) ? 0 : dWheel;
 
         RenderSystem.FIXED_SCALE = true;
 
@@ -302,6 +306,15 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
         double mouseX = mX / xScale;
         double mouseY = mY / yScale;
         api.getGLStateManager().scale(xScale, yScale, 1);
+
+        // 弹窗为模态：滚轮只应作用于弹窗自己的列表，不能穿透到下层的 basePanel/controlsBar/歌词页。
+        // 弹窗是居中绘制在歌单之上的，鼠标停在弹窗列表上时同样落在下层列表里，不拦截就会两层一起滚。
+        // 队列抽屉同理：它盖在内容页上，滚它的时候下面的歌单必须停住。
+        boolean queueCapturesWheel = this.playQueuePanel != null
+                && this.playQueuePanel.capturesWheel(mouseX, mouseY);
+        int baseDWheel = (isModalOverlayActive() || queueCapturesWheel) ? 0 : dWheel;
+        int lyricsDWheel = isModalOverlayActive() ? 0 : dWheel;
+        int queueDWheel = isModalOverlayActive() ? 0 : dWheel;
 
         this.scaleAtPos(RenderSystem.getWidth() * .5, RenderSystem.getHeight() * .5, 0.9 + (alpha * 0.1));
 
@@ -345,6 +358,19 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 StencilClipManager.endClip();
             }
 
+            // 队列抽屉盖在内容页之上、控制栏之下，并且被裁剪在内容区域内，
+            // 因此它的滑入滑出只会在播放器里发生，不会溢到外框上。
+            if (this.playQueuePanel != null && this.playQueuePanel.isVisible()) {
+                this.playQueuePanel.setAlpha(alpha);
+                this.playQueuePanel.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
+                        this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight());
+                StencilClipManager.beginClip(() -> Rect.draw(this.currentPanelBg.getX(), this.currentPanelBg.getY(),
+                        this.currentPanelBg.getWidth(), this.currentPanelBg.getHeight(), -1));
+                this.playQueuePanel.renderWidget(mouseX, mouseY, queueDWheel);
+                StencilClipManager.restoreActiveClip();
+                StencilClipManager.endClip();
+            }
+
             this.controlsBar.setAlpha(alpha);
             this.controlsBar.setBounds(this.currentPanelBg.getX(), this.currentPanelBg.getY() + this.currentPanelBg.getHeight(), this.currentPanelBg.getWidth(), this.getPanelHeight() - this.currentPanelBg.getHeight());
             this.controlsBar.renderWidget(mouseX, mouseY, baseDWheel);
@@ -358,7 +384,7 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             roundedRect(basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(),
                     cornerRadius, getColor(ColorType.GENERIC_BACKGROUND)
                             | ((int) (this.musicLyricsPanel.alpha * 255)) << 24);
-            this.musicLyricsPanel.onRender(mouseX, mouseY, basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(), dWheel);
+            this.musicLyricsPanel.onRender(mouseX, mouseY, basePanel.getX(), basePanel.getY(), basePanel.getWidth(), basePanel.getHeight(), lyricsDWheel);
             StencilClipManager.restoreActiveClip();
             StencilClipManager.endClip();
 
@@ -626,6 +652,12 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
 
         if (keyCode == Keyboard.KEY_ESCAPE) {
 
+            // 先收起最上层的临时界面，和其它覆盖层的 ESC 行为保持一致。
+            if (this.playQueuePanel != null && this.playQueuePanel.isOpen()) {
+                this.playQueuePanel.setOpen(false);
+                return;
+            }
+
             if (this.musicLyricsPanel != null)
                 this.musicLyricsPanel.close();
             else
@@ -640,6 +672,17 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
                 CloudMusic.player.pause();
         }
 
+    }
+
+    /**
+     * 是否有模态弹窗正在显示。点击链路（{@link #mouseClicked}）本来就是逐层 return 的模态处理，
+     * 滚轮必须用同一套判断，否则弹窗里滚动会连带下层一起滚。
+     */
+    private boolean isModalOverlayActive() {
+        return this.confirmationOverlay != null
+                || this.musicSourceOverlay != null
+                || this.accountManagerOverlay != null
+                || this.addToPlaylistOverlay != null;
     }
 
     @Override
@@ -674,6 +717,10 @@ public class NCMScreen extends ExtensionScreen implements SharedConstants, Share
             // The quality pop-up visually overlaps the song list. Consume its
             // full bounds before dispatching to the list to prevent click-through.
             if (this.controlsBar.consumeQualityMenuClick(mouseX, mouseY, mouseButton)) {
+                return;
+            }
+            // 队列抽屉同样遮住了歌曲列表：它范围内的点击必须由它吃掉，否则会穿透触发播放。
+            if (this.playQueuePanel != null && this.playQueuePanel.consumeClick(mouseX, mouseY, mouseButton)) {
                 return;
             }
             this.basePanel.onMouseClickReceived(mouseX, mouseY, mouseButton);

@@ -8,6 +8,7 @@ import com.muoniumplayer.core.ncm.music.CloudMusic;
 import com.muoniumplayer.core.ncm.music.PersonalFmManager;
 import com.muoniumplayer.core.screens.ncm.NCMPlayerConfig;
 import com.muoniumplayer.core.rendering.DownloadDynamicIsland;
+import com.muoniumplayer.core.rendering.animation.Interpolations;
 import com.muoniumplayer.core.ncm.music.Quality;
 import com.muoniumplayer.core.rendering.ui.widgets.*;
 import com.muoniumplayer.core.screens.ncm.MusicLyricsPanel;
@@ -26,8 +27,24 @@ import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
 public class ControlsBar extends NCMPanel {
 
     private boolean qualityMenuOpen;
+    /**
+     * 展开/收起的动画进度，0 为完全收起、1 为完全展开。由音质按钮的每帧回调推进：按钮常驻可见，
+     * 而弹出层收起后会被隐藏、回调不再执行，进度放在弹出层里就没有帧可以播完收起动画。
+     */
+    private double qualityMenuAnimation;
     private RoundedRectWidget qualityMenuBackground;
     private RoundedRectWidget[] qualityOptions;
+
+    /** 弹出层在动画彻底结束前必须继续渲染，否则收起会变成瞬间消失。 */
+    private boolean isQualityMenuVisible() {
+        return qualityMenuOpen || qualityMenuAnimation > .004;
+    }
+
+    /** 平滑线性进度，让展开的起步与收尾都不生硬。 */
+    private static double smoothProgress(double value) {
+        double clamped = Math.max(0.0, Math.min(1.0, value));
+        return clamped * clamped * (3.0 - 2.0 * clamped);
+    }
 
     public boolean consumeQualityMenuClick(double mouseX, double mouseY, int mouseButton) {
         if (!qualityMenuOpen || qualityMenuBackground == null) return false;
@@ -57,7 +74,9 @@ public class ControlsBar extends NCMPanel {
             if (CloudMusic.currentlyPlaying == null)
                 return null;
 
-            return CloudMusic.currentlyPlaying.getSmallCoverLocation();
+            // 正在播放的曲目有动态封面时,播放条上的这张也跟着动;没有则仍是静态小封面。
+            return CloudMusic.preferredCoverLocation(CloudMusic.currentlyPlaying,
+                    CloudMusic.currentlyPlaying.getSmallCoverLocation());
         }, 0 , 0, 0, 0);
 
         this.addChild(playingCover);
@@ -380,6 +399,21 @@ public class ControlsBar extends NCMPanel {
                     // Dedicated footer slot: immediately left of the volume control, with a
                     // fixed visual gap matching the player layout.  Do not let a transient
                     // layout value hide this primary action.
+                    // 常驻回调：在这里推进展开动画，收起过程才有帧可用。
+                    qualityMenuAnimation = Interpolations.interpolate(qualityMenuAnimation,
+                            qualityMenuOpen ? 1.0 : 0.0, .3);
+                    if (qualityMenuOpen && qualityMenuAnimation > .996) qualityMenuAnimation = 1.0;
+                    if (!qualityMenuOpen && qualityMenuAnimation < .004) qualityMenuAnimation = 0.0;
+
+                    // 隐藏状态只在这里统一维护：被隐藏的组件不再执行自己的回调，没法自己复活。
+                    boolean menuVisible = isQualityMenuVisible();
+                    if (qualityMenuBackground != null) qualityMenuBackground.setHidden(!menuVisible);
+                    if (qualityOptions != null) {
+                        for (RoundedRectWidget menuOption : qualityOptions) {
+                            if (menuOption != null) menuOption.setHidden(!menuVisible);
+                        }
+                    }
+
                     double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
                     double buttonHeight = qualityButtonHeight * scale;
                     double parentWidth = qualitySelector.getParentWidth();
@@ -415,12 +449,8 @@ public class ControlsBar extends NCMPanel {
                 })
                 .setOnClickCallback((relativeX, relativeY, mouseButton) -> {
                     if (mouseButton == 0) {
-                        boolean open = !qualityMenuOpen;
-                        qualityMenuOpen = open;
-                        qualityMenuBackground.setHidden(!open);
-                        for (RoundedRectWidget qualityOption : qualityOptions) {
-                            qualityOption.setHidden(!open);
-                        }
+                        // 只翻转状态：是否渲染交给动画进度判断，收起时弹出层要留到动画播完。
+                        qualityMenuOpen = !qualityMenuOpen;
                     }
                     return true;
                 });
@@ -434,6 +464,47 @@ public class ControlsBar extends NCMPanel {
                 .setMaxWidth(Math.max(0.0, qualitySelector.getWidth() - 14.0 * Math.max(.82, NCMPlayerConfig.getPlayerScale())))
                 .setPosition(7.0, Math.max(2.0, (qualitySelector.getHeight() - qualityText.getHeight()) * .5)));
 
+        // 下一首播放：队列抽屉的开关排在音质按钮左边，沿用右下角次级控件的同一条锚点链。
+        ThemedTextureIconWidget queueToggle = new ThemedTextureIconWidget(
+                PlayerIconAssets.PLAY_NEXT, "»", FontManager.pf16bold, 0, 0, 18, 18);
+        this.addChild(queueToggle);
+        queueToggle.setShouldOverrideMouseCursor(true);
+        queueToggle.setBeforeRenderCallback(() -> {
+            PlayQueuePanel queuePanel = NCMScreen.getInstance().getPlayQueuePanel();
+            boolean opened = queuePanel != null && queuePanel.isOpen();
+            double toggleX = qualitySelector.getRelativeX() - 8.0 - queueToggle.getWidth();
+            // 面板很窄时右下角排不下了：用 alpha 让它隐形并停止响应，而不是 setHidden——
+            // 被隐藏的组件不会再执行自己的回调，也就再没有机会把自己显示回来。
+            boolean fits = toggleX > lblRemainingTime.getRelativeX() + lblRemainingTime.getWidth() + 6.0;
+            queueToggle
+                    .setClickable(fits)
+                    .setAlpha(fits ? ControlsBar.this.getAlpha() : 0f)
+                    .centerVertically();
+            queueToggle
+                    .setPosition(toggleX, queueToggle.getRelativeY())
+                    .setColor(opened || CloudMusic.getQueuedNextCount() > 0
+                            ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT)
+                            : NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+        });
+        queueToggle.setOnClickCallback((relativeX, relativeY, mouseButton) -> {
+            if (mouseButton != 0) return false;
+            PlayQueuePanel queuePanel = NCMScreen.getInstance().getPlayQueuePanel();
+            if (queuePanel != null) queuePanel.toggle();
+            return true;
+        });
+
+        // 待播数量贴在图标右上角。作为图标的子组件，它自动继承那一份 alpha，
+        // 因此窄面板下不需要第二处可见性判断。
+        LabelWidget queueCount = new LabelWidget(() -> {
+            int queued = CloudMusic.getQueuedNextCount();
+            return queued > 0 ? String.valueOf(Math.min(99, queued)) : "";
+        }, FontManager.pf10bold);
+        queueToggle.addChild(queueCount);
+        queueCount.setClickable(false);
+        queueCount.setBeforeRenderCallback(() -> queueCount
+                .setColor(NCMScreen.getColor(NCMScreen.ColorType.ACCENT))
+                .setPosition(queueToggle.getWidth() - 3.0, -1.0));
+
         // The menu is declared after the selector, therefore it is rendered and hit-tested on
         // top of the bottom bar.  It grows upward so it never covers the compact controls.
         qualityMenuBackground = new RoundedRectWidget();
@@ -444,12 +515,16 @@ public class ControlsBar extends NCMPanel {
                 .setBeforeRenderCallback(() -> {
                     double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
                     double menuHeight = selectableQualities.length * qualityOptionHeight * scale + qualityMenuPadding * 2.0 * scale;
+                    // 底边固定贴在按钮上方，只有上边沿随进度向上展开，看起来是从按钮里长出来的。
+                    double progress = smoothProgress(qualityMenuAnimation);
+                    double bottom = qualitySelector.getRelativeY() - 4.0;
+                    double visibleHeight = Math.max(.01, menuHeight * progress);
                     qualityMenuBackground
-                            .setBounds(qualitySelector.getWidth(), menuHeight)
-                            .setPosition(qualitySelector.getRelativeX(), qualitySelector.getRelativeY() - menuHeight - 4.0)
+                            .setBounds(qualitySelector.getWidth(), visibleHeight)
+                            .setPosition(qualitySelector.getRelativeX(), bottom - visibleHeight)
                             .setRadius(6.0 * Math.max(.82, NCMPlayerConfig.getPlayerScale()))
                             .setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND))
-                            .setAlpha(ControlsBar.this.getAlpha() * .98f);
+                            .setAlpha((float) (ControlsBar.this.getAlpha() * .98f * progress));
                 });
 
         for (int index = 0; index < selectableQualities.length; index++) {
@@ -464,25 +539,32 @@ public class ControlsBar extends NCMPanel {
                     .setBeforeRenderCallback(() -> {
                         boolean selected = option == (CloudMusic.quality == null ? Quality.LOSSLESS : CloudMusic.quality);
                         double scale = Math.max(.82, Math.min(1.0, NCMPlayerConfig.getPlayerScale()));
+                        double optionHeight = qualityOptionHeight * scale;
+                        // 与背景共用同一条固定底边，所以展开过程里选项不会整体滑动，只是逐个露出来。
+                        double bottom = qualitySelector.getRelativeY() - 4.0;
+                        double slotY = bottom - qualityMenuPadding * scale
+                                - (selectableQualities.length - optionIndex) * optionHeight;
+                        // 背景的上边沿扫过这一项时它才显形：任何时候都不会有选项浮在面板之外。
+                        double reveal = smoothProgress((slotY + optionHeight - qualityMenuBackground.getRelativeY())
+                                / Math.max(1.0, optionHeight));
                         qualityOption
-                                .setBounds(Math.max(0.0, qualitySelector.getWidth() - qualityMenuPadding * 2.0), qualityOptionHeight)
+                                .setBounds(Math.max(0.0, qualitySelector.getWidth() - qualityMenuPadding * 2.0), optionHeight)
                                 .setPosition(qualitySelector.getRelativeX() + qualityMenuPadding,
-                                        qualityMenuBackground.getRelativeY() + qualityMenuPadding * scale + optionIndex * qualityOptionHeight * scale)
+                                        slotY + (1.0 - reveal) * 3.0)
                                 .setRadius(4.0 * scale)
                                 .setColor(qualityOption.isHovering()
                                         ? NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER)
                                         : (selected ? NCMScreen.getColor(NCMScreen.ColorType.ACCENT) : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND)))
-                                .setAlpha(ControlsBar.this.getAlpha() * (selected ? .72f : .98f));
+                                .setAlpha((float) (ControlsBar.this.getAlpha() * (selected ? .72f : .98f) * reveal));
+                        // 收起动画期间不再接受点击，避免"已经看不清"的选项还能被误中。
+                        qualityOption.setClickable(qualityMenuOpen && reveal > .35);
                     })
                     .setOnClickCallback((relativeX, relativeY, mouseButton) -> {
                         if (mouseButton != 0) return true;
                         CloudMusic.quality = option;
                         NCMPlayerConfig.setAudioQuality(option);
+                        // 收起同样走动画，弹出层由 isQualityMenuVisible() 保留到播完。
                         qualityMenuOpen = false;
-                        qualityMenuBackground.setHidden(true);
-                        for (RoundedRectWidget menuOption : qualityOptions) {
-                            menuOption.setHidden(true);
-                        }
                         DownloadDynamicIsland.showPlaybackQuality("已切换 " + formatQuality(option), "下次播放生效");
                         return true;
                     });

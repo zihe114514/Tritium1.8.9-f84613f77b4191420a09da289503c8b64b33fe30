@@ -379,12 +379,19 @@ public class AccountManagerOverlay extends NCMPanel {
             listeningHistorySync.setRadius(6);
             listeningHistorySync.setOnClickCallback((x, y, button) -> {
                 if (button != 0) return false;
-                boolean enabled = !NCMPlayerConfig.isNeteaseListeningHistorySyncEnabled();
-                NCMPlayerConfig.setNeteaseListeningHistorySyncEnabled(enabled);
-                statusText = enabled
-                        ? "已开启：仅同步本地实际播放达到阈值的网易云歌曲"
-                        : "已关闭：后续播放仅保留在本地播放器";
-                statusColor = enabled ? 0x53C68C : 0xAEB5C4;
+                if (NCMPlayerConfig.isNeteaseListeningHistorySyncEnabled()) {
+                    // 关闭是收回授权，立即生效，不需要再确认一次。
+                    applyListeningHistorySync(false);
+                    return true;
+                }
+                // 开启等于一次隐私授权：压暗页面、居中弹出模态确认，用户明确同意之前不写配置、
+                // 也不允许操作下层界面（确认层在所有播放器内容之上，并独占鼠标与键盘）。
+                NCMScreen.getInstance().openConfirmation(
+                        "开启后会上报数据到网易云",
+                        "开启后会收集你的电脑唯一标识符，包括但不限于 CPU、系统 OS、网卡、硬盘序列号、"
+                                + "IP 地址等信息。信息全部用于上报网易云客户端。",
+                        "我已了解，开启",
+                        () -> applyListeningHistorySync(true));
                 return true;
             });
             listeningHistorySync.setBeforeRenderCallback(() -> {
@@ -405,6 +412,18 @@ public class AccountManagerOverlay extends NCMPanel {
         if (platform == MusicPlatform.NETEASE && qrLoginVisible) {
             startQrLogin(platform, token, addAccountByQr);
         }
+    }
+
+    /**
+     * 写入听歌历史同步开关并刷新状态行。开启只会从确认框的回调进来，
+     * 因此"用户已明确同意"是这个方法被调用的前提。
+     */
+    private void applyListeningHistorySync(boolean enabled) {
+        NCMPlayerConfig.setNeteaseListeningHistorySyncEnabled(enabled);
+        statusText = enabled
+                ? "已开启：仅同步本地实际播放达到阈值的网易云歌曲"
+                : "已关闭：后续播放仅保留在本地播放器";
+        statusColor = enabled ? 0x53C68C : 0xAEB5C4;
     }
 
     private void addQQLoginChannelSelector(Panel dialog) {

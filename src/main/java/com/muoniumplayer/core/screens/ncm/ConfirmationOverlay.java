@@ -14,12 +14,31 @@ import com.muoniumplayer.core.rendering.ui.widgets.RoundedRectWidget;
  */
 public final class ConfirmationOverlay extends NCMPanel {
 
+    /** 说明最多显示的行数；再长的说明会在最后一行截断，卡片不会长到顶出播放器。 */
+    private static final int MAX_MESSAGE_LINES = 8;
+    /** 说明文字距卡片左右两边的留白。 */
+    private static final double MESSAGE_INSET = 28.0;
+    /** 说明区域的上沿，上面是图标与标题。 */
+    private static final double MESSAGE_TOP = 50.0;
+    /** 分隔线到卡片底部的高度，即按钮区。 */
+    private static final double ACTIONS_HEIGHT = 43.0;
+
     private final String title;
     private final String message;
     private final String confirmText;
     private final Runnable onConfirm;
     private boolean closing;
     private boolean resolved;
+
+    /** 按当前卡片宽度换行后的说明文字。 */
+    private String[] messageLines = new String[0];
+    /** 上一次换行用的宽度；宽度没变就不重复换行（换行要逐字累加字形宽度）。 */
+    private double wrappedForWidth = -1.0;
+    private double messageBlockHeight = 28.0;
+    /** 上一次换行时字形是否已全部就绪；没就绪算出来的宽度是 0，必须下一帧重算。 */
+    private boolean wrappedWithLoadedGlyphs;
+    /** 标题是否已经降到小一号字体；只在需要变化时才换字体。 */
+    private boolean titleCompact;
 
     public ConfirmationOverlay(String title, String message, String confirmText, Runnable onConfirm) {
         this.title = title == null ? "请确认操作" : title;
@@ -61,7 +80,11 @@ public final class ConfirmationOverlay extends NCMPanel {
             // normal GUI scale. Keep destructive confirmations compact and arrange
             // all information in one clear header / message / actions flow.
             double width = Math.max(248, Math.min(340, getWidth() - 32));
-            double height = Math.max(124, Math.min(132, getHeight() - 28));
+            // 先按这个宽度把说明换行，再由行数决定卡片高度：隐私授权类的说明有好几行，
+            // 固定高度只能把它裁成一行，用户根本看不到自己同意了什么。
+            wrapMessage(Math.max(1, width - MESSAGE_INSET * 2));
+            double height = Math.max(124, Math.min(Math.max(124, getHeight() - 28),
+                    MESSAGE_TOP + messageBlockHeight + 12 + ACTIONS_HEIGHT));
             dialog.setBounds(width, height);
             dialog.center();
         });
@@ -94,10 +117,18 @@ public final class ConfirmationOverlay extends NCMPanel {
         dialog.addChild(titleLabel);
         titleLabel.setClickable(false);
         titleLabel.setBeforeRenderCallback(() -> {
+            double maxWidth = Math.max(1, dialog.getWidth() - 70);
+            // 长标题降一号字，而不是直接截断：确认框的标题就是这次操作本身，看不全等于没提示。
+            boolean compact = FontManager.pf18bold != null
+                    && FontManager.pf18bold.getStringWidthD(title) > maxWidth;
+            if (compact != titleCompact) {
+                titleCompact = compact;
+                titleLabel.setFont(compact ? FontManager.pf14bold : FontManager.pf18bold);
+            }
             titleLabel.setColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
-            titleLabel.setPosition(52, 19);
-            titleLabel.setMaxWidth(dialog.getWidth() - 70);
+            titleLabel.setMaxWidth(maxWidth);
             titleLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            titleLabel.setPosition(52, 28 - titleLabel.getHeight() * .5);
         });
 
         RoundedRectWidget messageSurface = new RoundedRectWidget();
@@ -105,25 +136,31 @@ public final class ConfirmationOverlay extends NCMPanel {
         messageSurface.setClickable(false);
         messageSurface.setRadius(6);
         messageSurface.setBeforeRenderCallback(() -> {
-            messageSurface.setBounds(18, 50, Math.max(1, dialog.getWidth() - 36), 28);
+            messageSurface.setBounds(18, MESSAGE_TOP, Math.max(1, dialog.getWidth() - 36), messageBlockHeight);
             messageSurface.setColor(NCMScreen.getColor(NCMScreen.ColorType.INPUT_BACKGROUND));
         });
 
-        LabelWidget messageLabel = new LabelWidget(message, FontManager.pf12);
-        dialog.addChild(messageLabel);
-        messageLabel.setClickable(false);
-        messageLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
-        messageLabel.setBeforeRenderCallback(() -> {
-            messageLabel.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
-            messageLabel.setPosition(28, 60);
-            messageLabel.setMaxWidth(Math.max(1, dialog.getWidth() - 56));
-        });
+        // 每行一个 Label：这个字体渲染器没有多行绘制，换行结果由 wrapMessage 每次布局时算好。
+        // 用不到的行取空字符串，而不是 setHidden——被隐藏的组件不再执行自己的回调，就再也显示不回来。
+        for (int index = 0; index < MAX_MESSAGE_LINES; index++) {
+            final int lineIndex = index;
+            LabelWidget messageLabel = new LabelWidget(
+                    () -> lineIndex < messageLines.length ? messageLines[lineIndex] : "", FontManager.pf12);
+            dialog.addChild(messageLabel);
+            messageLabel.setClickable(false);
+            messageLabel.setWidthLimitType(LabelWidget.WidthLimitType.TRIM_TO_WIDTH);
+            messageLabel.setBeforeRenderCallback(() -> {
+                messageLabel.setColor(NCMScreen.getColor(NCMScreen.ColorType.SECONDARY_TEXT));
+                messageLabel.setMaxWidth(Math.max(1, dialog.getWidth() - MESSAGE_INSET * 2));
+                messageLabel.setPosition(MESSAGE_INSET, MESSAGE_TOP + 6 + lineIndex * lineHeight());
+            });
+        }
 
         RectWidget divider = new RectWidget();
         dialog.addChild(divider);
         divider.setClickable(false);
         divider.setBeforeRenderCallback(() -> {
-            divider.setBounds(18, dialog.getHeight() - 43, Math.max(1, dialog.getWidth() - 36), .5);
+            divider.setBounds(18, dialog.getHeight() - ACTIONS_HEIGHT, Math.max(1, dialog.getWidth() - 36), .5);
             divider.setColor(NCMScreen.getColor(NCMScreen.ColorType.BORDER));
         });
 
@@ -166,6 +203,42 @@ public final class ConfirmationOverlay extends NCMPanel {
             resolve(true);
             return true;
         });
+    }
+
+    private static double lineHeight() {
+        return (FontManager.pf12 == null ? 9.0 : FontManager.pf12.getFontHeight()) + 3.0;
+    }
+
+    /**
+     * 把说明按给定的正文宽度换行，并算出说明区域需要的高度。
+     * 宽度没变时直接复用上一次的结果。
+     */
+    private void wrapMessage(double contentWidth) {
+        // 字形是按需上传的，没上传的字宽度为 0——那样换行会把整段算成一行。项目里其它需要测量
+        // 文字的地方（LyricLine、HomePanel 的歌单标题）也是这个套路：字形没齐之前每帧重算，
+        // 照常绘制会把字形逐步上传，齐了之后再按宽度缓存结果。
+        boolean glyphsReady = FontManager.pf12 != null && FontManager.pf12.areGlyphsLoaded(message);
+        if (!wrappedWithLoadedGlyphs || Math.abs(contentWidth - wrappedForWidth) >= .5) {
+            wrappedForWidth = contentWidth;
+            wrappedWithLoadedGlyphs = glyphsReady;
+            String[] lines;
+            try {
+                lines = FontManager.pf12.fitWidth(message, contentWidth);
+            } catch (Throwable ignored) {
+                // 换行只是排版，任何异常都不该让一个需要用户确认的弹窗打不开。
+                lines = new String[]{message};
+            }
+            if (lines == null || lines.length == 0) lines = new String[]{message};
+            if (lines.length > MAX_MESSAGE_LINES) {
+                String[] limited = new String[MAX_MESSAGE_LINES];
+                System.arraycopy(lines, 0, limited, 0, MAX_MESSAGE_LINES);
+                limited[MAX_MESSAGE_LINES - 1] = FontManager.pf12.trim(
+                        limited[MAX_MESSAGE_LINES - 1], Math.max(1, contentWidth - 8)) + "…";
+                lines = limited;
+            }
+            messageLines = lines;
+        }
+        messageBlockHeight = Math.max(28.0, messageLines.length * lineHeight() + 12.0);
     }
 
     private void resolve(boolean confirmed) {

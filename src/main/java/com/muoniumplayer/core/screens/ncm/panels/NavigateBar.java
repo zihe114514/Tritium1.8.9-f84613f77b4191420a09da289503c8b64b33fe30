@@ -51,6 +51,18 @@ public class NavigateBar extends NCMPanel {
      */
     private boolean playlistSearchMode;
     ScrollPanel playlistPanel = new ScrollPanel();
+
+    /**
+     * 侧栏选中项的高亮条。它是共享的一条，而不是每个条目自己画一块：只有共享的一条才能在切换栏目时
+     * 从旧位置滑到新位置。放在 {@link #playlistPanel} 之前加入，因此绘制在条目文字之下。
+     */
+    private final RoundedRectWidget selectionIndicator = new RoundedRectWidget();
+    /** 高亮条当前的上下边沿（相对侧栏），两条边用不同速度跟随，移动时会被拉长。 */
+    private double indicatorTop, indicatorBottom;
+    private double indicatorLeft, indicatorWidth;
+    private float indicatorAlpha;
+    /** 第一帧直接落位，避免高亮条从侧栏顶部飞进来。 */
+    private boolean indicatorPlaced;
     private PlaylistItem homeItem;
     private final List<PlaylistItem> playlistItems = new CopyOnWriteArrayList<>();
 
@@ -252,6 +264,11 @@ public class NavigateBar extends NCMPanel {
                     : NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_BACKGROUND));
             sourceMenu.setTextColor(NCMScreen.getColor(NCMScreen.ColorType.PRIMARY_TEXT));
         });
+
+        // 先加入高亮条，再加入列表：渲染顺序即层次，高亮条要在条目文字下面。
+        this.addChild(selectionIndicator);
+        this.selectionIndicator.setClickable(false);
+        this.selectionIndicator.setBeforeRenderCallback(this::layoutSelectionIndicator);
 
         this.addChild(playlistPanel);
         this.playlistPanel.setBeforeRenderCallback(() -> {
@@ -802,6 +819,73 @@ public class NavigateBar extends NCMPanel {
     }
 
     /**
+     * 把高亮条摆到当前选中的条目上。
+     *
+     * <p>上下两条边用不同的速度跟随目标：朝下切换时下边沿快、上边沿慢，朝上切换时相反，于是高亮条在
+     * 移动途中被拉长、落位时收回原来的高度，而不是生硬地在两个位置之间闪现。</p>
+     *
+     * <p>高亮条不是列表的子组件（列表会把所有可见子组件重新排到垂直流里），所以它拿不到列表的裁剪，
+     * 这里手动把它和列表视口求交：选中项滚出可见区域时高亮条跟着被裁掉，而不是画到列表外面去。</p>
+     */
+    private void layoutSelectionIndicator() {
+        PlaylistItem selected = findSelectedItem();
+        double panelTop = this.playlistPanel.getRelativeY();
+        double panelBottom = panelTop + this.playlistPanel.getHeight();
+
+        if (selected != null) {
+            double targetTop = panelTop + selected.getRelativeY();
+            double targetBottom = targetTop + selected.getHeight();
+            double targetLeft = this.playlistPanel.getRelativeX() + selected.getRelativeX();
+            double targetWidth = selected.getWidth();
+
+            if (!indicatorPlaced) {
+                indicatorTop = targetTop;
+                indicatorBottom = targetBottom;
+                indicatorLeft = targetLeft;
+                indicatorWidth = targetWidth;
+                indicatorPlaced = true;
+            } else {
+                boolean movingDown = targetTop > indicatorTop;
+                double leading = .5, trailing = .26;
+                indicatorTop = Interpolations.interpolate(indicatorTop, targetTop,
+                        movingDown ? trailing : leading);
+                indicatorBottom = Interpolations.interpolate(indicatorBottom, targetBottom,
+                        movingDown ? leading : trailing);
+                indicatorLeft = Interpolations.interpolate(indicatorLeft, targetLeft, .5);
+                indicatorWidth = Interpolations.interpolate(indicatorWidth, targetWidth, .5);
+            }
+            indicatorAlpha = Interpolations.interpolate(indicatorAlpha, 1f, .4f);
+        } else {
+            indicatorAlpha = Interpolations.interpolate(indicatorAlpha, 0f, .4f);
+        }
+
+        double top = Math.max(panelTop, indicatorTop);
+        double bottom = Math.min(panelBottom, indicatorBottom);
+        if (indicatorAlpha <= .01f || bottom - top <= .5 || indicatorWidth <= .5) {
+            this.selectionIndicator.setHidden(true);
+            return;
+        }
+
+        this.selectionIndicator
+                .setHidden(false)
+                .setBounds(indicatorWidth, bottom - top)
+                .setPosition(indicatorLeft, top)
+                .setRadius(4)
+                .setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER))
+                .setAlpha(this.getAlpha() * .2f * indicatorAlpha);
+    }
+
+    /** 列表里当前被选中的条目，没有选中项时返回 {@code null}。 */
+    private PlaylistItem findSelectedItem() {
+        for (AbstractWidget<?> child : this.playlistPanel.getChildren()) {
+            if (child instanceof PlaylistItem && ((PlaylistItem) child).isSelected()) {
+                return (PlaylistItem) child;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Re-selects the sidebar item that represents the currently visible content panel.
      */
     public void selectCurrentPanel(NCMPanel panel) {
@@ -840,7 +924,6 @@ public class NavigateBar extends NCMPanel {
         Supplier<Integer> iconColorSupplier;
         Supplier<String> label;
         Runnable onClick;
-        RoundedRectWidget bg = new RoundedRectWidget();
 
         @Getter
         @Setter
@@ -878,16 +961,8 @@ public class NavigateBar extends NCMPanel {
                 this.setPosition(4, this.getRelativeY());
             });
 
-            bg.setClickable(false);
-
-            this.addChild(bg);
-            this.bg.setBeforeRenderCallback(() -> {
-                bg.setMargin(0);
-                bg.setHidden(!selected);
-                bg.setColor(NCMScreen.getColor(NCMScreen.ColorType.ELEMENT_HOVER));
-                bg.setAlpha(selected ? 0.2f : 0f);
-                bg.setRadius(4);
-            });
+            // 选中背景由侧栏共享的那一条高亮条绘制（见 NavigateBar#layoutSelectionIndicator）。
+            // 每个条目各画一块的话，切换栏目只能是一块消失、另一块出现，没有位移可动画。
 
             AbstractWidget<?> iconWidget;
             if (iconLocation == null) {
@@ -929,7 +1004,6 @@ public class NavigateBar extends NCMPanel {
 
                 if (mouseButton == 0) {
                     this.selected = true;
-                    bg.setHidden(false);
 
                     this.onClick.run();
 

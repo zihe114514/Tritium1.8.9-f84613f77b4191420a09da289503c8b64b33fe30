@@ -468,7 +468,10 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
                             lyricScissorActive = false;
 
                             int scale = 2;
-                            int fbWidth = ((int) stringWidthD) * scale, fbHeight = (FontManager.pf65bold.getHeight() + 6) * scale;
+                            // 纹理宽度向上取整：直接截断会削掉最后一个字形的右边缘，也会让 KTV
+                            // 前沿 (progress * stringWidthD) 超出纹理宽度。
+                            int fbWidth = Math.max(2, (int) Math.ceil(stringWidthD)) * scale,
+                                    fbHeight = (FontManager.pf65bold.getHeight() + 6) * scale;
 
 //                            if (StencilClipManager.stencilClipping())
 //                                GL11.glDisable(GL11.GL_STENCIL_TEST);
@@ -551,16 +554,21 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
 //                            if (StencilClipManager.stencilClipping())
 //                                GL11.glEnable(GL11.GL_STENCIL_TEST);
 
-                            // 当前字词在演唱期间以中心为锚点平滑放大，布局宽度保持不变，避免换行抖动。
+                            // 当前字词在演唱期间平滑放大，布局宽度保持不变，避免换行抖动。
+                            // 锚点默认在字词中心，但要约束在歌词视口内：行首字词的左边缘正好压在
+                            // 视口裁剪边界上，按中心放大会有一半放大量被裁掉（首字缺一块），
+                            // 因此贴边时把锚点收拢到边界，只向视口内侧生长。
                             double pulse = Math.sin(Math.PI * easedProgress);
                             double karaokeScale = 1.0 + Math.min(.14, Math.max(0.0, HudConfig.currentWordScale)) * pulse;
-                            double wordCenterX = renderX + stringWidthD * .5;
+                            double karaokeQuadWidth = fbWidth * .5;
+                            double karaokeAnchorX = LyricsPanelGeometry.clampScaleAnchorX(renderX, karaokeQuadWidth,
+                                    karaokeScale, lyricsViewportLeft, lyricsViewportRight);
                             double wordCenterY = renderY + FontManager.pf65bold.getHeight() * .5;
                             api.getGLStateManager().pushMatrix();
-                            api.getGLStateManager().translate(wordCenterX, wordCenterY, 0);
+                            api.getGLStateManager().translate(karaokeAnchorX, wordCenterY, 0);
                             api.getGLStateManager().scale(karaokeScale, karaokeScale, 1);
-                            api.getGLStateManager().translate(-wordCenterX, -wordCenterY, 0);
-                            Shaders.STENCIL.draw(baseFb.framebufferTexture, stencilFb.framebufferTexture, renderX, renderY - 2, fbWidth * .5, fbHeight * .5);
+                            api.getGLStateManager().translate(-karaokeAnchorX, -wordCenterY, 0);
+                            Shaders.STENCIL.draw(baseFb.framebufferTexture, stencilFb.framebufferTexture, renderX, renderY - 2, karaokeQuadWidth, fbHeight * .5);
                             api.getGLStateManager().popMatrix();
 
                             if (ClientSettings.SHOW_WIDGET_BOUNDARY) {
@@ -782,13 +790,9 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
             this.roundedRectTextured(coverCenterX - coverSize * .5, coverCenterY - coverSize * .575, coverSize, coverSize, coverRadius * coverSizePerc, alpha);
         }
 
-        // Prefer the optional dynamic cover once its asynchronous request has produced a texture.
-        // Until then (or when a song has no supported dynamic artwork), retain the static cover.
-        Location dynamicCover = snapshot.music.getDynamicCoverLocation();
-        ITextureObject tex = textureManager.getTexture(dynamicCover);
-        if (tex == null) {
-            tex = textureManager.getTexture(snapshot.music.getCoverLocation());
-        }
+        // 动态封面(网易云 MP4 抽帧)就绪后优先用它,否则保持静态封面。
+        ITextureObject tex = textureManager.getTexture(
+                CloudMusic.preferredCoverLocation(snapshot.music, snapshot.music.getCoverLocation()));
 
         if (tex != null) {
             coverAlpha = Interpolations.interpolate(coverAlpha, 1.0f, 0.2f);

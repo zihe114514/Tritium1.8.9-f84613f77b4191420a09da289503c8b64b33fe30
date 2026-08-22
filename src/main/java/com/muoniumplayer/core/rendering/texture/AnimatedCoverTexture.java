@@ -20,7 +20,9 @@ public final class AnimatedCoverTexture extends DynamicTexture {
     private long nextFrameAt;
 
     public AnimatedCoverTexture(List<BufferedImage> sourceFrames, List<Long> sourceDurations) {
-        super(normalize(sourceFrames.get(0), sourceFrames.get(0).getWidth(), sourceFrames.get(0).getHeight()), true, true);
+        // clearable 必须是 false:DynamicTexture 在首次上传后会把 dynamicTextureData 置空,而这里每换一帧
+        // 都要往那个数组里拷像素再上传,置空之后第一次换帧就会 NPE。
+        super(normalize(sourceFrames.get(0), sourceFrames.get(0).getWidth(), sourceFrames.get(0).getHeight()), false, true);
         int width = getWidth();
         int height = getHeight();
         this.frames = new ArrayList<int[]>(sourceFrames.size());
@@ -37,6 +39,16 @@ public final class AnimatedCoverTexture extends DynamicTexture {
         this.nextFrameAt = System.currentTimeMillis() + this.frameDurations.get(0);
     }
 
+    /** 帧数,1 表示实际上是静态图。 */
+    public int getFrameCount() {
+        return frames.size();
+    }
+
+    /** 帧数据占用的堆内存,用于日志与预算核对。 */
+    public long getHeapBytes() {
+        return (long) frames.size() * getWidth() * getHeight() * 4L;
+    }
+
     @Override
     public int getGlTextureId() {
         advanceFrameIfDue();
@@ -44,7 +56,8 @@ public final class AnimatedCoverTexture extends DynamicTexture {
     }
 
     private void advanceFrameIfDue() {
-        if (frames.size() < 2 || !MuoniumPlayerExtension.isCallingFromMainThread()) {
+        if (frames.size() < 2 || dynamicTextureData == null
+                || !MuoniumPlayerExtension.isCallingFromMainThread()) {
             return;
         }
         long now = System.currentTimeMillis();

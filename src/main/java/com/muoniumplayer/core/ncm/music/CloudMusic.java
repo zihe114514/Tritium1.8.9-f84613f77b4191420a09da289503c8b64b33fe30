@@ -24,6 +24,7 @@ import com.muoniumplayer.core.screens.ncm.MusicLyricsPanel;
 import com.muoniumplayer.core.screens.ncm.NCMScreen;
 import com.muoniumplayer.core.settings.HudConfig;
 import com.muoniumplayer.core.widget.impl.MusicLyricsWidget;
+import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.Tuple;
 import com.muoniumplayer.core.utils.json.JsonUtils;
 import com.muoniumplayer.core.utils.network.HttpUtils;
@@ -517,6 +518,53 @@ public class CloudMusic implements SharedConstants {
         return true;
     }
 
+    /**
+     * 当前用户队列里还没播到的曲目，按播放顺序返回快照。给"下一首播放"列表用：界面每帧读一次，
+     * 不能拿到会被后台修改的活列表。
+     */
+    public static List<Music> getQueuedNextSongs() {
+        List<Music> queue = playList;
+        int tail = playNextTail;
+        int current = curIdx;
+        if (queue == null || tail <= current || tail >= queue.size()) return Collections.emptyList();
+        List<Music> result = new ArrayList<>(Math.max(1, tail - current));
+        for (int index = current + 1; index <= tail && index < queue.size(); index++) {
+            Music song = queue.get(index);
+            if (song != null) result.add(song);
+        }
+        return result;
+    }
+
+    /**
+     * 在用户队列内部重新排序：把第 {@code fromOffset} 个待播曲目移动到第 {@code toOffset} 个位置
+     * （下标都相对于队列自身，0 就是下一首要播的那个）。
+     *
+     * <p>只搬动 {@code curIdx} 之后、{@code playNextTail} 之内的元素，所以当前播放位置和队列长度都
+     * 不变，正在播的曲目不受影响。整个搬动持有 {@link #PLAY_NEXT_LOCK}，与 {@link #playNext} 的插入
+     * 互斥；{@code queueRevision} 递增会让 automix 丢弃按旧顺序预备好的那一路。</p>
+     *
+     * @return 是否真的发生了移动
+     */
+    public static boolean moveQueuedNext(int fromOffset, int toOffset) {
+        if (fromOffset == toOffset) return false;
+        synchronized (PLAY_NEXT_LOCK) {
+            List<Music> queue = playList;
+            int current = curIdx;
+            int tail = playNextTail;
+            if (queue == null || tail <= current || tail >= queue.size()) return false;
+
+            int size = tail - current;
+            if (fromOffset < 0 || fromOffset >= size) return false;
+            if (toOffset < 0 || toOffset >= size) return false;
+
+            Music song = queue.remove(current + 1 + fromOffset);
+            if (song == null) return false;
+            queue.add(current + 1 + toOffset, song);
+            queueRevision++;
+            return true;
+        }
+    }
+
     /** Forgets the user queue; the tracks themselves stay wherever they were inserted. */
     private static void clearQueuedNext() {
         playNextTail = -1;
@@ -874,6 +922,18 @@ public class CloudMusic implements SharedConstants {
                         break;
                     }
                 }
+            } catch (Throwable failure) {
+                // 最后一道防线。播放链路里任何漏网的 Throwable（解码器 LinkageError、内存不足、
+                // 第三方源解析里意外的 Error）如果直接逃出 run()，Play Thread 会静默死亡：
+                // playing 留在 true、灵动岛不收尾、也不会有任何提示，表现为"下载完成却不播放"。
+                // 这里统一提示一次并复位成"等待用户操作"，与解析失败不自动跳下一首保持一致。
+                if (!isPlaybackCancelled() && !playListChanged()) {
+                    handlePlayerInitializationError(currentlyPlaying, failure);
+                    awaitingPlaybackAction = true;
+                } else {
+                    failure.printStackTrace();
+                }
+                playing.set(false);
             } finally {
                 // A deck that is mid-blend is not the active player, so nothing else would release it.
                 cancelArmedTrack();
@@ -966,7 +1026,7 @@ public class CloudMusic implements SharedConstants {
             File musicFile;
             try {
                 musicFile = getMusicFile(playUrl, song);
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 if (!isPlaybackCancelled() && isSessionUsable(targetSession)) {
                     handlePlayerInitializationError(song, e);
                 }
@@ -982,7 +1042,12 @@ public class CloudMusic implements SharedConstants {
                     player = initializePlayer(musicFile);
                     ownedPlayer = player;
                     targetSession.player = ownedPlayer;
-                } catch (Exception e) {
+                    // 必须捕 Throwable 而不是 Exception：下载与解码链路会抛 Error。随 mod 打包的
+                    // jflac 在读 FLAC 的 VORBIS_COMMENT 时才第一次用到 VorbisString，PCM 分配失败
+                    // 抛的是 OutOfMemoryError。这些 Error 从 catch (Exception) 漏出去会一直逃到
+                    // run() 之外杀死 Play Thread：没有任何失败提示、playing 停在 true、灵动岛不收尾，
+                    // 用户看到的就是"下载完成却不播放"。
+                } catch (Throwable e) {
                     if (!isPlaybackCancelled() && isSessionUsable(targetSession)) {
                         handlePlayerInitializationError(song, e);
                     }
@@ -1074,7 +1139,7 @@ public class CloudMusic implements SharedConstants {
             System.err.printf("%s无法播放: %s - %s, 可能因为该歌曲没有版权\n", EnumChatColor.RED, song.getName(), song.getArtistsName());
         }
 
-        private void handlePlayerInitializationError(Music song, Exception e) {
+        private void handlePlayerInitializationError(Music song, Throwable e) {
             e.printStackTrace();
             String message = rootCauseMessage(e);
             DownloadDynamicIsland.showPlaybackFailure(song == null ? "当前歌曲" : song.getName(),
@@ -1122,7 +1187,7 @@ public class CloudMusic implements SharedConstants {
                         activePlayer = ownedPlayer;
                         activePlayer.play();
                     }
-                } catch (Exception retryFailure) {
+                } catch (Throwable retryFailure) {
                     if (!isPlaybackCancelled() && isSessionUsable(targetSession)) {
                         handlePlayerInitializationError(song, retryFailure);
                     }
@@ -1988,6 +2053,14 @@ public class CloudMusic implements SharedConstants {
 
     public static void loadDynamicMusicCover(Music music) {
         MusicCoverService.loadDynamicMusicCover(music);
+    }
+
+    /**
+     * 渲染层用这个决定绑哪张封面:动态封面(网易云 MP4 抽帧)就绪时用它,否则用传入的静态封面。
+     * 只有正在播放的曲目会有动态封面,歌单缩略图始终走静态图。
+     */
+    public static Location preferredCoverLocation(Music music, Location fallback) {
+        return MusicCoverService.preferredCoverLocation(music, fallback);
     }
     public static BufferedImage gaussianBlur(BufferedImage imgIn, int blur) {
         return MusicCoverService.gaussianBlur(imgIn, blur);

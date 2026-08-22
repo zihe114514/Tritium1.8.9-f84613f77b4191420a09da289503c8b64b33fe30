@@ -9,6 +9,7 @@ import com.muoniumplayer.core.ncm.music.dto.Music;
 import org.apache.commons.io.IOUtils;
 import com.muoniumplayer.core.rendering.GaussianKernel;
 import com.muoniumplayer.core.rendering.TextureManager;
+import com.muoniumplayer.core.rendering.texture.AbstractTexture;
 import com.muoniumplayer.core.rendering.texture.AnimatedCoverTexture;
 import com.muoniumplayer.core.rendering.texture.DynamicTexture;
 import com.muoniumplayer.core.rendering.texture.ITextureObject;
@@ -16,6 +17,8 @@ import com.muoniumplayer.core.rendering.texture.Textures;
 import com.muoniumplayer.core.utils.Location;
 import com.muoniumplayer.core.utils.network.HttpUtils;
 import com.muoniumplayer.core.utils.other.multithreading.MultiThreadingUtil;
+
+import com.muoniumplayer.core.MuoniumPlayerExtension;
 
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
@@ -27,12 +30,16 @@ import java.awt.image.BufferedImage;
 import java.awt.image.ConvolveOp;
 import java.awt.image.Kernel;
 import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -51,7 +58,18 @@ final class MusicCoverService {
     private static final int MAX_DYNAMIC_COVER_BYTES = 8 * 1024 * 1024;
     private static final int MAX_DYNAMIC_COVER_DIMENSION = 512;
     private static final int MAX_DYNAMIC_COVER_FRAMES = 24;
+    /** 动态封面视频的下载上限。网易云的封面循环一般 1–3 MB,12 MB 足够而且不会让一次失手吃满内存。 */
+    private static final int MAX_DYNAMIC_COVER_VIDEO_BYTES = 12 * 1024 * 1024;
     private static final Set<String> DYNAMIC_COVER_ATTEMPTS = new HashSet<String>();
+    /** 尝试记录只用于去重,不能无限增长;超过这个数量就整表清空重新来。 */
+    private static final int MAX_DYNAMIC_COVER_ATTEMPTS = 512;
+    /**
+     * 已装载的动态封面纹理。TextureManager 自己从不淘汰,而动画封面的帧数据是十几 MB 的堆内存 +
+     * 一张 GL 纹理,不主动回收的话每播一首歌就多留一份。只保留当前与上一首(全屏歌词页切歌时会同时
+     * 用到两首的封面做交叉淡化)。
+     */
+    private static final int MAX_LIVE_DYNAMIC_COVERS = 2;
+    private static final LinkedList<LiveDynamicCover> LIVE_DYNAMIC_COVERS = new LinkedList<LiveDynamicCover>();
 
     private MusicCoverService() {
     }
@@ -71,12 +89,23 @@ final class MusicCoverService {
     }
 
     /**
-     * Fetches the optional NetEase dynamic-cover metadata only for the active
-     * NetEase song. Any response/decoder failure intentionally leaves the
-     * ordinary static cover untouched.
+     * 为当前播放的网易云曲目取动态封面。
+     *
+     * <p>网易云的动态封面实际上是一段几秒的循环 <b>MP4</b>(接口字段 {@code videoPlayUrl}),因此这里有
+     * 两条路:极少数返回 GIF/APNG 之类的图片时直接用 ImageIO 解;返回视频时交给 {@link VideoCoverFrames}
+     * 用 ffmpeg 抽成有限帧,再包成项目已有的 {@link AnimatedCoverTexture} 循环播放。</p>
+     *
+     * <p>只为"正在播放"的那一首请求:动态封面是给桌面歌曲信息 HUD、全屏歌词页和播放条上的当前曲目用的,
+     * 歌单列表里的缩略图仍然是静态封面(几十条同时解视频既没必要也扛不住)。</p>
+     *
+     * <p>任何一步失败(未登录、这首歌没有动态封面、ffmpeg 不存在、视频损坏、超时)都只是保持静态封面,
+     * 不影响播放,也不会重试到打爆接口。</p>
      */
     static void loadDynamicMusicCover(final Music music) {
         if (music == null || !music.isNetease() || music.getId() <= 0L) {
+            return;
+        }
+        if (!isDynamicCoverEnabled()) {
             return;
         }
         final Location dynamicLocation = music.getDynamicCoverLocation();
@@ -84,37 +113,213 @@ final class MusicCoverService {
         if (textureManager.getTexture(dynamicLocation) != null) {
             return;
         }
-        synchronized (DYNAMIC_COVER_ATTEMPTS) {
-            if (!DYNAMIC_COVER_ATTEMPTS.add(music.getStableKey())) {
-                return;
-            }
+        if (!markAttempted(music)) {
+            return;
         }
 
         MultiThreadingUtil.runAsync(() -> {
             try {
                 JsonObject response = CloudMusicApi.songDynamicCover(music.getId()).toJsonObject();
-                String imageUrl = findDynamicCoverUrl(response);
-                if (imageUrl.isEmpty() || isVideoUrl(imageUrl)) {
-                    return;
+                ITextureObject texture = decodeImageCover(response);
+                if (!isAnimated(texture)) {
+                    // 图片分支拿到的是单帧(等于静态封面)或什么都没拿到,这时视频才是真正的动态封面。
+                    ITextureObject video = decodeVideoCover(music, findDynamicVideoUrl(response));
+                    if (video != null) {
+                        discard(texture);
+                        texture = video;
+                    }
                 }
-                byte[] imageBytes;
-                try (InputStream stream = HttpUtils.downloadStream(imageUrl, 2)) {
-                    imageBytes = readAtMost(stream, MAX_DYNAMIC_COVER_BYTES);
-                }
-                ITextureObject texture = decodeDynamicCover(imageBytes);
                 if (texture == null) {
                     return;
                 }
-                MultiThreadingUtil.runOnMainThread(() -> {
-                    // The user might already have switched songs while this request completed.
-                    if (CloudMusic.currentlyPlaying == music) {
-                        TextureManager.getInstance().loadTexture(dynamicLocation, texture);
-                    }
-                });
+                install(music, dynamicLocation, texture);
             } catch (Throwable ignored) {
                 // Dynamic artwork is purely decorative. Static artwork remains the guaranteed fallback.
             }
         });
+    }
+
+    /** 动态封面已经就绪时返回它,否则返回给定的静态封面。渲染层用这个决定绑哪张纹理。 */
+    static Location preferredCoverLocation(Music music, Location fallback) {
+        if (music == null) {
+            return fallback;
+        }
+        Location dynamic = music.getDynamicCoverLocation();
+        return TextureManager.getInstance().getTexture(dynamic) != null ? dynamic : fallback;
+    }
+
+    private static boolean isDynamicCoverEnabled() {
+        try {
+            return MuoniumPlayerExtension.getInstance().musicInfo.animatedCover.getValue();
+        } catch (Throwable ignored) {
+            return true;   // 设置尚未初始化时按默认开启处理
+        }
+    }
+
+    /** 同一首歌只尝试一次,避免每次重新播放都打一遍接口。 */
+    private static boolean markAttempted(Music music) {
+        synchronized (DYNAMIC_COVER_ATTEMPTS) {
+            if (DYNAMIC_COVER_ATTEMPTS.size() >= MAX_DYNAMIC_COVER_ATTEMPTS) {
+                DYNAMIC_COVER_ATTEMPTS.clear();
+            }
+            return DYNAMIC_COVER_ATTEMPTS.add(music.getStableKey());
+        }
+    }
+
+    /** 撤销尝试记录。只有"这次没成是环境问题"时才用,例如用户还没装 ffmpeg。 */
+    private static void forgetAttempt(Music music) {
+        synchronized (DYNAMIC_COVER_ATTEMPTS) {
+            DYNAMIC_COVER_ATTEMPTS.remove(music.getStableKey());
+        }
+    }
+
+    /** 图片型动态封面(GIF/APNG)。没有图片 URL 或解不出来时返回 null,交给视频分支。 */
+    private static ITextureObject decodeImageCover(JsonObject response) {
+        try {
+            String imageUrl = findDynamicCoverUrl(response);
+            if (imageUrl.isEmpty() || isVideoUrl(imageUrl)) {
+                return null;
+            }
+            byte[] imageBytes;
+            try (InputStream stream = HttpUtils.downloadStream(imageUrl, 2)) {
+                imageBytes = readAtMost(stream, MAX_DYNAMIC_COVER_BYTES);
+            }
+            return decodeDynamicCover(imageBytes);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * 视频型动态封面:下载到临时文件后用 ffmpeg 抽帧。ffmpeg 不存在时提示一次并撤销尝试记录——用户可能
+     * 稍后才装上,下次播到这首歌应该还能再试。
+     */
+    private static ITextureObject decodeVideoCover(Music music, String videoUrl) {
+        if (videoUrl == null || videoUrl.isEmpty()) {
+            return null;
+        }
+        if (!FfmpegSupport.isAvailable()) {
+            FfmpegSupport.warnMissingOnce();
+            forgetAttempt(music);
+            return null;
+        }
+
+        File temporary = null;
+        try {
+            temporary = File.createTempFile("muonium-cover-", ".mp4");
+            long written;
+            try (InputStream stream = HttpUtils.downloadStream(videoUrl, 2)) {
+                written = writeAtMost(stream, temporary, MAX_DYNAMIC_COVER_VIDEO_BYTES);
+            }
+            if (written <= 0L) {
+                return null;
+            }
+
+            List<BufferedImage> frames = VideoCoverFrames.decode(temporary);
+            if (frames.isEmpty()) {
+                return null;
+            }
+            List<Long> durations = new ArrayList<Long>(frames.size());
+            for (int index = 0; index < frames.size(); index++) {
+                durations.add(VideoCoverFrames.frameDurationMillis());
+            }
+            AnimatedCoverTexture texture = new AnimatedCoverTexture(frames, durations);
+            System.out.println("[Music/Cover] Animated cover ready for " + music.getStableKey() + ": "
+                    + frames.size() + " frames, " + (texture.getHeapBytes() / (1024L * 1024L)) + " MB");
+            return texture;
+        } catch (Throwable failure) {
+            System.err.println("[Music/Cover] Animated cover unavailable for " + music.getStableKey() + ": "
+                    + failure.getMessage());
+            return null;
+        } finally {
+            if (temporary != null && !temporary.delete()) {
+                temporary.deleteOnExit();
+            }
+        }
+    }
+
+    /**
+     * 装载纹理。解码期间用户可能已经换歌了,这种情况下必须把已经分配的 GL 纹理删掉而不是留着——它不在
+     * TextureManager 里,没人再有机会回收它。
+     */
+    private static void install(final Music music, final Location dynamicLocation, final ITextureObject texture) {
+        final String cacheKey = music.getStableKey();
+        MultiThreadingUtil.runOnMainThread(() -> {
+            if (CloudMusic.currentlyPlaying != music) {
+                discard(texture);
+                return;
+            }
+            TextureManager.getInstance().loadTexture(dynamicLocation, texture);
+            trimLiveDynamicCovers(new LiveDynamicCover(cacheKey, dynamicLocation));
+        });
+    }
+
+    /**
+     * 主线程上执行:新装一张,顺手把过老的动态封面连纹理一起丢掉。被淘汰的那首同时撤销尝试记录——
+     * 纹理已经没了,以后再播到它应该允许重新取一次,否则只能看静态封面。
+     */
+    private static void trimLiveDynamicCovers(LiveDynamicCover installed) {
+        for (java.util.Iterator<LiveDynamicCover> iterator = LIVE_DYNAMIC_COVERS.iterator(); iterator.hasNext(); ) {
+            if (iterator.next().location.equals(installed.location)) iterator.remove();
+        }
+        LIVE_DYNAMIC_COVERS.addFirst(installed);
+        while (LIVE_DYNAMIC_COVERS.size() > MAX_LIVE_DYNAMIC_COVERS) {
+            LiveDynamicCover stale = LIVE_DYNAMIC_COVERS.removeLast();
+            TextureManager.getInstance().deleteTexture(stale.location);
+            synchronized (DYNAMIC_COVER_ATTEMPTS) {
+                DYNAMIC_COVER_ATTEMPTS.remove(stale.key);
+            }
+        }
+    }
+
+    /** 真的是动画(至少两帧)才算动态封面;单帧结果和静态封面没有区别。 */
+    private static boolean isAnimated(ITextureObject texture) {
+        return texture instanceof AnimatedCoverTexture && ((AnimatedCoverTexture) texture).getFrameCount() > 1;
+    }
+
+    private static void discard(ITextureObject texture) {
+        try {
+            if (texture instanceof AbstractTexture) {
+                ((AbstractTexture) texture).deleteGlTexture();
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 视频 URL 专用的候选选择。与图片分支相反:这里只要视频。 */
+    private static String findDynamicVideoUrl(JsonElement element) {
+        List<DynamicUrlCandidate> candidates = new ArrayList<DynamicUrlCandidate>();
+        collectUrlCandidates(element, "", candidates);
+        DynamicUrlCandidate best = null;
+        for (DynamicUrlCandidate candidate : candidates) {
+            if (!isVideoUrl(candidate.url)) {
+                continue;
+            }
+            if (best == null || candidate.score > best.score) {
+                best = candidate;
+            }
+        }
+        return best == null ? "" : best.url;
+    }
+
+    /** 按上限写盘,超限直接放弃(返回 0)而不是留半个文件让 ffmpeg 去猜。 */
+    private static long writeAtMost(InputStream stream, File target, long maxBytes) throws IOException {
+        if (stream == null) {
+            return 0L;
+        }
+        long total = 0L;
+        try (OutputStream output = new FileOutputStream(target)) {
+            byte[] buffer = new byte[16 * 1024];
+            int read;
+            while ((read = stream.read(buffer)) != -1) {
+                total += read;
+                if (total > maxBytes) {
+                    return 0L;
+                }
+                output.write(buffer, 0, read);
+            }
+        }
+        return total;
     }
 
     static BufferedImage gaussianBlur(BufferedImage image, int blur) {
@@ -330,6 +535,17 @@ final class MusicCoverService {
     private static boolean isVideoUrl(String url) {
         String lower = url == null ? "" : url.toLowerCase();
         return lower.contains(".mp4") || lower.contains(".m3u8") || lower.contains(".flv") || lower.contains(".webm");
+    }
+
+    /** 已装载的动态封面:位置用于删纹理,stableKey 用于撤销尝试记录。 */
+    private static final class LiveDynamicCover {
+        private final String key;
+        private final Location location;
+
+        private LiveDynamicCover(String key, Location location) {
+            this.key = key;
+            this.location = location;
+        }
     }
 
     private static final class DynamicUrlCandidate {
