@@ -54,6 +54,8 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
     public BooleanValue graceScroll = api.getValueManager().createBoolean("Elegant Scrolling", true);
     public BooleanValue showRoman = api.getValueManager().createBoolean("Show Romanization in Japanese songs", false);
     public BooleanValue dynIsland = api.getValueManager().createBoolean("Dynamic Island Lyrics", false);
+    /** AMLL TTML 词库(人工校对的逐字歌词)优先于任何平台歌词。关掉后完全回到旧的解析链。 */
+    public BooleanValue preferAmllLyrics = api.getValueManager().createBoolean("Prefer AMLL Word-by-Word Lyrics", true);
 
     public ExtensionWidget widget;
     WidgetWrapper.WidgetPosSizeInterface wpsInterface;
@@ -72,7 +74,7 @@ public class MusicLyricsWidget extends ExtensionModule implements SharedConstant
         showRoman.setHiddenPredicate(() -> !showTranslation.getValue());
         dynIsland.setHiddenPredicate(() -> !Reflection.DYNAMIC_ISLAND_SUPPORTED);
         
-        this.addValues(alignMode, width, height, lyricHeight, lyricColor, currentLyricColor, shadow, singleLine, graceScroll, showRoman, dynIsland);
+        this.addValues(alignMode, width, height, lyricHeight, lyricColor, currentLyricColor, shadow, singleLine, graceScroll, showRoman, dynIsland, preferAmllLyrics);
 
         Tuple<ExtensionWidget, WidgetWrapper.WidgetPosSizeInterface> wrapped = WidgetWrapper.createWrapper(this, this::onRender);
         this.widget = wrapped.getA();

@@ -22,6 +22,12 @@ import java.util.List;
  *
  * <p>The result is intentionally not published here. CloudMusic retains session validation,
  * cross-thread state publication and main-thread timeline application.</p>
+ *
+ * <p><b>Priority.</b> The AMLL TTML database is asked first: its entries are hand-checked
+ * word-by-word timelines and beat every platform response, so once it answers nothing else is
+ * requested at all. Everything below it (cloud-drive lyrics, embedded tags, the unified provider
+ * model, the NetEase lyric API, the bundled YRC files) is line-level fallback, and each of those
+ * steps is still skipped when the previous one already produced real word timing.</p>
  */
 final class LyricLoadService {
 
@@ -34,6 +40,12 @@ final class LyricLoadService {
         List<LyricLine> parsed = Collections.emptyList();
         boolean cloudLyricsLoaded = false;
 
+        // 逐字歌词永远优先于普通歌词:命中 AMLL 词库后直接返回,不再请求任何平台歌词。
+        List<LyricLine> amllLyrics = AmllTtmlLyricService.resolve(music);
+        if (LyricParser.hasWordByWordTiming(amllLyrics)) {
+            System.out.println("[Music/AMLL] Loaded word-by-word TTML lyrics for " + trackKey);
+            return new LyricLoadResult(rawJson, amllLyrics);
+        }
         if (music.isCloudSong() && profileId > 0L) {
             try {
                 JsonObject cloudJson = normalizeCloudLyricResponse(

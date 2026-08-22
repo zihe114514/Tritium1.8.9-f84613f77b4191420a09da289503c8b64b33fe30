@@ -1,9 +1,20 @@
 package com.muoniumplayer.core.screens.ncm;
 
 import com.google.gson.JsonObject;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXParseException;
 import top.fpsmaster.music.Lyric;
 
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Locale;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -303,6 +314,270 @@ public class LyricParser {
         lyricLines.sort(Comparator.comparingLong(LyricLine::getTimestamp));
         inferLineDurations(lyricLines, 0L);
         normalizeWordDurations(lyricLines);
+    }
+
+    /**
+     * AMLL 风味 TTML(Apple Music 逐字歌词格式)解析,输出与 YRC 完全相同的渲染模型。
+     *
+     * <p>只读取每个 {@code <p>} 的直接子 {@code <span>},避免把翻译、罗马音、和声嵌套 span
+     * 当成主歌词的音节。{@code ttm:role} 的处理:{@code x-translation} 进 translationText,
+     * {@code x-roman} 进 romanizationText,{@code x-bg}(和声)追加到主行词表末尾——本项目的
+     * LyricLine 没有独立的背景人声通道,新开一行会产生与主行时间重叠的行,滚动与高亮都会跳。</p>
+     *
+     * <p>span 之间的空白文本节点是英文歌词的词间距,折进前一个词而不是生成时间戳为 0 的假词;
+     * 缺少 begin 的文本同样只做拼接。解析失败(网络截断、非 XML、实体攻击)时返回空列表,由调用方
+     * 回退到普通歌词。</p>
+     */
+    public static void parseTtml(String ttml, List<LyricLine> lyricLines) {
+        lyricLines.clear();
+        if (ttml == null || ttml.trim().isEmpty()) return;
+
+        Document document = readTtmlDocument(ttml);
+        if (document == null) return;
+
+        NodeList paragraphs = document.getElementsByTagName("p");
+        for (int i = 0; i < paragraphs.getLength(); i++) {
+            Node node = paragraphs.item(i);
+            if (node.getNodeType() != Node.ELEMENT_NODE) continue;
+            Element paragraph = (Element) node;
+
+            long lineStart = Math.max(0L, parseTtmlClock(paragraph.getAttribute("begin")));
+            long lineEnd = parseTtmlClock(paragraph.getAttribute("end"));
+
+            TtmlCollector collector = new TtmlCollector();
+            collectTtmlSpans(paragraph, collector, true);
+
+            if (collector.words.isEmpty()) {
+                // 行级 TTML:整段只有文本没有音节 span,按整行一个词处理。
+                String text = collector.pendingPrefix.trim();
+                if (text.isEmpty()) continue;
+                long duration = lineEnd > lineStart ? lineEnd - lineStart : 0L;
+                collector.words.add(new TimedText(text, lineStart, duration));
+                collector.pendingPrefix = "";
+            }
+
+            StringBuilder text = new StringBuilder();
+            for (TimedText word : collector.words) text.append(word.text);
+            String lineText = text.toString().trim();
+            if (lineText.isEmpty()) continue;
+
+            LyricLine line = new LyricLine(lineStart, lineText);
+            // 和声 span 常常越过 <p> 自己的 end(它一直唱到下一行开始),行窗口必须覆盖到
+            // 最后一个词,否则 normalizeWordDurations 之后仍有词落在行外,逐字扫词会提前停住。
+            long wordsEnd = lineEnd;
+            for (TimedText word : collector.words) {
+                wordsEnd = Math.max(wordsEnd, word.start + word.duration);
+            }
+            if (wordsEnd > lineStart) line.duration = wordsEnd - lineStart;
+            if (collector.translation != null) line.translationText = collector.translation;
+            if (collector.romanization != null) line.romanizationText = collector.romanization;
+            addWords(line, collector.words);
+            lyricLines.add(line);
+        }
+
+        lyricLines.sort(Comparator.comparingLong(LyricLine::getTimestamp));
+        inferLineDurations(lyricLines, 0L);
+        normalizeWordDurations(lyricLines);
+    }
+
+    /** 至少有一行拆出两个以上计时音节,才算真正的逐字歌词(行级 TTML 不算)。 */
+    public static boolean hasWordByWordTiming(List<LyricLine> lines) {
+        if (lines == null) return false;
+        for (LyricLine line : lines) {
+            if (line == null) continue;
+            int timed = 0;
+            for (LyricLine.Word word : line.words) {
+                if (word != null && word.duration > 0L) timed++;
+            }
+            if (timed >= 2) return true;
+        }
+        return false;
+    }
+
+    private static void collectTtmlSpans(Element parent, TtmlCollector collector, boolean allowBackground) {
+        NodeList children = parent.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node child = children.item(i);
+            short type = child.getNodeType();
+
+            if (type == Node.TEXT_NODE || type == Node.CDATA_SECTION_NODE) {
+                String raw = child.getNodeValue();
+                if (raw == null || raw.isEmpty()) continue;
+                if (raw.trim().isEmpty()) collector.appendSpace();
+                else collector.appendText(replace(raw));
+                continue;
+            }
+            if (type != Node.ELEMENT_NODE) continue;
+
+            String name = child.getNodeName().toLowerCase(Locale.ROOT);
+            if (!name.equals("span") && !name.endsWith(":span")) continue;
+            Element span = (Element) child;
+
+            String role = ttmlRole(span);
+            if (role.startsWith("x-translation")) {
+                if (collector.translation == null) {
+                    String value = replace(span.getTextContent()).trim();
+                    if (!value.isEmpty()) collector.translation = value;
+                }
+                continue;
+            }
+            if (role.startsWith("x-roman")) {
+                if (collector.romanization == null) {
+                    String value = replace(span.getTextContent()).trim();
+                    if (!value.isEmpty()) collector.romanization = value;
+                }
+                continue;
+            }
+            if (role.equals("x-bg")) {
+                if (allowBackground) appendTtmlBackground(span, collector);
+                continue;
+            }
+
+            long start = parseTtmlClock(span.getAttribute("begin"));
+            long end = parseTtmlClock(span.getAttribute("end"));
+            String wordText = replace(span.getTextContent());
+            if (start < 0L) {
+                collector.appendText(wordText);
+                continue;
+            }
+            collector.addWord(wordText, start, end < 0L ? 0L : Math.max(0L, end - start));
+        }
+    }
+
+    /**
+     * 把 {@code x-bg} 和声 span 追加到主行末尾。只有当和声排在主行最后一个词之后时才追加:
+     * 时间戳倒退会让逐字扫词回跳,那比丢掉一句和声更糟。和声自带的翻译不覆盖主行翻译。
+     */
+    private static void appendTtmlBackground(Element backgroundSpan, TtmlCollector main) {
+        TtmlCollector background = new TtmlCollector();
+        collectTtmlSpans(backgroundSpan, background, false);
+        if (background.words.isEmpty()) return;
+        if (!main.words.isEmpty()) {
+            TimedText last = main.words.get(main.words.size() - 1);
+            if (background.words.get(0).start < last.start) return;
+            if (!last.text.endsWith(" ")) last.text += " ";
+        }
+        main.words.addAll(background.words);
+        main.pendingPrefix = "";
+    }
+
+    private static String ttmlRole(Element span) {
+        String role = span.getAttribute("ttm:role");
+        if (role == null || role.isEmpty()) role = span.getAttribute("role");
+        return role == null ? "" : role.trim().toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * TTML 时钟值:{@code 12.345}、{@code 02:43.590}、{@code 1:02:03.4},以及带单位的偏移
+     * {@code 300ms}/{@code 12.5s}/{@code 2m}/{@code 1h}。无法识别时返回 -1,调用方据此判断
+     * 这个 span 没有时间轴,而不是把它当成 0 毫秒。
+     */
+    static long parseTtmlClock(String value) {
+        if (value == null) return -1L;
+        String text = value.trim();
+        if (text.isEmpty()) return -1L;
+        try {
+            if (text.endsWith("ms")) return Math.round(Double.parseDouble(text.substring(0, text.length() - 2)));
+            if (text.endsWith("s")) return Math.round(Double.parseDouble(text.substring(0, text.length() - 1)) * 1000.0);
+            if (text.endsWith("m")) return Math.round(Double.parseDouble(text.substring(0, text.length() - 1)) * 60_000.0);
+            if (text.endsWith("h")) return Math.round(Double.parseDouble(text.substring(0, text.length() - 1)) * 3_600_000.0);
+            String[] parts = text.split(":");
+            long millis = Math.round(Double.parseDouble(parts[parts.length - 1].trim()) * 1000.0);
+            if (parts.length >= 2) millis += Long.parseLong(parts[parts.length - 2].trim()) * 60_000L;
+            if (parts.length >= 3) millis += Long.parseLong(parts[parts.length - 3].trim()) * 3_600_000L;
+            return Math.max(0L, millis);
+        } catch (RuntimeException failure) {
+            return -1L;
+        }
+    }
+
+    /** 命名空间无关的安全解析:歌词是远端内容,禁掉 DTD 与外部实体,失败一律返回 null。 */
+    private static Document readTtmlDocument(String ttml) {
+        try {
+            String text = ttml;
+            int bom = text.indexOf('\uFEFF');
+            if (bom >= 0) text = text.replace("\uFEFF", "");
+            text = text.trim();
+            if (!text.startsWith("<")) {
+                int begin = text.indexOf('<');
+                if (begin < 0) return null;
+                text = text.substring(begin);
+            }
+
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setNamespaceAware(false);
+            factory.setValidating(false);
+            factory.setExpandEntityReferences(false);
+            setFeatureQuietly(factory, "http://apache.org/xml/features/disallow-doctype-decl", true);
+            setFeatureQuietly(factory, "http://xml.org/sax/features/external-general-entities", false);
+            setFeatureQuietly(factory, "http://xml.org/sax/features/external-parameter-entities", false);
+            setFeatureQuietly(factory, "http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            builder.setEntityResolver(new org.xml.sax.EntityResolver() {
+                @Override
+                public InputSource resolveEntity(String publicId, String systemId) {
+                    return new InputSource(new ByteArrayInputStream(new byte[0]));
+                }
+            });
+            builder.setErrorHandler(new org.xml.sax.ErrorHandler() {
+                @Override
+                public void warning(SAXParseException exception) {
+                }
+
+                @Override
+                public void error(SAXParseException exception) {
+                }
+
+                @Override
+                public void fatalError(SAXParseException exception) throws SAXParseException {
+                    throw exception;
+                }
+            });
+            return builder.parse(new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)));
+        } catch (Throwable failure) {
+            return null;
+        }
+    }
+
+    private static void setFeatureQuietly(DocumentBuilderFactory factory, String feature, boolean value) {
+        try {
+            factory.setFeature(feature, value);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** TTML 解析中转:词表、待拼接前缀,以及行级的翻译/罗马音。 */
+    private static final class TtmlCollector {
+        private final List<TimedText> words = new ArrayList<>();
+        private String pendingPrefix = "";
+        private String translation;
+        private String romanization;
+
+        private void appendText(String text) {
+            if (text == null || text.isEmpty()) return;
+            if (words.isEmpty()) pendingPrefix += text;
+            else words.get(words.size() - 1).text += text;
+        }
+
+        private void appendSpace() {
+            if (words.isEmpty()) {
+                if (!pendingPrefix.isEmpty() && !pendingPrefix.endsWith(" ")) pendingPrefix += " ";
+                return;
+            }
+            TimedText last = words.get(words.size() - 1);
+            if (!last.text.endsWith(" ")) last.text += " ";
+        }
+
+        private void addWord(String text, long start, long duration) {
+            if (text == null || text.isEmpty()) return;
+            if (duration <= 0L) {
+                appendText(text);
+                return;
+            }
+            words.add(new TimedText(pendingPrefix + text, start, duration));
+            pendingPrefix = "";
+        }
     }
 
     private static long normalizeWordStart(long lineStart, long lineDuration, long wordStart) {

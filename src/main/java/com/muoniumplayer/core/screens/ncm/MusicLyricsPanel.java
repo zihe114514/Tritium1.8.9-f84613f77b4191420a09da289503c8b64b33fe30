@@ -104,36 +104,6 @@ public class MusicLyricsPanel implements SharedRenderingConstants, SharedConstan
         updateLyricPositionsImmediate(getCurrentLyricViewportWidth());
     }
 
-    private static void fetchTTMLLyrics(Music music, List<LyricLine> parsed) {
-
-        MultiThreadingUtil.runAsync(() -> {
-            try {
-                String lrc = HttpUtils.getString("https://gitee.com/IzumiiKonata/amll-ttml-db/raw/main/ncm-lyrics/" + music.getId() + ".yrc", null);
-//                System.out.println("歌曲 " + music.getName() + " 存在 ttml 歌词, 获取中...");
-
-                ArrayList<LyricLine> lyricLines = new ArrayList<>();
-                LyricParser.parseYrc(lrc, lyricLines);
-
-                for (LyricLine bean : lyricLines) {
-
-//                    System.out.println(bean.words.size());
-
-                    for (LyricLine lyricLine : parsed) {
-                        if (lyricLine.getLyric().toLowerCase().replace(" ", "").equals(bean.lyric.toLowerCase().replace(" ", ""))) {
-                            bean.romanizationText = lyricLine.romanizationText;
-                            bean.translationText = lyricLine.translationText;
-                            break;
-                        }
-                    }
-
-                }
-
-//                CloudMusic.addLyrics(lyricLines);
-            } catch (Exception ignored) {
-            }
-        });
-    }
-
     public static void resetProgress(float progress) {
         CloudMusic.updateCurrentLyric(progress);
         CloudMusic.resetLyricPositionUpdate();
